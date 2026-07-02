@@ -56,10 +56,11 @@ export async function POST(request: Request) {
     const priceConfig = PLAN_PRICES[plan as PlanType];
     const razorpay = getRazorpay();
 
+    const shortTenantId = profile.tenant_id.substring(0, 8);
     const order = await razorpay.orders.create({
       amount: priceConfig.amount,
       currency: 'INR',
-      receipt: `receipt_${profile.tenant_id}_${plan}_${Date.now()}`,
+      receipt: `rcpt_${shortTenantId}_${Date.now()}`,
       notes: {
         tenant_id: profile.tenant_id,
         plan,
@@ -73,7 +74,15 @@ export async function POST(request: Request) {
       plan,
     });
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Failed to create order';
+    let message = 'Failed to create order';
+    if (err instanceof Error) {
+      message = err.message;
+    } else if (err && typeof err === 'object' && 'error' in err) {
+      const razorpayError = (err as any).error;
+      if (razorpayError && typeof razorpayError.description === 'string') {
+        message = razorpayError.description;
+      }
+    }
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

@@ -15,6 +15,11 @@ import {
   Cpu,
   ScrollText,
   Save,
+  CreditCard,
+  CheckCircle2,
+  Clock,
+  Crown,
+  AlertTriangle,
 } from 'lucide-react';
 import { useCRMStore } from '@/hooks/use-crm-store';
 import { can } from '@/lib/permissions';
@@ -27,7 +32,16 @@ import {
   MessageSquareText,
 } from 'lucide-react';
 
-type SettingsTab = 'profile' | 'agency' | 'notifications' | 'ai' | 'integrations' | 'users' | 'audit' | 'ai_usage' | 'faq';
+type SettingsTab = 'profile' | 'agency' | 'notifications' | 'billing' | 'ai' | 'integrations' | 'users' | 'audit' | 'ai_usage' | 'faq';
+
+interface SubscriptionData {
+  plan: string;
+  status: string;
+  trialActive: boolean;
+  trialDaysLeft: number;
+  trialEnd?: string;
+  currentPeriodEnd?: string;
+}
 
 export function SettingsView() {
   const currentUser = useCRMStore((s) => s.currentUser);
@@ -45,6 +59,8 @@ export function SettingsView() {
   const [auditSearch, setAuditSearch] = useState('');
   const [auditDateFrom, setAuditDateFrom] = useState('');
   const [auditDateTo, setAuditDateTo] = useState('');
+  const [subscriptionData, setSubscriptionData] = useState<SubscriptionData | null>(null);
+  const [subLoading, setSubLoading] = useState(false);
   const isDirty = JSON.stringify(form) !== JSON.stringify(settings);
   const initialFormRef = useRef(settings);
 
@@ -67,11 +83,38 @@ export function SettingsView() {
 
   const role = currentUser?.role ?? 'viewer';
 
+  // Fetch subscription data for the billing tab
+  useEffect(() => {
+    if (!currentUser) return;
+    const fetchSub = async () => {
+      setSubLoading(true);
+      try {
+        const { createClient } = await import('@/lib/supabase/client');
+        const supabase = createClient();
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session?.access_token) return;
+        const res = await fetch('/api/billing/subscription', {
+          headers: { Authorization: `Bearer ${session.access_token}` },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setSubscriptionData(data);
+        }
+      } catch {
+        // Silently fail — billing info is non-critical
+      } finally {
+        setSubLoading(false);
+      }
+    };
+    fetchSub();
+  }, [currentUser]);
+
   const tabs: { id: SettingsTab; label: string; icon: React.ComponentType<{ className?: string }>; permission?: Parameters<typeof can>[1] }[] = [
     { id: 'agency', label: 'Agency', icon: Palette },
     { id: 'profile', label: 'Profile', icon: User },
     { id: 'notifications', label: 'Notifications', icon: Bell },
     { id: 'ai', label: 'AI Config', icon: Cpu, permission: 'settings:ai:write' },
+    { id: 'billing', label: 'Billing', icon: CreditCard },
     { id: 'faq', label: 'FAQ Chatbot', icon: MessageSquareText, permission: 'settings:ai:write' },
     { id: 'ai_usage', label: 'AI Usage', icon: Database, permission: 'settings:ai:write' },
     { id: 'integrations', label: 'Integrations', icon: Key, permission: 'settings:integrations:write' },
@@ -398,6 +441,100 @@ export function SettingsView() {
         )}
 
         {tab === 'ai_usage' && can(role, 'settings:ai:write') && <AISpendDashboard />}
+
+        {tab === 'billing' && (
+          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-6 max-w-2xl">
+            <div className="rounded-2xl bg-card/80 border border-border/60 overflow-hidden">
+              <div className="px-6 py-5 border-b border-border/40">
+                <h3 className="text-lg font-semibold text-foreground flex items-center gap-2">
+                  <Crown className="h-5 w-5 text-primary" />
+                  Subscription Plan
+                </h3>
+                <p className="text-sm text-muted-foreground mt-1">Manage your subscription and billing details.</p>
+              </div>
+
+              {subLoading ? (
+                <div className="p-6 space-y-3">
+                  <div className="h-5 w-32 rounded-lg bg-muted animate-pulse" />
+                  <div className="h-4 w-48 rounded-lg bg-muted animate-pulse" />
+                  <div className="h-4 w-40 rounded-lg bg-muted animate-pulse" />
+                </div>
+              ) : subscriptionData ? (
+                <div className="p-6 space-y-5">
+                  {/* Plan badge */}
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs font-mono uppercase text-muted-foreground">Current Plan</span>
+                    <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider ${
+                      subscriptionData.plan === 'premium'
+                        ? 'bg-amber-500/15 text-amber-600 border border-amber-500/30'
+                        : subscriptionData.plan === 'pro'
+                        ? 'bg-primary/10 text-primary border border-primary/30'
+                        : 'bg-muted text-muted-foreground border border-border'
+                    }`}>
+                      <Crown className="h-3 w-3" />
+                      {subscriptionData.plan}
+                    </span>
+                  </div>
+
+                  {/* Status */}
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs font-mono uppercase text-muted-foreground">Status</span>
+                    <span className={`inline-flex items-center gap-1.5 text-sm font-medium ${
+                      subscriptionData.status === 'active'
+                        ? 'text-emerald-600'
+                        : subscriptionData.status === 'trialing'
+                        ? 'text-blue-600'
+                        : 'text-red-500'
+                    }`}>
+                      {subscriptionData.status === 'active' ? (
+                        <CheckCircle2 className="h-4 w-4" />
+                      ) : subscriptionData.status === 'trialing' ? (
+                        <Clock className="h-4 w-4" />
+                      ) : (
+                        <AlertTriangle className="h-4 w-4" />
+                      )}
+                      {subscriptionData.status === 'active'
+                        ? 'Active'
+                        : subscriptionData.status === 'trialing'
+                        ? 'Trial'
+                        : subscriptionData.status.charAt(0).toUpperCase() + subscriptionData.status.slice(1)}
+                    </span>
+                  </div>
+
+                  {/* Trial info */}
+                  {subscriptionData.trialActive && subscriptionData.trialDaysLeft > 0 && (
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs font-mono uppercase text-muted-foreground">Trial Days Left</span>
+                      <span className="text-sm font-semibold text-blue-600">
+                        {subscriptionData.trialDaysLeft} day{subscriptionData.trialDaysLeft !== 1 ? 's' : ''}
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Period end */}
+                  {subscriptionData.currentPeriodEnd && (
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs font-mono uppercase text-muted-foreground">
+                        {subscriptionData.status === 'trialing' ? 'Trial Ends' : 'Renews On'}
+                      </span>
+                      <span className="text-sm font-medium text-foreground">
+                        {new Date(subscriptionData.currentPeriodEnd).toLocaleDateString('en-US', {
+                          year: 'numeric',
+                          month: 'long',
+                          day: 'numeric',
+                        })}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="p-6">
+                  <p className="text-sm text-muted-foreground">Unable to load subscription information.</p>
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
 
         {tab === 'faq' && can(role, 'settings:ai:write') && (
           <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>

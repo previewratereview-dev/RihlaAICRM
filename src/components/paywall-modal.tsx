@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Lock, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { toast } from 'sonner';
 import { PricingCards } from '@/components/pricing-cards';
 
 interface PaywallModalProps {
@@ -58,6 +59,25 @@ export function PaywallModal({ isOpen, onClose }: PaywallModalProps) {
     setLoading(plan);
     setError(null);
 
+    const loadRazorpay = () => {
+      return new Promise((resolve) => {
+        if (typeof window === 'undefined') return resolve(false);
+        if (window.Razorpay) return resolve(true);
+        const script = document.createElement('script');
+        script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+        script.onload = () => resolve(true);
+        script.onerror = () => resolve(false);
+        document.body.appendChild(script);
+      });
+    };
+
+    const isLoaded = await loadRazorpay();
+    if (!isLoaded) {
+      setError('Failed to load payment gateway. Please check your internet connection.');
+      setLoading(null);
+      return;
+    }
+
     try {
       const { createClient } = await import('@/lib/supabase/client');
       const supabase = createClient();
@@ -110,15 +130,21 @@ export function PaywallModal({ isOpen, onClose }: PaywallModalProps) {
             if (!verifyRes.ok) {
               setError(verifyData.error || 'Payment verification failed');
             } else {
-              window.location.reload();
+              const activatedPlan = verifyData.plan || plan;
+              toast.success(`🎉 Subscription activated! You're now on the ${activatedPlan} plan.`, { duration: 4000 });
+              setTimeout(() => window.location.reload(), 1500);
             }
           } catch {
             setError('Payment verification failed');
           }
           setLoading(null);
         },
-        prefill: {},
         theme: { color: '#2563eb' },
+        modal: {
+          ondismiss: () => {
+            setLoading(null);
+          },
+        },
       };
 
       const rzp = new window.Razorpay(options);
@@ -178,10 +204,7 @@ export function PaywallModal({ isOpen, onClose }: PaywallModalProps) {
               {error}
             </div>
           )}
-
           <PricingCards onSelectPlan={handleSelectPlan} loading={loading} />
-
-          <script src="https://checkout.razorpay.com/v1/checkout.js" async />
         </motion.div>
       </motion.div>
     </AnimatePresence>

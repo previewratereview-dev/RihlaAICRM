@@ -55,7 +55,6 @@ export default function RootLayout({
         <ErrorBoundary>
           <AuthBridge />
         </ErrorBoundary>
-        <script src="https://checkout.razorpay.com/v1/checkout.js" async />
         <ErrorBoundary>{children}</ErrorBoundary>
       </body>
     </html>
