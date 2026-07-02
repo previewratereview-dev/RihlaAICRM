@@ -92,7 +92,7 @@ export const PLANS: Readonly<Record<PlanTier, Plan>> = Object.freeze({
   free: {
     tier: 'free',
     limits: {
-      users: 3,
+      users: 1,
       storageGb: 1,
       aiCalls: 100,
       reports: 5,
@@ -109,7 +109,7 @@ export const PLANS: Readonly<Record<PlanTier, Plan>> = Object.freeze({
   pro: {
     tier: 'pro',
     limits: {
-      users: 25,
+      users: 20,
       storageGb: 50,
       aiCalls: 10_000,
       reports: 100,
@@ -126,7 +126,7 @@ export const PLANS: Readonly<Record<PlanTier, Plan>> = Object.freeze({
   premium: {
     tier: 'premium',
     limits: {
-      users: 250,
+      users: 20,
       storageGb: 500,
       aiCalls: 100_000,
       reports: 1_000,

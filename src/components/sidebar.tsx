@@ -80,13 +80,29 @@ export function Sidebar() {
   const filteredSidebarItems = currentUser?.role === 'super_admin' 
     ? superAdminItems 
     : sidebarItems.filter(item => {
-        if (currentUser?.role === 'specialist' || currentUser?.role === 'setter') {
+        const role = currentUser?.role;
+
+        // Viewer: read-only, only dashboard + leads + analytics
+        if (role === 'viewer') {
+          return ['dashboard', 'leads', 'analytics'].includes(item.id);
+        }
+
+        // Specialist / setter: operational tabs only
+        if (role === 'specialist' || role === 'setter') {
           return ['dashboard', 'leads', 'conversations', 'calendar', 'tasks'].includes(item.id);
         }
+
+        // Consultant: same as specialist but with analytics
+        if (role === 'consultant') {
+          return ['dashboard', 'leads', 'conversations', 'calendar', 'tasks', 'analytics'].includes(item.id);
+        }
+
+        // Manager / Admin: full access but gated by feature flags
         const flag = featureTabMap[item.id];
         if (flag && tenantFeatures[flag] === false) return false;
         return true;
       });
+
 
   const getRoleLabel = (role: string) => {
     if (role === 'super_admin') return 'Super Admin';
@@ -95,6 +111,7 @@ export function Sidebar() {
     if (role === 'consultant') return 'Consultant';
     if (role === 'specialist') return 'Travel Specialist';
     if (role === 'member') return 'Team Member';
+    if (role === 'viewer') return 'Viewer';
     return 'User';
   };
 

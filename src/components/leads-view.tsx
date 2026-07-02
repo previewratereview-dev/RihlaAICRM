@@ -8,6 +8,7 @@ import { LeadFilters } from '@/components/leads/lead-filters';
 import { LeadTable } from '@/components/leads/lead-table';
 import { LeadDetailDrawer } from '@/components/leads/lead-detail-drawer';
 import { LeadFormModal } from '@/components/leads/lead-form-modal';
+import { can } from '@/lib/permissions';
 import type { LeadFormData } from '@/lib/schemas';
 
 const CSV_FIELD_MAP = {
@@ -41,6 +42,7 @@ export function LeadsView() {
   const dataLoading = useCRMStore((s) => s.dataLoading);
 
   const [searchTerm, setSearchTerm] = useState('');
+  const canWrite = can(currentUser?.role ?? 'viewer', 'leads:write');
   const [statusFilter, setStatusFilter] = useState('all');
   const [priorityFilter, setPriorityFilter] = useState('all');
   const [sourceFilter, setSourceFilter] = useState('all');
@@ -293,6 +295,7 @@ export function LeadsView() {
           onImport={() => fileInputRef.current?.click()}
           onExport={handleExportCSV}
           onCreate={handleOpenAddModal}
+          canWrite={canWrite}
         />
         <LeadTable
           paginatedLeads={paginatedLeads}

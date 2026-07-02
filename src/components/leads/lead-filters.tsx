@@ -14,6 +14,7 @@ interface LeadFiltersProps {
   onImport: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onExport: () => void;
   onCreate: () => void;
+  canWrite?: boolean;
 }
 
 export function LeadFilters({
@@ -28,6 +29,7 @@ export function LeadFilters({
   onImport,
   onExport,
   onCreate,
+  canWrite = true,
 }: LeadFiltersProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -85,42 +87,48 @@ export function LeadFilters({
           </select>
         </div>
 
-        <button
-          onClick={() => {
-            const headers = ['Full Name', 'Business Name', 'Email', 'Phone', 'Budget', 'Interested Service', 'Pain Points', 'Deal Value', 'Priority'];
-            const example = ['John Smith', 'Acme Corp', 'john@example.com', '+1234567890', '$10,000', 'AI Automation', 'Manual data entry', '15000', 'high'];
-            const csv = [headers.join(','), example.join(',')].join('\n');
-            const blob = new Blob([csv], { type: 'text/csv' });
-            const url = URL.createObjectURL(blob);
-            const link = document.createElement('a');
-            link.href = url;
-            link.download = 'leads_import_template.csv';
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-          }}
-          aria-label="Download CSV template"
-          className="inline-flex items-center gap-2 h-10 px-4 rounded-xl border border-input bg-card/80 hover:border-primary/40 text-foreground hover:text-primary transition-colors shadow-sm"
-        >
-          <Download className="h-4 w-4 text-muted-foreground" />
-          <span className="text-sm font-medium">Template</span>
-        </button>
+        {canWrite && (
+          <button
+            onClick={() => {
+              const headers = ['Full Name', 'Business Name', 'Email', 'Phone', 'Budget', 'Interested Service', 'Pain Points', 'Deal Value', 'Priority'];
+              const example = ['John Smith', 'Acme Corp', 'john@example.com', '+1234567890', '$10,000', 'AI Automation', 'Manual data entry', '15000', 'high'];
+              const csv = [headers.join(','), example.join(',')].join('\n');
+              const blob = new Blob([csv], { type: 'text/csv' });
+              const url = URL.createObjectURL(blob);
+              const link = document.createElement('a');
+              link.href = url;
+              link.download = 'leads_import_template.csv';
+              document.body.appendChild(link);
+              link.click();
+              document.body.removeChild(link);
+            }}
+            aria-label="Download CSV template"
+            className="inline-flex items-center gap-2 h-10 px-4 rounded-xl border border-input bg-card/80 hover:border-primary/40 text-foreground hover:text-primary transition-colors shadow-sm"
+          >
+            <Download className="h-4 w-4 text-muted-foreground" />
+            <span className="text-sm font-medium">Template</span>
+          </button>
+        )}
 
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          aria-label="Import leads from CSV"
-          className="inline-flex items-center gap-2 h-10 px-4 rounded-xl border border-input bg-card/80 hover:border-primary/40 text-foreground hover:text-primary transition-colors shadow-sm"
-        >
-          <Upload className="h-4 w-4 text-muted-foreground" />
-          <span className="text-sm font-medium">Import</span>
-        </button>
-        <input
-          type="file"
-          ref={fileInputRef}
-          accept=".csv"
-          onChange={onImport}
-          className="hidden"
-        />
+        {canWrite && (
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            aria-label="Import leads from CSV"
+            className="inline-flex items-center gap-2 h-10 px-4 rounded-xl border border-input bg-card/80 hover:border-primary/40 text-foreground hover:text-primary transition-colors shadow-sm"
+          >
+            <Upload className="h-4 w-4 text-muted-foreground" />
+            <span className="text-sm font-medium">Import</span>
+          </button>
+        )}
+        {canWrite && (
+          <input
+            type="file"
+            ref={fileInputRef}
+            accept=".csv"
+            onChange={onImport}
+            className="hidden"
+          />
+        )}
 
         <button
           onClick={onExport}
@@ -131,14 +139,16 @@ export function LeadFilters({
           <span className="text-sm font-medium">Export</span>
         </button>
 
-        <button
-          onClick={onCreate}
-          aria-label="Create new booking"
-          className="inline-flex items-center gap-2 h-10 px-5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 active:scale-95 transition-all shadow-md shadow-primary/20"
-        >
-          <Plus className="h-4 w-4" />
-          <span>Create Booking</span>
-        </button>
+        {canWrite && (
+          <button
+            onClick={onCreate}
+            aria-label="Create new booking"
+            className="inline-flex items-center gap-2 h-10 px-5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 active:scale-95 transition-all shadow-md shadow-primary/20"
+          >
+            <Plus className="h-4 w-4" />
+            <span>Create Booking</span>
+          </button>
+        )}
       </div>
     </div>
   );

@@ -45,7 +45,7 @@ function mapSupabaseUser(raw: Record<string, unknown>): User {
     id: raw.id as string,
     email: raw.email as string,
     fullName: (raw.full_name as string) || (userMeta?.full_name as string) || (raw.email as string)?.split('@')[0] || 'User',
-    role: normaliseRole(((raw.role as string) || (userMeta?.role as string) || 'viewer')),
+    role: normaliseRole(((userMeta?.role as string) || (raw.role as string) || 'viewer')),
     // Tenant is derived from the persisted profile (passed in via user_metadata)
     // and is validated by the caller before this maps to a usable session. (1.9)
     tenantId: (raw.tenant_id as string) || (userMeta?.tenant_id as string) || '',

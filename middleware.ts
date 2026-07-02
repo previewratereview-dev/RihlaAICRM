@@ -132,6 +132,32 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
       }
     }
 
+    // Enforce subscription expiration for non-admin users
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('role, tenant_id')
+      .eq('id', user.id)
+      .single();
+
+    if (profile && profile.tenant_id !== 'global' && profile.role !== 'admin') {
+      const { data: sub } = await supabase
+        .from('subscriptions')
+        .select('status, plan')
+        .eq('tenant_id', profile.tenant_id)
+        .single();
+      
+      const isExpiredOrFree = !sub || sub.status === 'past_due' || sub.status === 'expired' || sub.status === 'cancelled' || sub.plan === 'free';
+      if (isExpiredOrFree) {
+        try {
+          await supabase.auth.signOut();
+        } catch {}
+        const denied = denyExpired(request, pathname, 'subscription_expired');
+        copyResponseCookies(holder.response, denied);
+        denied.cookies.delete(SESSION_ACTIVITY_COOKIE);
+        return denied;
+      }
+    }
+
     // Valid (or brand-new) session: advance the inactivity anchor and persist
     // the activity cookie on the (possibly cookie-refreshed) Supabase response.
     const activity = existing ? touchSession(existing, now) : startSession(now);

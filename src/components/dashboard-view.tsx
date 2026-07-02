@@ -27,6 +27,7 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import { getStatusColor, getStatusLabel } from '@/lib/utils';
+import { can } from '@/lib/permissions';
 
 export function DashboardView() {
   const leads = useCRMStore((state) => state.leads);
@@ -36,6 +37,8 @@ export function DashboardView() {
   const team = useCRMStore((state) => state.team);
   const settings = useCRMStore((state) => state.settings);
   const dataLoading = useCRMStore((state) => state.dataLoading);
+  const currentUser = useCRMStore((state) => state.currentUser);
+  const canWrite = can(currentUser?.role ?? 'viewer', 'leads:write');
 
   const revenueHistory = useMemo(() => {
     const months: Record<string, number> = {};
@@ -178,13 +181,15 @@ export function DashboardView() {
           <h2 className="text-2xl font-bold tracking-tight text-foreground font-heading">Workspace Overview</h2>
           <p className="text-sm text-muted-foreground font-medium mt-1">Welcome back! Here&apos;s what&apos;s happening today.</p>
         </div>
-        <button
-          onClick={() => setActiveTab('leads')}
-          className="flex items-center gap-1.5 px-5 h-10 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 active:scale-95 transition-all select-none cursor-pointer shadow-md shadow-primary/20"
-        >
-          <span>Create Booking</span>
-          <ArrowUpRight className="h-4 w-4" />
-        </button>
+        {canWrite && (
+          <button
+            onClick={() => setActiveTab('leads')}
+            className="flex items-center gap-1.5 px-5 h-10 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 active:scale-95 transition-all select-none cursor-pointer shadow-md shadow-primary/20"
+          >
+            <span>Create Booking</span>
+            <ArrowUpRight className="h-4 w-4" />
+          </button>
+        )}
       </div>
 
       {/* KPI Cards Grid */}

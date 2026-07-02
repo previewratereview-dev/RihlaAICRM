@@ -50,7 +50,7 @@ export interface SessionActivity {
 }
 
 /** Why a session was deemed invalid. */
-export type SessionExpiryReason = 'inactivity' | 'absolute_lifetime' | 'malformed';
+export type SessionExpiryReason = 'inactivity' | 'absolute_lifetime' | 'malformed' | 'subscription_expired';
 
 /** Result of evaluating a session against the policy. */
 export interface SessionEvaluation {
