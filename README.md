@@ -87,7 +87,7 @@ src/
 └── proxy.ts          # Auth + tenant headers (Next.js 16 proxy)
 ```
 
-## Scripts
+## Scripts.
 
 ```bash
 npm run dev      # Development server
