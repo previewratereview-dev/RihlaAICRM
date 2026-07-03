@@ -20,6 +20,9 @@ export interface TenantAIContext {
   defaultModel: string;
   currentMonthlySpend: number;
   tenantAISettings: TenantSettings['ai'];
+  customBaseUrl?: string;
+  customApiKey?: string;
+  useAnthropicFormat?: boolean;
 }
 
 export async function resolveTenantAIContext(
@@ -38,7 +41,7 @@ export async function resolveTenantAIContext(
 
   const { data: settingsRow } = await supabase
     .from('settings')
-    .select('openai_key, anthropic_key, ai_budgets, system_prompt')
+    .select('openai_key, anthropic_key, ai_budgets, system_prompt, ai_base_url, ai_api_key, ai_model, ai_use_anthropic_format')
     .eq('tenant_id', tenantId)
     .maybeSingle();
 
@@ -49,6 +52,17 @@ export async function resolveTenantAIContext(
     const budgets = settingsRow.ai_budgets as { monthlyBudget?: number; defaultModel?: string } | null;
     if (budgets?.monthlyBudget) monthlyBudget = budgets.monthlyBudget;
     if (budgets?.defaultModel) defaultModel = budgets.defaultModel;
+  }
+
+  // Read custom provider config from settings
+  let customBaseUrl: string | undefined;
+  let customApiKey: string | undefined;
+  let useAnthropicFormat = false;
+  if (settingsRow) {
+    customBaseUrl = settingsRow.ai_base_url || undefined;
+    customApiKey = settingsRow.ai_api_key || undefined;
+    useAnthropicFormat = settingsRow.ai_use_anthropic_format || false;
+    if (settingsRow.ai_model) defaultModel = settingsRow.ai_model;
   }
 
   const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString();
@@ -67,6 +81,9 @@ export async function resolveTenantAIContext(
     defaultModel,
     apiKeys: { openai: openaiKey, anthropic: anthropicKey },
     budgets: { monthlyBudget },
+    customBaseUrl,
+    customApiKey,
+    useAnthropicFormat,
   };
 
   return {
@@ -78,6 +95,9 @@ export async function resolveTenantAIContext(
     defaultModel,
     currentMonthlySpend,
     tenantAISettings,
+    customBaseUrl,
+    customApiKey,
+    useAnthropicFormat,
   };
 }
 
@@ -115,7 +135,6 @@ export async function executeAIRequest({
   userId?: string | null;
 }): Promise<AIRequestResult> {
   const ctx = await resolveTenantAIContext(supabase, tenantId);
-  const resolvedModel = model || ctx.defaultModel;
   const fullPrompt = injectSystemPrompt(ctx.systemPrompt, prompt);
 
   // Wire the tier-aware credential resolver, per-period limits, and the durable
@@ -133,7 +152,7 @@ export async function executeAIRequest({
     if (!withinLimit) {
       return {
         content:
-          'Your plan’s AI usage limit for this period has been reached. A travel specialist will help you shortly.',
+          "Your plan's AI usage limit for this period has been reached. A travel specialist will help you shortly.",
         usage: null,
         blocked: true,
         blockReason: 'limit',
@@ -151,57 +170,78 @@ export async function executeAIRequest({
     throw err;
   }
 
-  // 2. Resolve AI credentials strictly by tier — never a `process.env` fallback
-  //    for non-Premium tenants. Premium resolution also enforces the platform
-  //    monthly spend cap (Requirements 4.4, 4.6, 4.8, 4.9, 4.12).
-  const apiKeys: { openai?: string; anthropic?: string } = {};
-  const providers: AIProvider[] = ['openai', 'anthropic'];
-  for (const provider of providers) {
-    try {
-      const resolution = await resolveAICredentials(tenantId, provider, runtime.resolverDeps);
-      apiKeys[provider as 'openai' | 'anthropic'] = resolution.apiKey;
-    } catch (err) {
-      if (err instanceof SpendCapExceededError) {
-        return {
-          content:
-            'Our AI assistant has reached its monthly limit for your plan. A travel specialist will help you shortly.',
-          usage: null,
-          blocked: true,
-          blockReason: 'spend_cap',
-        };
+  // 2. Check for a custom provider key (ai_api_key column) first — skip the
+  //    old credential resolver entirely when a custom base URL is configured.
+  const { customBaseUrl, customApiKey, useAnthropicFormat } = ctx;
+  let resolvedBaseUrl = customBaseUrl || 'https://api.openai.com/v1';
+  let resolvedApiKey = customApiKey || '';
+  let aiModel = ctx.defaultModel || 'gpt-4o-mini';
+
+  if (!resolvedApiKey) {
+    // No custom provider configured — fall back to old credential resolution
+    const apiKeys: { openai?: string; anthropic?: string } = {};
+    const providers: AIProvider[] = ['openai', 'anthropic'];
+    for (const provider of providers) {
+      try {
+        const resolution = await resolveAICredentials(tenantId, provider, runtime.resolverDeps);
+        apiKeys[provider as 'openai' | 'anthropic'] = resolution.apiKey;
+      } catch (err) {
+        if (err instanceof SpendCapExceededError) {
+          return {
+            content:
+              'Our AI assistant has reached its monthly limit for your plan. A travel specialist will help you shortly.',
+            usage: null,
+            blocked: true,
+            blockReason: 'spend_cap',
+          };
+        }
+        if (err instanceof ConfigurationError) {
+          continue;
+        }
+        throw err;
       }
-      if (err instanceof ConfigurationError) {
-        // This provider isn't configured/entitled for the tenant; try the next.
-        continue;
-      }
-      throw err;
+    }
+
+    if (!apiKeys.openai && !apiKeys.anthropic) {
+      return {
+        content: FALLBACK_MESSAGE,
+        usage: null,
+        blocked: true,
+        blockReason: 'configuration',
+      };
+    }
+
+    // Determine which provider to use from old resolution
+    if (apiKeys.openai) {
+      resolvedApiKey = apiKeys.openai;
+      resolvedBaseUrl = 'https://api.openai.com/v1';
+      aiModel = ctx.defaultModel || 'gpt-4o-mini';
+    } else if (apiKeys.anthropic) {
+      resolvedApiKey = apiKeys.anthropic;
+      resolvedBaseUrl = 'https://api.anthropic.com';
+      aiModel = ctx.defaultModel || 'claude-3-5-sonnet-20241022';
     }
   }
 
-  // 3. No resolvable credentials ⇒ configuration error; do NOT process with
-  //    platform/environment keys (Requirement 4.9).
-  if (!apiKeys.openai && !apiKeys.anthropic) {
-    return {
-      content: FALLBACK_MESSAGE,
-      usage: null,
-      blocked: true,
-      blockReason: 'configuration',
-    };
-  }
+  // Allow caller to override the model
+  const finalModel = model || aiModel;
 
-  const tenantAISettings: TenantSettings['ai'] = {
-    defaultModel: ctx.defaultModel,
-    apiKeys,
+  const aiSettings: TenantSettings['ai'] = {
+    defaultModel: finalModel,
+    apiKeys: resolvedApiKey ? { openai: resolvedApiKey } : {},
     budgets: { monthlyBudget: ctx.monthlyBudget },
+    customBaseUrl: resolvedBaseUrl,
+    customApiKey: resolvedApiKey,
+    useAnthropicFormat,
   };
 
   try {
     const result = await callAIWithFallback({
-      model: resolvedModel,
+      model: finalModel,
       maxTokens,
       feature,
       prompt: fullPrompt,
-      tenantAISettings,
+      tenantAISettings: aiSettings,
       currentSpend: { daily: 0, monthly: ctx.currentMonthlySpend },
     });
 
@@ -242,7 +282,7 @@ export async function executeAIRequest({
       user_id: userId ?? null,
       feature,
       provider: 'openai',
-      model: resolvedModel,
+      model: finalModel,
       tokens_in: 0,
       tokens_out: 0,
       cost_estimate: 0,

@@ -13,7 +13,6 @@ export interface AIResponse {
 }
 
 export interface AICallOptions {
-  provider?: 'openai' | 'anthropic';
   model?: string;
   maxTokens?: number;
   feature: string;
@@ -24,7 +23,6 @@ export interface AICallOptions {
 
 export async function callAI(options: AICallOptions): Promise<AIResponse> {
   const {
-    provider = 'openai',
     model,
     maxTokens = 1024,
     feature,
@@ -35,7 +33,6 @@ export async function callAI(options: AICallOptions): Promise<AIResponse> {
 
   const resolvedModel = model || tenantAISettings?.defaultModel || 'gpt-4o-mini';
 
-  // Estimate token count from prompt length (rough: ~4 chars per token)
   const estimatedTokensIn = Math.ceil(prompt.length / 4);
   const estimatedTokensOut = maxTokens;
 
@@ -52,19 +49,27 @@ export async function callAI(options: AICallOptions): Promise<AIResponse> {
     throw new Error(budgetCheck.reason || 'AI budget blocked.');
   }
 
-  const apiKey = provider === 'anthropic'
-    ? tenantAISettings?.apiKeys?.anthropic
-    : tenantAISettings?.apiKeys?.openai;
-
+  // Resolve API key — try customApiKey first, then fall back to tenant stored keys
+  let apiKey = tenantAISettings?.customApiKey;
   if (!apiKey) {
-    throw new Error('Missing AI API key for tenant.');
+    apiKey = tenantAISettings?.apiKeys?.openai;
   }
 
+  if (!apiKey) {
+    throw new Error('Missing AI API key. Add your API key in Settings > AI Config.');
+  }
+
+  // Resolve base URL — use custom base URL if set, otherwise default to OpenAI
+  const baseUrl = tenantAISettings?.customBaseUrl || 'https://api.openai.com/v1';
+
+  // Anthropic uses a different API format — detect from base URL or explicit flag
+  const useAnthropicFormat = tenantAISettings?.useAnthropicFormat || baseUrl.includes('anthropic');
+
   let result;
-  if (provider === 'anthropic') {
+  if (useAnthropicFormat) {
     result = await callAnthropic({ apiKey, model: resolvedModel, prompt, maxTokens });
   } else {
-    result = await callOpenAI({ apiKey, model: resolvedModel, prompt, maxTokens });
+    result = await callOpenAI({ apiKey, model: resolvedModel, prompt, maxTokens, baseUrl });
   }
 
   const costEstimate = estimateCost(result.model, result.tokensIn, result.tokensOut);
@@ -72,7 +77,7 @@ export async function callAI(options: AICallOptions): Promise<AIResponse> {
 
   return {
     text: result.text,
-    provider: result.provider,
+    provider: useAnthropicFormat ? 'anthropic' : result.provider,
     model: result.model,
     tokensIn: result.tokensIn,
     tokensOut: result.tokensOut,
@@ -80,27 +85,16 @@ export async function callAI(options: AICallOptions): Promise<AIResponse> {
   };
 }
 
-/** Try OpenAI first, then Anthropic as fallback. */
 export async function callAIWithFallback(options: Omit<AICallOptions, 'provider'>): Promise<AIResponse> {
-  const providers: Array<'openai' | 'anthropic'> = ['openai', 'anthropic'];
-  let lastError: Error | null = null;
-
-  for (const provider of providers) {
-    const apiKey = provider === 'anthropic'
-      ? options.tenantAISettings?.apiKeys?.anthropic
-      : options.tenantAISettings?.apiKeys?.openai;
-
-    if (!apiKey) continue;
-
-    try {
-      return await callAI({ ...options, provider });
-    } catch (err) {
-      lastError = err instanceof Error ? err : new Error(String(err));
-      if (lastError.message.toLowerCase().includes('budget')) throw lastError;
-    }
+  // Single provider — use whatever the tenant has configured
+  // Fallback only applies if the call fails
+  try {
+    return await callAI(options);
+  } catch (err) {
+    const lastError = err instanceof Error ? err : new Error(String(err));
+    if (lastError.message.toLowerCase().includes('budget')) throw lastError;
+    throw lastError;
   }
-
-  throw lastError || new Error('No AI provider available.');
 }
 
 // In-memory usage tracker for the AI Usage Dashboard
@@ -125,8 +119,6 @@ export const aiClient = {
    */
   call: async (prompt: string, feature: string, maxTokens: number = 150): Promise<string> => {
     const response = await callAI({
-      provider: 'openai',
-      model: 'gpt-4o-mini',
       maxTokens,
       feature,
       prompt,
@@ -135,7 +127,7 @@ export const aiClient = {
   },
   getBudgetStatus: () => {
     const totalCost = Object.values(usageStore).reduce((sum, u) => sum + u.cost, 0);
-    const monthlyBudget = 100; // Default budget; override from tenant settings
+    const monthlyBudget = 100;
     const currentSpend = totalCost;
     const remaining = Math.max(0, monthlyBudget - currentSpend);
     const percentageUsed = monthlyBudget > 0 ? (currentSpend / monthlyBudget) * 100 : 0;

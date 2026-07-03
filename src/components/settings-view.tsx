@@ -306,6 +306,58 @@ export function SettingsView() {
 
         {tab === 'ai' && can(role, 'settings:ai:write') && (
           <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-4 max-w-2xl">
+            <div className="p-4 rounded-xl bg-muted/30 border border-border/40 space-y-3">
+              <p className="text-sm font-semibold">Provider Setup</p>
+              <p className="text-xs text-muted-foreground">
+                Works with any OpenAI-compatible API: OpenAI, Groq, OpenRouter, Gemini, Ollama, LM Studio, vLLM, Together AI, Fireworks, Deepseek, and more.
+              </p>
+            </div>
+            <div>
+              <label className="text-xs font-mono uppercase text-muted-foreground">Base URL</label>
+              <input
+                value={form.aiBaseUrl || ''}
+                onChange={(e) => setForm({ ...form, aiBaseUrl: e.target.value })}
+                placeholder="https://api.openai.com/v1"
+                className="mt-1 w-full h-10 rounded-xl border border-input px-3 text-sm font-mono"
+              />
+              <p className="text-[10px] text-muted-foreground mt-1">
+                Examples: https://api.openai.com/v1 · https://api.groq.com/openai/v1 · http://localhost:11434/v1
+              </p>
+            </div>
+            <div>
+              <label className="text-xs font-mono uppercase text-muted-foreground">API Key</label>
+              <input
+                type="password"
+                value={form.aiApiKey || ''}
+                onChange={(e) => setForm({ ...form, aiApiKey: e.target.value })}
+                placeholder="sk-..."
+                className="mt-1 w-full h-10 rounded-xl border border-input px-3 text-sm font-mono"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-mono uppercase text-muted-foreground">Model Name</label>
+              <input
+                value={form.aiModel || ''}
+                onChange={(e) => setForm({ ...form, aiModel: e.target.value })}
+                placeholder="gpt-4o-mini"
+                className="mt-1 w-full h-10 rounded-xl border border-input px-3 text-sm font-mono"
+              />
+              <p className="text-[10px] text-muted-foreground mt-1">
+                Any model name your provider supports (e.g. gpt-4o, llama-3.1-70b, claude-3-5-sonnet, gemini-1.5-flash)
+              </p>
+            </div>
+            <label className="flex items-center gap-3 p-3 rounded-xl border border-border/60 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={!!form.aiUseAnthropicFormat}
+                onChange={(e) => setForm({ ...form, aiUseAnthropicFormat: e.target.checked })}
+                className="accent-primary"
+              />
+              <div>
+                <p className="text-sm font-medium">Use Anthropic API format</p>
+                <p className="text-[10px] text-muted-foreground">Only enable if using Anthropic's native API (not needed for OpenAI-compatible endpoints)</p>
+              </div>
+            </label>
             <div>
               <label className="text-xs font-mono uppercase text-muted-foreground">System Prompt</label>
               <textarea
@@ -315,9 +367,6 @@ export function SettingsView() {
                 className="mt-1 w-full rounded-xl border border-input p-3 text-sm resize-none"
               />
             </div>
-            <p className="text-xs text-muted-foreground">
-              API keys are stored server-side in Supabase settings. Use the Integrations tab webhook URL for Make.com automations.
-            </p>
             <button onClick={handleSaveAgency} disabled={saving} className="h-10 px-5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold">
               Save AI Config
             </button>

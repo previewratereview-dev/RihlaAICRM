@@ -271,6 +271,10 @@ export const CRMDatabaseService = {
       whatsappAutomation: data.whatsapp_automation,
       smsAutomation: data.sms_automation,
       dailyTargetScore: data.daily_target_score || 50,
+      aiBaseUrl: data.ai_base_url || '',
+      aiApiKey: data.ai_api_key ? '••••••••' : '',
+      aiModel: data.ai_model || '',
+      aiUseAnthropicFormat: data.ai_use_anthropic_format || false,
     };
   },
 
@@ -290,6 +294,11 @@ export const CRMDatabaseService = {
     if (settings.whatsappAutomation !== undefined) dbSet.whatsapp_automation = settings.whatsappAutomation;
     if (settings.smsAutomation !== undefined) dbSet.sms_automation = settings.smsAutomation;
     if (settings.dailyTargetScore !== undefined) dbSet.daily_target_score = settings.dailyTargetScore;
+    // OpenAI-compatible provider config
+    if (settings.aiBaseUrl !== undefined) dbSet.ai_base_url = settings.aiBaseUrl;
+    if (settings.aiApiKey !== undefined && settings.aiApiKey !== '••••••••') dbSet.ai_api_key = encryptBeforeStore(settings.aiApiKey);
+    if (settings.aiModel !== undefined) dbSet.ai_model = settings.aiModel;
+    if (settings.aiUseAnthropicFormat !== undefined) dbSet.ai_use_anthropic_format = settings.aiUseAnthropicFormat;
     const { error } = await db.from('settings').update(dbSet).eq('tenant_id', tenantId);
     if (error) throw error;
   },
@@ -351,6 +360,21 @@ export const CRMDatabaseService = {
   async deleteTeamMember(id: string): Promise<void> {
     const db = requireClient();
     const { error } = await db.from('profiles').delete().eq('id', id);
+    if (error) throw error;
+  },
+
+  async createUser(input: { email: string; fullName: string; role: string; tenantId: string }): Promise<void> {
+    const db = requireClient();
+    const now = new Date().toISOString();
+    const { error } = await db.from('profiles').insert({
+      email: input.email,
+      full_name: input.fullName,
+      role: input.role,
+      tenant_id: input.tenantId,
+      status: 'active',
+      created_at: now,
+      updated_at: now,
+    });
     if (error) throw error;
   },
 
@@ -430,25 +454,48 @@ export const CRMDatabaseService = {
   // ================================================================
   async getTenants(): Promise<Tenant[]> {
     const db = requireClient();
-    const { data, error } = await db.from('tenants').select('*').order('created_at', { ascending: false });
+    // Left-join `subscriptions` so the plan tier is resolved from its authoritative
+    // source rather than the mutable `tenants.settings` blob.
+    const { data, error } = await db
+      .from('tenants')
+      .select('*, subscriptions(plan, status, trial_end)')
+      .order('created_at', { ascending: false });
     if (error) {
       logger.error('Failed to fetch tenants', error);
       return [];
     }
-    return (data || []).map((t: Record<string, unknown>) => ({
-      id: String(t.id),
-      name: String(t.name),
-      slug: String(t.slug),
-      logoUrl: String(t.logo_url || ''),
-      primaryColor: String(t.primary_color || ''),
-      secondaryColor: String(t.secondary_color || ''),
-      domain: String(t.domain || ''),
-      customPrompt: String(t.custom_prompt || ''),
-      settings: (t.settings as Record<string, unknown>) || {},
-      status: String(t.status) as Tenant['status'],
-      createdAt: String(t.created_at),
-      updatedAt: String(t.updated_at),
-    }));
+    const now = Date.now();
+      return (data || []).map((t: Record<string, unknown>) => {
+      const subRow = t.subscriptions as { plan?: string; status?: string; trial_end?: string | null } | null;
+      let plan: Tenant['plan'] = 'free';
+      if (subRow?.plan) {
+        const status = subRow.status ?? 'active';
+        // Trials that have expired, and past-due/cancelled subscriptions, fall back
+        // to 'free' — matching the billing service's effectiveTier() logic (4.11).
+        const trialExpired =
+          status === 'trialing' && subRow.trial_end && new Date(subRow.trial_end).getTime() < now;
+        if (status === 'past_due' || status === 'cancelled' || trialExpired) {
+          plan = 'free';
+        } else {
+          plan = subRow.plan as Tenant['plan'];
+        }
+      }
+      return {
+        id: String(t.id),
+        name: String(t.name),
+        slug: String(t.slug),
+        logoUrl: String(t.logo_url || ''),
+        primaryColor: String(t.primary_color || ''),
+        secondaryColor: String(t.secondary_color || ''),
+        domain: String(t.domain || ''),
+        customPrompt: String(t.custom_prompt || ''),
+        settings: (t.settings as Record<string, unknown>) || {},
+        plan,
+        status: String(t.status) as Tenant['status'],
+        createdAt: String(t.created_at),
+        updatedAt: String(t.updated_at),
+      };
+    });
   },
 
   async updateTenantStatus(id: string, status: 'active' | 'suspended'): Promise<void> {
@@ -733,6 +780,48 @@ export const CRMDatabaseService = {
     const { data: existing } = await db.from('tenants').select('settings').eq('id', id).single();
     const merged = { ...((existing?.settings as Record<string, unknown>) || {}), ...settings };
     const { error } = await db.from('tenants').update({ settings: merged, updated_at: new Date().toISOString() }).eq('id', id);
+    if (error) throw error;
+  },
+
+  async deleteAgency(id: string): Promise<void> {
+    const db = requireClient();
+    const { error } = await db.rpc('delete_agency_cascade' as never, { p_tenant_id: id } as never);
+    if (error) {
+      // Fallback: delete in dependency order if RPC doesn't exist
+      const tables = ['messages', 'notes', 'activities', 'conversations', 'tasks', 'leads', 'ai_usage', 'audit_logs', 'settings'];
+      for (const table of tables) {
+        await db.from(table).delete().eq('tenant_id', id);
+      }
+      await db.from('profiles').delete().eq('tenant_id', id);
+      await db.from('tenants').delete().eq('id', id);
+    }
+  },
+
+  async updateAgencySubscription(tenantId: string, plan: string, status?: string): Promise<void> {
+    const db = requireClient();
+    const now = new Date().toISOString();
+    const update: Record<string, unknown> = { plan, updated_at: now };
+    if (status) update.status = status;
+    const { error } = await db.from('subscriptions').upsert(
+      { tenant_id: tenantId, plan, status: status || 'active', updated_at: now },
+      { onConflict: 'tenant_id' },
+    );
+    if (error) throw error;
+  },
+
+  async deleteUser(userId: string): Promise<void> {
+    const db = requireClient();
+    const { error } = await db.from('profiles').delete().eq('id', userId);
+    if (error) throw error;
+  },
+
+  async resetUserPassword(email: string): Promise<void> {
+    const db = requireClient();
+    const { error } = await db.auth.admin.generateLink({
+      type: 'magiclink',
+      email,
+      redirectTo: `${typeof window !== 'undefined' ? window.location.origin : ''}/login`,
+    } as never);
     if (error) throw error;
   },
 };

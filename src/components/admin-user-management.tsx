@@ -216,6 +216,7 @@ export function AdminUserManagement() {
                 >
                   <option value="admin">Admin</option>
                   <option value="manager">Manager</option>
+                  <option value="consultant">Consultant</option>
                   <option value="specialist">Specialist</option>
                   <option value="viewer">Viewer</option>
                 </select>

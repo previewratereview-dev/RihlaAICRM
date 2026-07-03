@@ -102,6 +102,8 @@ export interface Tenant {
   domain?: string;
   customPrompt?: string;
   settings: Record<string, unknown>;
+  /** Authoritative subscription tier, resolved from the `subscriptions` table. */
+  plan: 'free' | 'pro' | 'premium';
   status: 'active' | 'suspended';
   createdAt: string;
   updatedAt: string;

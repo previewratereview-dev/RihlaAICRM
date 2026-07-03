@@ -4,17 +4,27 @@ import React, { useMemo, useState } from 'react';
 import { useCRMStore } from '@/hooks/use-crm-store';
 import { CRMDatabaseService } from '@/lib/db-service';
 import { getInitials } from '@/lib/utils';
-import { Search, Users, Shield, Mail } from 'lucide-react';
+import { Search, Users, Shield, Mail, Plus, Trash2, KeyRound } from 'lucide-react';
+import { logger } from '@/lib/logger';
 
 export function SuperAdminUsersView() {
   const platformUsers = useCRMStore((s) => s.platformUsers);
+  const tenants = useCRMStore((s) => s.tenants);
   const syncData = useCRMStore((s) => s.syncData);
   const [search, setSearch] = useState('');
   const [tenantFilter, setTenantFilter] = useState('all');
   const [roleFilter, setRoleFilter] = useState('all');
   const [updating, setUpdating] = useState<string | null>(null);
+  const [showCreate, setShowCreate] = useState(false);
+  const [createName, setCreateName] = useState('');
+  const [createEmail, setCreateEmail] = useState('');
+  const [createRole, setCreateRole] = useState('admin');
+  const [createTenantId, setCreateTenantId] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+  const [resetTarget, setResetTarget] = useState<{ id: string; email: string; name: string } | null>(null);
 
-  const tenants = useMemo(() => {
+  const tenantList = useMemo(() => {
     const ids = new Map<string, string>();
     platformUsers.forEach((u) => ids.set(u.tenantId, u.tenantName));
     return Array.from(ids.entries()).map(([id, name]) => ({ id, name }));
@@ -56,17 +66,80 @@ export function SuperAdminUsersView() {
     }
   };
 
+  const handleCreate = async () => {
+    if (!createEmail.trim() || !createName.trim() || !createTenantId) return;
+    setSaving(true);
+    try {
+      await CRMDatabaseService.createUser({
+        email: createEmail.trim(),
+        fullName: createName.trim(),
+        role: createRole,
+        tenantId: createTenantId,
+      });
+      setShowCreate(false);
+      setCreateName('');
+      setCreateEmail('');
+      setCreateRole('admin');
+      setCreateTenantId('');
+      await syncData();
+    } catch (e) {
+      logger.error('Failed to create user', e);
+      alert('Failed to create user.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+    setSaving(true);
+    try {
+      await CRMDatabaseService.deleteUser(deleteTarget.id);
+      setDeleteTarget(null);
+      await syncData();
+    } catch (e) {
+      logger.error('Failed to delete user', e);
+      alert('Failed to delete user.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleResetPassword = async () => {
+    if (!resetTarget) return;
+    setSaving(true);
+    try {
+      await CRMDatabaseService.resetUserPassword(resetTarget.email);
+      setResetTarget(null);
+      alert('Password reset email sent.');
+    } catch (e) {
+      logger.error('Failed to reset password', e);
+      alert('Failed to send password reset.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div className="h-full w-full overflow-y-auto p-6 lg:p-8 scrollbar-thin">
       <div className="max-w-7xl mx-auto space-y-6">
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Users className="h-6 w-6 text-primary" />
-            Global User Directory
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            {platformUsers.length} users across {tenants.length} agencies
-          </p>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold flex items-center gap-2">
+              <Users className="h-6 w-6 text-primary" />
+              Global User Directory
+            </h1>
+            <p className="text-sm text-muted-foreground mt-1">
+              {platformUsers.length} users across {tenantList.length} agencies
+            </p>
+          </div>
+          <button
+            onClick={() => { setShowCreate(true); setCreateName(''); setCreateEmail(''); setCreateRole('admin'); setCreateTenantId(tenants[0]?.id || ''); }}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-semibold"
+          >
+            <Plus className="h-4 w-4" />
+            New User
+          </button>
         </div>
 
         <div className="flex flex-col sm:flex-row gap-3">
@@ -85,7 +158,7 @@ export function SuperAdminUsersView() {
             className="h-10 px-3 rounded-xl border border-input text-sm"
           >
             <option value="all">All agencies</option>
-            {tenants.map((t) => (
+            {tenantList.map((t) => (
               <option key={t.id} value={t.id}>{t.name}</option>
             ))}
           </select>
@@ -133,11 +206,11 @@ export function SuperAdminUsersView() {
                     <td className="p-4">
                       <select
                         value={user.role}
-                        disabled={updating === user.id || user.role === 'super_admin'}
+                        disabled={updating === user.id}
                         onChange={(e) => handleRoleChange(user.id, e.target.value)}
                         className="h-8 px-2 rounded-lg border border-input text-xs capitalize"
                       >
-                        {['admin', 'manager', 'consultant', 'specialist', 'setter', 'member'].map((r) => (
+                        {['super_admin', 'admin', 'manager', 'consultant', 'specialist', 'viewer'].map((r) => (
                           <option key={r} value={r}>{r.replace('_', ' ')}</option>
                         ))}
                       </select>
@@ -154,7 +227,7 @@ export function SuperAdminUsersView() {
                       </span>
                     </td>
                     <td className="p-4 text-right">
-                      {user.role !== 'super_admin' && (
+                      <div className="flex items-center justify-end gap-2">
                         <button
                           disabled={updating === user.id}
                           onClick={() => handleDeactivate(user.id, user.status)}
@@ -162,7 +235,19 @@ export function SuperAdminUsersView() {
                         >
                           {user.status === 'deactivated' ? 'Reactivate' : 'Deactivate'}
                         </button>
-                      )}
+                        <button
+                          onClick={() => setResetTarget({ id: user.id, email: user.email, name: user.fullName })}
+                          className="text-xs font-semibold text-amber-600 hover:underline flex items-center gap-1"
+                        >
+                          <KeyRound className="h-3 w-3" /> Reset
+                        </button>
+                        <button
+                          onClick={() => setDeleteTarget({ id: user.id, name: user.fullName })}
+                          className="text-xs font-semibold text-red-600 hover:underline flex items-center gap-1"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -179,6 +264,93 @@ export function SuperAdminUsersView() {
           Role changes apply immediately. Deactivated users cannot log in.
         </p>
       </div>
+
+      {showCreate && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="bg-background rounded-2xl p-6 w-full max-w-md space-y-4 shadow-xl">
+            <h3 className="font-bold text-lg">Create User</h3>
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-mono uppercase text-muted-foreground">Full Name</label>
+                <input value={createName} onChange={(e) => setCreateName(e.target.value)} className="mt-1 w-full h-10 rounded-xl border px-3 text-sm" />
+              </div>
+              <div>
+                <label className="text-xs font-mono uppercase text-muted-foreground">Email</label>
+                <input type="email" value={createEmail} onChange={(e) => setCreateEmail(e.target.value)} className="mt-1 w-full h-10 rounded-xl border px-3 text-sm" />
+              </div>
+              <div>
+                <label className="text-xs font-mono uppercase text-muted-foreground">Agency</label>
+                <select value={createTenantId} onChange={(e) => setCreateTenantId(e.target.value)} className="mt-1 w-full h-10 rounded-xl border px-3 text-sm">
+                  <option value="">Select agency...</option>
+                  {tenants.map((t) => (
+                    <option key={t.id} value={t.id}>{t.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs font-mono uppercase text-muted-foreground">Role</label>
+                <select value={createRole} onChange={(e) => setCreateRole(e.target.value)} className="mt-1 w-full h-10 rounded-xl border px-3 text-sm">
+                  {['admin', 'manager', 'consultant', 'specialist', 'viewer'].map((r) => (
+                    <option key={r} value={r}>{r.replace('_', ' ')}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="flex gap-2 pt-2">
+              <button onClick={() => setShowCreate(false)} className="flex-1 h-10 rounded-xl border text-sm">Cancel</button>
+              <button onClick={handleCreate} disabled={saving || !createEmail.trim() || !createName.trim() || !createTenantId} className="flex-1 h-10 rounded-xl bg-primary text-white text-sm font-semibold">
+                {saving ? 'Creating...' : 'Create User'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {deleteTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="bg-background rounded-2xl p-6 w-full max-w-md space-y-4 shadow-xl">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-full bg-red-100 dark:bg-red-950 flex items-center justify-center">
+                <Trash2 className="h-5 w-5 text-red-600" />
+              </div>
+              <div>
+                <h3 className="font-bold text-lg">Delete User</h3>
+                <p className="text-sm text-muted-foreground">This action cannot be undone.</p>
+              </div>
+            </div>
+            <p className="text-sm">Are you sure you want to delete <strong>{deleteTarget.name}</strong>?</p>
+            <div className="flex gap-2">
+              <button onClick={() => setDeleteTarget(null)} className="flex-1 h-10 rounded-xl border text-sm">Cancel</button>
+              <button onClick={handleDelete} disabled={saving} className="flex-1 h-10 rounded-xl bg-red-600 text-white text-sm font-semibold">
+                {saving ? 'Deleting...' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {resetTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="bg-background rounded-2xl p-6 w-full max-w-md space-y-4 shadow-xl">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-full bg-amber-100 dark:bg-amber-950 flex items-center justify-center">
+                <KeyRound className="h-5 w-5 text-amber-600" />
+              </div>
+              <div>
+                <h3 className="font-bold text-lg">Reset Password</h3>
+                <p className="text-sm text-muted-foreground">Send a password reset email.</p>
+              </div>
+            </div>
+            <p className="text-sm">Send a password reset link to <strong>{resetTarget.email}</strong> ({resetTarget.name})?</p>
+            <div className="flex gap-2">
+              <button onClick={() => setResetTarget(null)} className="flex-1 h-10 rounded-xl border text-sm">Cancel</button>
+              <button onClick={handleResetPassword} disabled={saving} className="flex-1 h-10 rounded-xl bg-amber-600 text-white text-sm font-semibold">
+                {saving ? 'Sending...' : 'Send Reset Link'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,6 +1,10 @@
 import type { SetState, GetState } from './types';
 import { CRMDatabaseService } from '@/lib/db-service';
 
+const IMPERSONATION_TTL_MS = 30 * 60 * 1000; // 30 minutes
+
+let impersonationTimer: ReturnType<typeof setTimeout> | null = null;
+
 export function createUiSlice(set: SetState, get: GetState) {
   return {
     activeTab: 'dashboard' as string,
@@ -12,6 +16,8 @@ export function createUiSlice(set: SetState, get: GetState) {
     tenantFeatures: {},
     impersonateTenantId: null as string | null,
     impersonateTenantName: null as string | null,
+    impersonationStartedAt: null as number | null,
+    impersonationRemainingMs: null as number | null,
     tenantId: null as string | null,
     dbMode: (CRMDatabaseService.isSupabaseEnabled() ? 'supabase' : 'local') as 'local' | 'supabase',
     settings: {
@@ -30,10 +36,50 @@ export function createUiSlice(set: SetState, get: GetState) {
     toggleSidebar: () => set((state) => ({ sidebarExpanded: !state.sidebarExpanded })),
     setGlobalSearchQuery: (query: string) => set({ globalSearchQuery: query }),
     setImpersonateTenant: (tenantId: string | null, tenantName?: string) => {
+      if (impersonationTimer) {
+        clearInterval(impersonationTimer);
+        impersonationTimer = null;
+      }
+
       if (tenantId) {
-        set({ impersonateTenantId: tenantId, impersonateTenantName: tenantName || null });
+        const startedAt = Date.now();
+        set({
+          impersonateTenantId: tenantId,
+          impersonateTenantName: tenantName || null,
+          impersonationStartedAt: startedAt,
+          impersonationRemainingMs: IMPERSONATION_TTL_MS,
+        });
+
+        impersonationTimer = setInterval(() => {
+          const state = get();
+          if (!state.impersonationStartedAt) {
+            clearInterval(impersonationTimer!);
+            impersonationTimer = null;
+            return;
+          }
+          const elapsed = Date.now() - state.impersonationStartedAt;
+          const remaining = IMPERSONATION_TTL_MS - elapsed;
+          if (remaining <= 0) {
+            clearInterval(impersonationTimer!);
+            impersonationTimer = null;
+            set({
+              impersonateTenantId: null,
+              impersonateTenantName: null,
+              impersonationStartedAt: null,
+              impersonationRemainingMs: null,
+            });
+            get().syncData();
+          } else {
+            set({ impersonationRemainingMs: remaining });
+          }
+        }, 1000);
       } else {
-        set({ impersonateTenantId: null, impersonateTenantName: null });
+        set({
+          impersonateTenantId: null,
+          impersonateTenantName: null,
+          impersonationStartedAt: null,
+          impersonationRemainingMs: null,
+        });
       }
       get().syncData();
     },

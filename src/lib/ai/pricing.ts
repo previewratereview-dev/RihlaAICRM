@@ -10,6 +10,10 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
   'claude-3-haiku': { promptPer1k: 0.00025, completionPer1k: 0.00125 },
   'claude-3-sonnet': { promptPer1k: 0.003, completionPer1k: 0.015 },
   'claude-3-5-sonnet': { promptPer1k: 0.003, completionPer1k: 0.015 },
+  'llama-3.1-70b-versatile': { promptPer1k: 0.00059, completionPer1k: 0.00079 },
+  'mixtral-8x7b-32768': { promptPer1k: 0.00024, completionPer1k: 0.00024 },
+  'gemini-1.5-flash': { promptPer1k: 0.000075, completionPer1k: 0.0003 },
+  'gemini-1.5-pro': { promptPer1k: 0.00125, completionPer1k: 0.005 },
 };
 
 export function estimateCost(model: string, tokensIn: number, tokensOut: number) {

@@ -3,7 +3,7 @@ export interface OpenAIResponse {
   tokensIn: number;
   tokensOut: number;
   model: string;
-  provider: 'openai';
+  provider: string;
 }
 
 import { fetchWithTimeout } from '@/lib/http';
@@ -13,13 +13,19 @@ export async function callOpenAI({
   model,
   prompt,
   maxTokens = 1024,
+  baseUrl,
 }: {
   apiKey: string;
   model: string;
   prompt: string;
   maxTokens?: number;
+  baseUrl?: string;
 }): Promise<OpenAIResponse> {
-  const res = await fetchWithTimeout('https://api.openai.com/v1/chat/completions', {
+  const url = baseUrl
+    ? `${baseUrl.replace(/\/$/, '')}/chat/completions`
+    : 'https://api.openai.com/v1/chat/completions';
+
+  const res = await fetchWithTimeout(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

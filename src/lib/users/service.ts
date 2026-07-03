@@ -274,7 +274,7 @@ export async function createUser(
   assertAssignableRole(input.role);
 
   // Pre-commit Users limit check — blocks before any state change. (3.1, 4.3)
-  await enforceLimit(tenantId, 'users', 1);
+  await enforceLimit(tenantId, 'users', 1, actor.role);
 
   return storeOrDefault().insert({
     tenantId,
@@ -313,7 +313,7 @@ export async function inviteUser(
   }
 
   // Pre-commit Users limit check — blocks before any invitation is issued. (3.1)
-  await enforceLimit(tenantId, 'users', 1);
+  await enforceLimit(tenantId, 'users', 1, actor.role);
 
   return createInvitation({
     tenantId,

@@ -7,7 +7,10 @@ import { Settings, Save, AlertTriangle, Globe, Mail, Shield, Cpu } from 'lucide-
 
 export function SuperAdminSettingsView() {
   const [form, setForm] = useState({
+    defaultAiBaseUrl: 'https://api.openai.com/v1',
+    defaultAiApiKey: '',
     defaultAiModel: 'gpt-4o-mini',
+    aiUseAnthropicFormat: false,
     platformMonthlyAiCap: 500,
     maintenanceMode: false,
     allowNewTenants: true,
@@ -21,7 +24,10 @@ export function SuperAdminSettingsView() {
     CRMDatabaseService.getPlatformSettings().then((s) => {
       const extra = (s.settings as Record<string, unknown>) || {};
       setForm({
+        defaultAiBaseUrl: String(extra.defaultAiBaseUrl || 'https://api.openai.com/v1'),
+        defaultAiApiKey: String(extra.defaultAiApiKey || ''),
         defaultAiModel: String(s.defaultAiModel || 'gpt-4o-mini'),
+        aiUseAnthropicFormat: Boolean(extra.aiUseAnthropicFormat),
         platformMonthlyAiCap: Number(s.platformMonthlyAiCap) || 500,
         maintenanceMode: Boolean(s.maintenanceMode),
         allowNewTenants: extra.allowNewTenants !== false,
@@ -40,6 +46,9 @@ export function SuperAdminSettingsView() {
         platformMonthlyAiCap: form.platformMonthlyAiCap,
         maintenanceMode: form.maintenanceMode,
         settings: {
+          defaultAiBaseUrl: form.defaultAiBaseUrl,
+          defaultAiApiKey: form.defaultAiApiKey,
+          aiUseAnthropicFormat: form.aiUseAnthropicFormat,
           allowNewTenants: form.allowNewTenants,
           defaultAiBudget: form.defaultAiBudget,
           supportEmail: form.supportEmail,
@@ -61,7 +70,7 @@ export function SuperAdminSettingsView() {
             <Settings className="h-6 w-6 text-primary" />
             Platform Settings
           </h1>
-          <p className="text-sm text-muted-foreground mt-1">Global defaults and operational controls.</p>
+          <p className="text-sm text-muted-foreground mt-1">Global defaults for all agencies. Individual agencies can override these.</p>
         </div>
 
         {message && (
@@ -69,21 +78,62 @@ export function SuperAdminSettingsView() {
         )}
 
         <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+          {/* AI Provider Config */}
           <section className="p-6 rounded-2xl bg-card/80 border border-border/60 space-y-4">
-            <h3 className="font-bold flex items-center gap-2"><Cpu className="h-4 w-4 text-primary" /> AI Defaults</h3>
-            <div className="grid sm:grid-cols-2 gap-4">
+            <h3 className="font-bold flex items-center gap-2"><Cpu className="h-4 w-4 text-primary" /> Platform AI Provider</h3>
+            <p className="text-xs text-muted-foreground">
+              These are the platform-wide defaults. Works with any OpenAI-compatible API.
+            </p>
+            <div className="space-y-3">
               <div>
-                <label className="text-xs font-mono uppercase text-muted-foreground">Default AI Model</label>
-                <select
-                  value={form.defaultAiModel}
-                  onChange={(e) => setForm({ ...form, defaultAiModel: e.target.value })}
-                  className="mt-1 w-full h-10 rounded-xl border px-3 text-sm"
-                >
-                  <option value="gpt-4o-mini">gpt-4o-mini</option>
-                  <option value="gpt-4o">gpt-4o</option>
-                  <option value="claude-3-5-sonnet-20241022">claude-3-5-sonnet</option>
-                </select>
+                <label className="text-xs font-mono uppercase text-muted-foreground">Base URL</label>
+                <input
+                  value={form.defaultAiBaseUrl}
+                  onChange={(e) => setForm({ ...form, defaultAiBaseUrl: e.target.value })}
+                  placeholder="https://api.openai.com/v1"
+                  className="mt-1 w-full h-10 rounded-xl border px-3 text-sm font-mono"
+                />
+                <p className="text-[10px] text-muted-foreground mt-1">
+                  OpenAI: https://api.openai.com/v1 · Groq: https://api.groq.com/openai/v1 · Ollama: http://localhost:11434/v1
+                </p>
               </div>
+              <div>
+                <label className="text-xs font-mono uppercase text-muted-foreground">API Key</label>
+                <input
+                  type="password"
+                  value={form.defaultAiApiKey}
+                  onChange={(e) => setForm({ ...form, defaultAiApiKey: e.target.value })}
+                  placeholder="sk-..."
+                  className="mt-1 w-full h-10 rounded-xl border px-3 text-sm font-mono"
+                />
+              </div>
+              <div className="grid sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-mono uppercase text-muted-foreground">Default Model</label>
+                  <input
+                    value={form.defaultAiModel}
+                    onChange={(e) => setForm({ ...form, defaultAiModel: e.target.value })}
+                    placeholder="gpt-4o-mini"
+                    className="mt-1 w-full h-10 rounded-xl border px-3 text-sm font-mono"
+                  />
+                </div>
+                <label className="flex items-center gap-2 mt-6">
+                  <input
+                    type="checkbox"
+                    checked={form.aiUseAnthropicFormat}
+                    onChange={(e) => setForm({ ...form, aiUseAnthropicFormat: e.target.checked })}
+                    className="accent-primary"
+                  />
+                  <span className="text-sm">Anthropic API format</span>
+                </label>
+              </div>
+            </div>
+          </section>
+
+          {/* AI Budget */}
+          <section className="p-6 rounded-2xl bg-card/80 border border-border/60 space-y-4">
+            <h3 className="font-bold flex items-center gap-2"><Cpu className="h-4 w-4 text-primary" /> AI Budget Limits</h3>
+            <div className="grid sm:grid-cols-2 gap-4">
               <div>
                 <label className="text-xs font-mono uppercase text-muted-foreground">Platform Monthly AI Cap ($)</label>
                 <input type="number" value={form.platformMonthlyAiCap} onChange={(e) => setForm({ ...form, platformMonthlyAiCap: Number(e.target.value) })} className="mt-1 w-full h-10 rounded-xl border px-3 text-sm" />
@@ -95,6 +145,7 @@ export function SuperAdminSettingsView() {
             </div>
           </section>
 
+          {/* Platform Access */}
           <section className="p-6 rounded-2xl bg-card/80 border border-border/60 space-y-4">
             <h3 className="font-bold flex items-center gap-2"><Globe className="h-4 w-4 text-primary" /> Platform Access</h3>
             <label className="flex items-center gap-3 p-4 rounded-xl bg-amber-50 border border-amber-200 dark:bg-amber-950 dark:border-amber-800 cursor-pointer">
@@ -115,6 +166,7 @@ export function SuperAdminSettingsView() {
             </label>
           </section>
 
+          {/* Support */}
           <section className="p-6 rounded-2xl bg-card/80 border border-border/60 space-y-4">
             <h3 className="font-bold flex items-center gap-2"><Mail className="h-4 w-4 text-primary" /> Support</h3>
             <div>

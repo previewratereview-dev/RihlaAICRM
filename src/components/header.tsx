@@ -35,6 +35,7 @@ export function Header() {
   const logout = useCRMStore((state) => state.logout);
   const impersonateTenantId = useCRMStore((state) => state.impersonateTenantId);
   const impersonateTenantName = useCRMStore((state) => state.impersonateTenantName);
+  const impersonationRemainingMs = useCRMStore((state) => state.impersonationRemainingMs);
   const setImpersonateTenant = useCRMStore((state) => state.setImpersonateTenant);
 
   const [time, setTime] = useState('');
@@ -124,6 +125,11 @@ export function Header() {
           <span className="flex items-center gap-2 font-medium">
             <Eye className="h-4 w-4" />
             Viewing as tenant: <strong>{impersonateTenantName || impersonateTenantId}</strong>
+            {impersonationRemainingMs !== null && (
+              <span className="ml-2 px-2 py-0.5 rounded-full bg-amber-200/50 dark:bg-amber-800/50 text-[10px] font-mono font-bold">
+                {Math.floor(impersonationRemainingMs / 60000)}:{String(Math.floor((impersonationRemainingMs % 60000) / 1000)).padStart(2, '0')}
+              </span>
+            )}
           </span>
           <button
             onClick={() => setImpersonateTenant(null)}

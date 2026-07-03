@@ -109,9 +109,9 @@ export function CrmShell({ initialTab }: CrmShellProps) {
     }
   }, [sessionLoading, currentUser, router]);
 
-  // Fetch subscription status
+  // Fetch subscription status — skip entirely for super admins (no billing gates)
   useEffect(() => {
-    if (!currentUser) return;
+    if (!currentUser || currentUser.role === 'super_admin') return;
 
     const fetchSubscription = async () => {
       try {
@@ -239,8 +239,10 @@ export function CrmShell({ initialTab }: CrmShellProps) {
       <Toaster position="bottom-right" richColors closeButton />
       </div>
 
-      {/* Paywall Modal */}
-      <PaywallModal isOpen={showPaywall} onClose={() => setShowPaywall(false)} />
+      {/* Paywall Modal — never shown to super admins */}
+      {currentUser?.role !== 'super_admin' && (
+        <PaywallModal isOpen={showPaywall} onClose={() => setShowPaywall(false)} />
+      )}
     </TenantProvider>
   );
 }

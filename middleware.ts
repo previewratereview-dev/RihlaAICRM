@@ -132,21 +132,33 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
       }
     }
 
-    // Enforce subscription expiration for non-admin users
+    // Enforce subscription expiration for non-admin, non-super-admin users
     const { data: profile } = await supabase
       .from('profiles')
       .select('role, tenant_id')
       .eq('id', user.id)
       .single();
 
-    if (profile && profile.tenant_id !== 'global' && profile.role !== 'admin') {
+    if (profile && profile.tenant_id !== 'global' && profile.role !== 'admin' && profile.role !== 'super_admin') {
       const { data: sub } = await supabase
         .from('subscriptions')
-        .select('status, plan')
+        .select('status, plan, trial_end')
         .eq('tenant_id', profile.tenant_id)
         .single();
-      
-      const isExpiredOrFree = !sub || sub.status === 'past_due' || sub.status === 'expired' || sub.status === 'cancelled' || sub.plan === 'free';
+
+      // A subscription is considered expired if it has no row, is past-due/cancelled,
+      // or is a trial that has passed its trial_end date. Active trials (not yet
+      // expired) and active/paid subscriptions are allowed through.
+      const trialExpired =
+        sub?.status === 'trialing' && sub.trial_end && new Date(sub.trial_end).getTime() < Date.now();
+      const isExpiredOrFree =
+        !sub
+        || sub.status === 'past_due'
+        || sub.status === 'expired'
+        || sub.status === 'cancelled'
+        || trialExpired
+        || sub.plan === 'free';
+
       if (isExpiredOrFree) {
         try {
           await supabase.auth.signOut();

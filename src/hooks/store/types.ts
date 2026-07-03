@@ -11,6 +11,10 @@ export interface Settings {
   whatsappAutomation: boolean;
   smsAutomation: boolean;
   dailyTargetScore: number;
+  aiBaseUrl?: string;
+  aiApiKey?: string;
+  aiModel?: string;
+  aiUseAnthropicFormat?: boolean;
 }
 
 export interface CRMStore {
@@ -38,6 +42,8 @@ export interface CRMStore {
   tenantFeatures: TenantFeatures;
   impersonateTenantId: string | null;
   impersonateTenantName: string | null;
+  impersonationStartedAt: number | null;
+  impersonationRemainingMs: number | null;
   tenantId: string | null;
 
   // Auth actions

@@ -390,12 +390,19 @@ export function decideLimit(
  * A Tenant with no Subscription is treated as Free with zero usage on the
  * dimension. Past-due / expired Subscriptions resolve to Free limits via
  * {@link effectiveLimits}.
+ *
+ * Super admins bypass all billing limits.
  */
 export async function checkLimit(
   tenantId: string,
   dimension: keyof UsageLimits,
   delta: number,
+  role?: string,
 ): Promise<LimitDecision> {
+  if (role === 'super_admin') {
+    return { allowed: true, status: 'allowed', dimension, limit: Infinity, current: 0, requested: 0, delta: 0 };
+  }
+
   const sub = await getSubscription(tenantId);
 
   if (!sub) {
@@ -414,13 +421,16 @@ export async function checkLimit(
  * action would exceed the limit, aborting the transaction before any mutation
  * runs so the Tenant's data is left unchanged. Returns the (allowed) decision
  * otherwise. (Requirement 4.3)
+ *
+ * Super admins bypass all billing limits.
  */
 export async function enforceLimit(
   tenantId: string,
   dimension: keyof UsageLimits,
   delta: number,
+  role?: string,
 ): Promise<LimitDecision> {
-  const decision = await checkLimit(tenantId, dimension, delta);
+  const decision = await checkLimit(tenantId, dimension, delta, role);
   if (!decision.allowed) {
     throw new LimitExceededError(decision);
   }
@@ -438,14 +448,17 @@ export async function enforceLimit(
  * Callers that manage an explicit database transaction should invoke this
  * inside that transaction so the read and the conditional write share one
  * atomic, pre-commit scope.
+ *
+ * Super admins bypass all billing limits.
  */
 export async function commitWithLimitCheck<T>(
   tenantId: string,
   dimension: keyof UsageLimits,
   delta: number,
   mutate: () => Promise<T> | T,
+  role?: string,
 ): Promise<{ decision: LimitDecision; result?: T }> {
-  const decision = await checkLimit(tenantId, dimension, delta);
+  const decision = await checkLimit(tenantId, dimension, delta, role);
   if (!decision.allowed) {
     return { decision };
   }

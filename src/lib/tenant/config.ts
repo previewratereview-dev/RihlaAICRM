@@ -9,6 +9,13 @@ export interface TenantAISettings {
   systemPrompt?: string;
   defaultModel?: string;
   language?: string;
+  /** Custom base URL for any OpenAI-compatible API (Groq, OpenRouter, Ollama, vLLM, etc.) */
+  customBaseUrl?: string;
+  /** API key for the custom provider */
+  customApiKey?: string;
+  /** Set to true when using Anthropic's native API format instead of OpenAI-compatible */
+  useAnthropicFormat?: boolean;
+  /** @deprecated Use customApiKey instead */
   apiKeys?: {
     openai?: string;
     anthropic?: string;

@@ -2,7 +2,7 @@
 
 import React, { useMemo, useState } from 'react';
 import { useCRMStore } from '@/hooks/use-crm-store';
-import { Building2, Power, PowerOff, Plus, Search, Pencil, Users, TrendingUp, Cpu, MessageSquare, Eye } from 'lucide-react';
+import { Building2, Power, PowerOff, Plus, Search, Pencil, Users, TrendingUp, Cpu, MessageSquare, Eye, Trash2, Crown } from 'lucide-react';
 import { logger } from '@/lib/logger';
 import { CRMDatabaseService } from '@/lib/db-service';
 import type { TenantFeatureFlags } from '@/types';
@@ -27,9 +27,16 @@ interface TenantModalProps {
   setFeatures: (v: TenantFeatureFlags) => void;
   saving: boolean;
   editTenant: unknown;
+  plan: string;
+  setPlan: (v: string) => void;
+  adminEmail: string;
+  setAdminEmail: (v: string) => void;
+  adminPassword: string;
+  setAdminPassword: (v: string) => void;
+  showAdminFields: boolean;
 }
 
-function TenantModal({ title, onSave, onClose, name, setName, slug, setSlug, domain, setDomain, primaryColor, setPrimaryColor, customPrompt, setCustomPrompt, aiBudget, setAiBudget, features, setFeatures, saving, editTenant }: TenantModalProps) {
+function TenantModal({ title, onSave, onClose, name, setName, slug, setSlug, domain, setDomain, primaryColor, setPrimaryColor, customPrompt, setCustomPrompt, aiBudget, setAiBudget, features, setFeatures, saving, editTenant, plan, setPlan, adminEmail, setAdminEmail, adminPassword, setAdminPassword, showAdminFields }: TenantModalProps) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 overflow-y-auto">
       <div className="bg-background rounded-2xl p-6 w-full max-w-lg space-y-4 shadow-xl my-8">
@@ -56,6 +63,14 @@ function TenantModal({ title, onSave, onClose, name, setName, slug, setSlug, dom
             <input type="number" value={aiBudget} onChange={(e) => setAiBudget(Number(e.target.value))} className="mt-1 w-full h-10 rounded-xl border px-3 text-sm" />
           </div>
           <div className="col-span-2">
+            <label className="text-xs font-mono uppercase text-muted-foreground">Subscription Plan</label>
+            <select value={plan} onChange={(e) => setPlan(e.target.value)} className="mt-1 w-full h-10 rounded-xl border px-3 text-sm">
+              <option value="free">Free</option>
+              <option value="pro">Pro</option>
+              <option value="premium">Premium</option>
+            </select>
+          </div>
+          <div className="col-span-2">
             <label className="text-xs font-mono uppercase text-muted-foreground">Custom AI Prompt</label>
             <textarea value={customPrompt} onChange={(e) => setCustomPrompt(e.target.value)} rows={3} className="mt-1 w-full rounded-xl border p-3 text-sm resize-none" />
           </div>
@@ -76,10 +91,70 @@ function TenantModal({ title, onSave, onClose, name, setName, slug, setSlug, dom
             ))}
           </div>
         </div>
+        {showAdminFields && (
+          <div className="border-t border-border/50 pt-4">
+            <p className="text-xs font-mono uppercase text-muted-foreground mb-2">First Admin User</p>
+            <div className="space-y-2">
+              <input
+                type="email"
+                value={adminEmail}
+                onChange={(e) => setAdminEmail(e.target.value)}
+                placeholder="admin@agency.com"
+                className="w-full h-10 rounded-xl border px-3 text-sm"
+              />
+              <input
+                type="password"
+                value={adminPassword}
+                onChange={(e) => setAdminPassword(e.target.value)}
+                placeholder="Password (min 8 characters)"
+                className="w-full h-10 rounded-xl border px-3 text-sm"
+              />
+            </div>
+          </div>
+        )}
         <div className="flex gap-2 pt-2">
           <button onClick={onClose} className="flex-1 h-10 rounded-xl border text-sm">Cancel</button>
           <button onClick={onSave} disabled={saving} className="flex-1 h-10 rounded-xl bg-primary text-white text-sm font-semibold">
             {saving ? 'Saving...' : 'Save'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DeleteConfirmModal({ name, onConfirm, onCancel, saving }: { name: string; onConfirm: () => void; onCancel: () => void; saving: boolean }) {
+  const [confirmText, setConfirmText] = useState('');
+  const canDelete = confirmText === name;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="bg-background rounded-2xl p-6 w-full max-w-md space-y-4 shadow-xl">
+        <div className="flex items-center gap-3">
+          <div className="h-10 w-10 rounded-full bg-red-100 dark:bg-red-950 flex items-center justify-center">
+            <Trash2 className="h-5 w-5 text-red-600" />
+          </div>
+          <div>
+            <h3 className="font-bold text-lg">Delete Agency</h3>
+            <p className="text-sm text-muted-foreground">This action cannot be undone.</p>
+          </div>
+        </div>
+        <p className="text-sm">
+          Type <strong>{name}</strong> to confirm deletion. All data including leads, tasks, conversations, and users will be permanently removed.
+        </p>
+        <input
+          value={confirmText}
+          onChange={(e) => setConfirmText(e.target.value)}
+          placeholder={`Type "${name}" to confirm`}
+          className="w-full h-10 rounded-xl border px-3 text-sm"
+        />
+        <div className="flex gap-2">
+          <button onClick={onCancel} className="flex-1 h-10 rounded-xl border text-sm">Cancel</button>
+          <button
+            onClick={onConfirm}
+            disabled={!canDelete || saving}
+            className="flex-1 h-10 rounded-xl bg-red-600 text-white text-sm font-semibold disabled:opacity-50"
+          >
+            {saving ? 'Deleting...' : 'Delete Permanently'}
           </button>
         </div>
       </div>
@@ -98,12 +173,16 @@ export function SuperAdminTenantsView() {
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'suspended'>('all');
   const [showCreate, setShowCreate] = useState(false);
   const [editTenant, setEditTenant] = useState<(typeof tenantsWithStats)[0] | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<(typeof tenantsWithStats)[0] | null>(null);
   const [name, setName] = useState('');
   const [slug, setSlug] = useState('');
   const [domain, setDomain] = useState('');
   const [primaryColor, setPrimaryColor] = useState('#FF6B35');
   const [customPrompt, setCustomPrompt] = useState('');
   const [aiBudget, setAiBudget] = useState(100);
+  const [plan, setPlan] = useState('free');
+  const [adminEmail, setAdminEmail] = useState('');
+  const [adminPassword, setAdminPassword] = useState('');
   const [features, setFeatures] = useState<TenantFeatureFlags>({
     pipeline: true,
     chatbot: true,
@@ -135,6 +214,7 @@ export function SuperAdminTenantsView() {
     setPrimaryColor(tenant.primaryColor || '#FF6B35');
     setCustomPrompt(tenant.customPrompt || '');
     setAiBudget((tenant.settings?.aiBudget as number) || 100);
+    setPlan(tenant.plan || 'free');
     const tenantFeatures = (tenant.settings?.features || {}) as Record<string, boolean>;
     setFeatures({
       pipeline: tenantFeatures.pipeline !== false,
@@ -153,6 +233,22 @@ export function SuperAdminTenantsView() {
     await syncData();
   };
 
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+    setSaving(true);
+    try {
+      await CRMDatabaseService.deleteAgency(deleteTarget.id);
+      await logAuditEvent('tenant_suspended', `Deleted agency "${deleteTarget.name}" (${deleteTarget.id}).`);
+      setDeleteTarget(null);
+      await syncData();
+    } catch (e) {
+      logger.error('Failed to delete agency', e);
+      alert('Failed to delete agency.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleCreate = async () => {
     if (!name.trim() || !slug.trim()) return;
     setSaving(true);
@@ -160,11 +256,14 @@ export function SuperAdminTenantsView() {
       const id = slug.trim().toLowerCase().replace(/\s+/g, '-');
       await CRMDatabaseService.createTenant({ id, name: name.trim(), slug: id, domain: domain.trim() || undefined });
       await CRMDatabaseService.updateTenantSettings(id, { aiBudget, features });
+      await CRMDatabaseService.updateAgencySubscription(id, plan);
       await logAuditEvent('tenant_created', `Created agency "${name.trim()}" (${id}).`);
       setShowCreate(false);
       setName('');
       setSlug('');
       setDomain('');
+      setAdminEmail('');
+      setAdminPassword('');
       await syncData();
     } catch (e) {
       logger.error('Tenant operation failed', e);
@@ -186,6 +285,7 @@ export function SuperAdminTenantsView() {
         customPrompt: customPrompt || undefined,
       });
       await CRMDatabaseService.updateTenantSettings(editTenant.id, { aiBudget, features });
+      await CRMDatabaseService.updateAgencySubscription(editTenant.id, plan);
       await logAuditEvent('tenant_updated', `Updated agency "${name}" configuration.`);
       setEditTenant(null);
       await syncData();
@@ -206,7 +306,7 @@ export function SuperAdminTenantsView() {
             <p className="text-sm text-muted-foreground mt-1">Create, configure, and monitor all platform agencies.</p>
           </div>
           <button
-            onClick={() => { setShowCreate(true); setName(''); setSlug(''); setDomain(''); setAiBudget(100); }}
+            onClick={() => { setShowCreate(true); setName(''); setSlug(''); setDomain(''); setAiBudget(100); setPlan('free'); setAdminEmail(''); setAdminPassword(''); }}
             className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-semibold"
           >
             <Plus className="h-4 w-4" />
@@ -252,6 +352,13 @@ export function SuperAdminTenantsView() {
           setFeatures={setFeatures}
           saving={saving}
           editTenant={editTenant}
+          plan={plan}
+          setPlan={setPlan}
+          adminEmail={adminEmail}
+          setAdminEmail={setAdminEmail}
+          adminPassword={adminPassword}
+          setAdminPassword={setAdminPassword}
+          showAdminFields={true}
         />
       )}
       {editTenant && (
@@ -275,6 +382,21 @@ export function SuperAdminTenantsView() {
           setFeatures={setFeatures}
           saving={saving}
           editTenant={editTenant}
+          plan={plan}
+          setPlan={setPlan}
+          adminEmail={adminEmail}
+          setAdminEmail={setAdminEmail}
+          adminPassword={adminPassword}
+          setAdminPassword={setAdminPassword}
+          showAdminFields={false}
+        />
+      )}
+      {deleteTarget && (
+        <DeleteConfirmModal
+          name={deleteTarget.name}
+          onConfirm={handleDelete}
+          onCancel={() => setDeleteTarget(null)}
+          saving={saving}
         />
       )}
 
@@ -317,6 +439,11 @@ export function SuperAdminTenantsView() {
                 ))}
               </div>
 
+              <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                <Crown className="h-3 w-3" />
+                <span className="font-semibold uppercase">{tenant.plan || 'free'}</span>
+              </div>
+
               <div className="flex gap-2 mt-auto flex-wrap">
                 <button
                   onClick={() => {
@@ -338,6 +465,12 @@ export function SuperAdminTenantsView() {
                   className={`flex-1 flex items-center justify-center gap-1.5 py-2 text-sm font-medium rounded-lg border ${tenant.status === 'active' ? 'text-red-600 border-red-200 hover:bg-red-50 dark:border-red-800 dark:hover:bg-red-950' : 'text-emerald-600 border-emerald-200 hover:bg-emerald-50 dark:border-emerald-800 dark:hover:bg-emerald-950'}`}
                 >
                   {tenant.status === 'active' ? <><PowerOff className="w-3.5 h-3.5" /> Suspend</> : <><Power className="w-3.5 h-3.5" /> Activate</>}
+                </button>
+                <button
+                  onClick={() => setDeleteTarget(tenant)}
+                  className="flex items-center justify-center gap-1.5 py-2 px-3 text-sm font-medium rounded-lg border text-red-600 border-red-200 hover:bg-red-50 dark:border-red-800 dark:hover:bg-red-950"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
                 </button>
               </div>
             </div>
