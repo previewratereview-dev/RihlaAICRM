@@ -345,18 +345,21 @@ export function LeadDetailDrawer({
               <span className="text-[10px] font-bold text-foreground uppercase tracking-wider font-mono">Lead Ownership History</span>
             </div>
             <div className="space-y-2 font-mono text-xs">
-              {lead.assignmentHistory.map((hist, idx) => (
+              {lead.assignmentHistory.map((hist, idx) => {
+                const ts = hist.timestamp || hist.assignedAt || new Date().toISOString();
+                return (
                 <div key={idx} className="p-3 rounded-xl bg-secondary/50 border border-border/60 text-muted-foreground">
                   <div className="flex justify-between items-center mb-1">
                     <span className="font-bold text-foreground">Reassigned</span>
-                    <span>{formatDate(hist.timestamp)} {new Date(hist.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                    <span>{formatDate(ts)} {new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                   </div>
                   <p className="text-sm text-muted-foreground">
                     From <span className="font-semibold text-foreground">{hist.previousOwnerName}</span> to <span className="font-semibold text-foreground">{hist.newOwnerName}</span>
                   </p>
                   <span className="text-[10px] text-muted-foreground block mt-1">Changed by: {hist.changedByName}</span>
                 </div>
-              ))}
+              );
+            })}
             </div>
           </div>
         )}

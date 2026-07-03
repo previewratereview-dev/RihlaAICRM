@@ -48,6 +48,7 @@ export function LeadsView() {
   const activities = useCRMStore((s) => s.activities);
   const team = useCRMStore((s) => s.team);
   const addLead = useCRMStore((s) => s.addLead);
+  const syncData = useCRMStore((s) => s.syncData);
   const updateLead = useCRMStore((s) => s.updateLead);
   const deleteLead = useCRMStore((s) => s.deleteLead);
   const addLeadNote = useCRMStore((s) => s.addLeadNote);
@@ -250,12 +251,11 @@ export function LeadsView() {
       let errorCount = 0;
       const totalRows = lines.length - 1;
 
-      setImportProgress({ current: 0, total: totalRows });
+      const leadsPayload: Partial<Lead>[] = [];
 
       for (let i = 1; i < lines.length; i++) {
         const values = parseCSVLine(lines[i]);
         if (values.length === 0 || !values[m.fullName || 0]) {
-          setImportProgress({ current: i, total: totalRows });
           continue;
         }
 
@@ -264,55 +264,70 @@ export function LeadsView() {
           return idx !== undefined && values[idx] !== undefined ? values[idx].replace(/^"|"$/g, '').trim() : fallback;
         };
 
-        try {
-          const fullName = get('fullName', values[0] || '');
-          const businessName = get('businessName', '');
-          const email = get('email', '');
-          const phone = get('phone', '');
-          const whatsapp = get('whatsapp', phone);
-          const budget = get('budget', '');
-          const service = get('service', '');
-          const painPoints = get('painPoints', '');
-          const dealValue = Number(get('dealValue', '0').replace(/[^0-9]/g, '')) || 0;
-          const priorityVal = get('priority', 'medium').toLowerCase();
-          const priority: Priority = ['low', 'medium', 'high', 'urgent'].includes(priorityVal) ? (priorityVal as Priority) : 'medium';
-          const leadSourceVal = get('leadSource', 'website');
-          const statusVal = get('status', 'new').toLowerCase();
-          const status: LeadStatus = ['new', 'contacted', 'qualified', 'proposal', 'negotiation', 'inquiry_received', 'booking_confirmed', 'booking_lost'].includes(statusVal) ? (statusVal as LeadStatus) : 'new';
-          const destination = get('destination', '');
-          const tripType = get('tripType', 'Family Vacation');
-          const numberOfTravelers = get('numberOfTravelers', '1');
-          const departureDate = get('departureDate', '');
-          const returnDate = get('returnDate', '');
-          const travelClass = get('travelClass', 'economy');
-          const specialRequests = get('specialRequests', '');
+        const fullName = get('fullName', values[0] || '');
+        const businessName = get('businessName', '');
+        const email = get('email', '');
+        const phone = get('phone', '');
+        const whatsapp = get('whatsapp', phone);
+        const budget = get('budget', '');
+        const service = get('service', '');
+        const painPoints = get('painPoints', '');
+        const dealValue = Number(get('dealValue', '0').replace(/[^0-9]/g, '')) || 0;
+        const priorityVal = get('priority', 'medium').toLowerCase();
+        const priority: Priority = ['low', 'medium', 'high', 'urgent'].includes(priorityVal) ? (priorityVal as Priority) : 'medium';
+        const leadSourceVal = get('leadSource', 'website');
+        const statusVal = get('status', 'new').toLowerCase();
+        const status: LeadStatus = ['new', 'contacted', 'qualified', 'proposal', 'negotiation', 'inquiry_received', 'booking_confirmed', 'booking_lost'].includes(statusVal) ? (statusVal as LeadStatus) : 'new';
+        const destination = get('destination', '');
+        const tripType = get('tripType', 'Family Vacation');
+        const numberOfTravelers = get('numberOfTravelers', '1');
+        const departureDate = get('departureDate', '');
+        const returnDate = get('returnDate', '');
+        const travelClass = get('travelClass', 'economy');
+        const specialRequests = get('specialRequests', '');
 
-          await addLead({
-            fullName, businessName, email, phone, whatsapp,
-            website: get('website', ''), industry: get('industry', ''), country: '', city: '',
-            linkedin: get('linkedin', ''), instagram: get('instagram', ''),
-            leadSource: leadSourceVal, employeeCount: get('employeeCount', ''),
-            monthlyRevenue: get('monthlyRevenue', ''), currentSoftware: get('currentSoftware', ''),
-            interestedService: service, painPoints, budget, status, priority, dealValue,
-            assignedTo: currentUser?.id || '', tags: ['CSV Import'],
-            lastContacted: '', nextFollowUp: '',
-            tripType, destination, numberOfTravelers, departureDate, returnDate,
-            duration: '', travelClass, specialRequests, sourceOfDiscovery: get('sourceOfDiscovery', ''),
-          } as Lead);
-          importCount++;
-        } catch {
-          errorCount++;
+        leadsPayload.push({
+          fullName, businessName, email, phone, whatsapp,
+          website: get('website', ''), industry: get('industry', ''), country: '', city: '',
+          linkedin: get('linkedin', ''), instagram: get('instagram', ''),
+          leadSource: leadSourceVal as Lead['leadSource'], employeeCount: get('employeeCount', ''),
+          monthlyRevenue: get('monthlyRevenue', ''), currentSoftware: get('currentSoftware', ''),
+          interestedService: service, painPoints, budget, status, priority, dealValue,
+          assignedTo: currentUser?.id || '', tags: ['CSV Import'],
+          lastContacted: '', nextFollowUp: '',
+          tripType, destination, numberOfTravelers, departureDate, returnDate,
+          duration: '', travelClass, specialRequests, sourceOfDiscovery: get('sourceOfDiscovery', ''),
+        });
+      }
+
+      setImportProgress({ current: Math.floor(leadsPayload.length / 2), total: leadsPayload.length });
+
+      try {
+        const res = await fetch('/api/leads/bulk-import', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ leads: leadsPayload }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          importCount = data.count || leadsPayload.length;
+          await syncData();
+        } else {
+          // Fallback to client-side loop if API fails or offline demo
+          for (const item of leadsPayload) {
+            await addLead(item as Lead);
+            importCount++;
+          }
         }
-
-        setImportProgress({ current: i, total: totalRows });
+      } catch {
+        for (const item of leadsPayload) {
+          await addLead(item as Lead);
+          importCount++;
+        }
       }
 
       setImportProgress(null);
-      if (errorCount > 0) {
-        setCsvImportMessage(`Imported ${importCount} leads. ${errorCount} rows failed (missing name or validation error).`);
-      } else {
-        setCsvImportMessage(`Successfully imported ${importCount} leads!`);
-      }
+      setCsvImportMessage(`Successfully processed ${importCount} leads!`);
       setShowCsvMapping(false);
       setCsvPreview(null);
       if (fileInputRef.current) fileInputRef.current.value = '';

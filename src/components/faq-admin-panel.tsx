@@ -56,8 +56,14 @@ export function FaqAdminPanel() {
 
   const remove = (id: string) => setFaqs(faqs.filter((f) => f.id !== id));
 
-  const update = (id: string, field: keyof FaqRow, value: string) => {
-    setFaqs(faqs.map((f) => (f.id === id ? { ...f, [field]: value } : f)));
+  const update = (id: string, field: keyof FaqRow, value: string | string[]) => {
+    setFaqs(faqs.map((f) => {
+      if (f.id !== id) return f;
+      if (field === 'keywords' && typeof value === 'string') {
+        return { ...f, keywords: value.split(',').map((k) => k.trim()).filter(Boolean) };
+      }
+      return { ...f, [field]: value };
+    }));
   };
 
   if (loading) return <p className="text-sm text-muted-foreground">Loading FAQs...</p>;
@@ -102,14 +108,8 @@ export function FaqAdminPanel() {
             className="w-full rounded-lg border p-2 text-sm resize-none"
           />
           <input
-            value={faq.keywords.join(', ')}
-            onChange={(e) =>
-              setFaqs(
-                faqs.map((f) =>
-                  f.id === faq.id ? { ...f, keywords: e.target.value.split(',').map((k) => k.trim()) } : f
-                )
-              )
-            }
+            value={Array.isArray(faq.keywords) ? faq.keywords.join(', ') : ''}
+            onChange={(e) => update(faq.id, 'keywords', e.target.value)}
             placeholder="Keywords (comma separated)"
             className="w-full h-9 rounded-lg border px-2 text-sm"
           />

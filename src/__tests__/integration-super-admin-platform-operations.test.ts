@@ -196,7 +196,7 @@ function clearAllStorage(): void {
  * In LocalStorage mode, this is a mock function
  * In Supabase mode, this would query the audit_logs table
  */
-async function getAuditLogs(): Promise<unknown[]> {
+async function getAuditLogs(tenantId?: string): Promise<any[]> {
   if (!CRMDatabaseService.isSupabaseEnabled()) {
     // In LocalStorage mode, return empty array (audit logging only works in Supabase mode)
     console.log(`ℹ LocalStorage mode: Audit logging is only available in Supabase mode`);

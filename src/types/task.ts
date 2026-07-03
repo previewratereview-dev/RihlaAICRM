@@ -1,7 +1,7 @@
 import { Priority } from './common';
 
 export type TaskType = 'follow_up' | 'call' | 'meeting' | 'email' | 'demo' | 'proposal' | 'other';
-export type TaskStatus = 'pending' | 'in_progress' | 'completed' | 'overdue' | 'cancelled';
+export type TaskStatus = 'pending' | 'in_progress' | 'completed' | 'overdue' | 'cancelled' | 'todo';
 
 export interface TaskUpdate {
   authorName: string;

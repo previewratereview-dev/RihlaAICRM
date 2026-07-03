@@ -108,7 +108,7 @@ export async function POST(request: NextRequest) {
     let convs = null;
     const { data: convsByExact } = await supabase
       .from('conversations')
-      .select('id, lead_id, tenant_id')
+      .select('id, lead_id, tenant_id, unread_count')
       .eq('tenant_id', resolvedTenantId)
       .eq('phone', phoneWithPlus)
       .limit(1);
@@ -117,7 +117,7 @@ export async function POST(request: NextRequest) {
     if (!convs || convs.length === 0) {
       const { data: convsByStripped } = await supabase
         .from('conversations')
-        .select('id, lead_id, tenant_id')
+        .select('id, lead_id, tenant_id, unread_count')
         .eq('tenant_id', resolvedTenantId)
         .eq('phone', phoneWithoutPlus)
         .limit(1);
@@ -145,10 +145,11 @@ export async function POST(request: NextRequest) {
       created_at: now,
     });
 
+    const currentUnread = Number(conv.unread_count) || 0;
     await supabase.from('conversations').update({
       last_message: body,
       last_message_at: now,
-      unread_count: 1,
+      unread_count: currentUnread + 1,
       updated_at: now,
     }).eq('id', conv.id).eq('tenant_id', resolvedTenantId);
 

@@ -21,6 +21,7 @@ import {
   Crown,
   AlertTriangle,
   Mail,
+  Download,
 } from 'lucide-react';
 import { useCRMStore } from '@/hooks/use-crm-store';
 import { can } from '@/lib/permissions';
@@ -54,6 +55,7 @@ export function SettingsView() {
   const [tab, setTab] = useState<SettingsTab>('agency');
   const [form, setForm] = useState(settings);
   const [saving, setSaving] = useState(false);
+  const [exportingGdpr, setExportingGdpr] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -137,6 +139,29 @@ export function SettingsView() {
       toast.error('Failed to save settings.');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleExportGdpr = async () => {
+    setExportingGdpr(true);
+    try {
+      const res = await fetch('/api/gdpr/export');
+      if (!res.ok) throw new Error('Export failed');
+      const data = await res.json();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `gdpr_tenant_export_${new Date().toISOString().split('T')[0]}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toast.success('GDPR data archive exported successfully.');
+    } catch {
+      toast.error('Failed to export GDPR data archive.');
+    } finally {
+      setExportingGdpr(false);
     }
   };
 
@@ -244,6 +269,26 @@ export function SettingsView() {
               <Save className="h-4 w-4" />
               Save Agency Settings
             </button>
+
+            <div className="pt-6 border-t border-border/60">
+              <div className="p-5 rounded-2xl bg-card/80 border border-border/60 space-y-3">
+                <h4 className="text-sm font-semibold text-foreground flex items-center gap-2">
+                  <Database className="h-4 w-4 text-primary" />
+                  GDPR & Data Portability
+                </h4>
+                <p className="text-xs text-muted-foreground">
+                  Download a complete structured archive (JSON) of your workspace data including leads, notes, tasks, and communications.
+                </p>
+                <button
+                  onClick={handleExportGdpr}
+                  disabled={exportingGdpr}
+                  className="inline-flex items-center gap-2 h-9 px-4 rounded-xl border border-border/80 bg-background hover:bg-muted text-xs font-semibold text-foreground transition-all cursor-pointer"
+                >
+                  <Download className="h-3.5 w-3.5 text-primary" />
+                  {exportingGdpr ? 'Exporting Archive...' : 'Export Workspace Data (GDPR)'}
+                </button>
+              </div>
+            </div>
           </motion.div>
         )}
 

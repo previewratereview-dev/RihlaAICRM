@@ -23,6 +23,7 @@ export interface Conversation {
   leadName: string;
   leadAvatar: string;
   leadCompany: string;
+  leadEmail?: string;
   channel: Channel;
   assignedTo: string;
   assignedName: string;

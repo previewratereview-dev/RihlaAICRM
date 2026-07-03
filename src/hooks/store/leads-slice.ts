@@ -94,6 +94,7 @@ export function createLeadsSlice(set: SetState, get: GetState) {
           leadName: newLead.fullName,
           leadAvatar: '',
           leadCompany: newLead.businessName || '',
+          leadEmail: newLead.email || '',
           channel: newLead.whatsapp ? 'whatsapp' : 'sms',
           assignedTo: newLead.assignedTo,
           assignedName: assUser?.fullName || 'Sarah Chen',

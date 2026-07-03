@@ -5,6 +5,7 @@ import { motion } from 'framer-motion';
 import { Users, MapPin, Calendar, DollarSign, RotateCcw, Loader2, Search } from 'lucide-react';
 import { useCRMStore } from '@/hooks/use-crm-store';
 import { formatCurrency, formatDate } from '@/lib/utils';
+import { normalizeLeadStatus } from '@/lib/pipeline-status';
 import type { Lead } from '@/types';
 
 function getLastTripDate(lead: Lead): string {
@@ -21,7 +22,7 @@ function isRepeatClient(lead: Lead, allLeads: Lead[]): boolean {
   return allLeads.some(
     (other) =>
       other.id !== lead.id &&
-      other.status === 'closed_won' &&
+      normalizeLeadStatus(other.status) === 'booking_confirmed' &&
       (other.email?.toLowerCase() === lead.email?.toLowerCase() || (lead.phone && other.phone === lead.phone))
   );
 }
@@ -39,7 +40,7 @@ export function ClientsView() {
     () =>
       leads
         .filter((lead) => {
-          if (lead.status !== 'closed_won' && !isRepeatClient(lead, leads)) return false;
+          if (normalizeLeadStatus(lead.status) !== 'booking_confirmed' && !isRepeatClient(lead, leads)) return false;
           if (repeatOnly && !isRepeatClient(lead, leads)) return false;
           if (searchTerm.trim()) {
             const q = searchTerm.toLowerCase();

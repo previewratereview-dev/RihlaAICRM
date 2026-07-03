@@ -155,7 +155,7 @@ export function ConversationsView() {
       body: JSON.stringify({
         channel,
         conversationId: selectedConversation.id,
-        to: channel === 'email' ? selectedConversation.leadCompany : selectedConversation.phone,
+        to: channel === 'email' ? (selectedConversation.leadEmail || selectedConversation.leadCompany) : selectedConversation.phone,
         content,
         leadName: selectedConversation.leadName,
       }),

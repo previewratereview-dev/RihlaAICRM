@@ -14,8 +14,10 @@ export type LeadStatus =
   // Backward-compatible aliases used by existing UI views
   | 'new'
   | 'contacted'
+  | 'qualified'
   | 'interested'
   | 'demo_scheduled'
+  | 'proposal'
   | 'proposal_sent'
   | 'negotiation'
   | 'closed_won'
@@ -100,14 +102,22 @@ export interface Lead {
 }
 
 export interface LeadAssignmentHistory {
-  leadId: string;
-  previousOwnerId: string;
-  previousOwnerName: string;
-  newOwnerId: string;
-  newOwnerName: string;
-  changedById: string;
-  changedByName: string;
-  timestamp: string;
+  leadId?: string;
+  previousOwnerId?: string;
+  previousOwnerName?: string;
+  newOwnerId?: string;
+  newOwnerName?: string;
+  changedById?: string;
+  changedByName?: string;
+  timestamp?: string;
+  assignedTo?: string;
+  assignedBy?: string;
+  assignedAt?: string;
+  note?: string;
+  previousAssignee?: string;
+  newAssignee?: string;
+  changedBy?: string;
+  [key: string]: any;
 }
 
 export interface LeadNote {
