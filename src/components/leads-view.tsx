@@ -53,6 +53,7 @@ export function LeadsView() {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editingLead, setEditingLead] = useState<Lead | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
   const [csvImportMessage, setCsvImportMessage] = useState<string | null>(null);
   const [csvPreview, setCsvPreview] = useState<{ headers: string[]; rows: string[][]; mapping: Record<string, number> } | null>(null);
   const [showCsvMapping, setShowCsvMapping] = useState(false);
@@ -91,22 +92,35 @@ export function LeadsView() {
     return filteredLeads.slice(start, start + pageSize);
   }, [filteredLeads, currentPage, pageSize]);
 
-  const handleOpenAddModal = () => { setEditingLead(null); setIsAddModalOpen(true); };
+  const handleOpenAddModal = () => { setEditingLead(null); setFormError(null); setIsAddModalOpen(true); };
 
   const handleOpenEditModal = (lead: Lead) => {
     setEditingLead(lead);
+    setFormError(null);
     setIsEditModalOpen(true);
   };
 
-  const handleSubmitLead = (data: LeadFormData) => {
-    addLead(data as Lead);
-    setIsAddModalOpen(false);
+  const handleSubmitLead = async (data: LeadFormData) => {
+    setFormError(null);
+    try {
+      await addLead(data as Lead);
+      setIsAddModalOpen(false);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to create booking';
+      setFormError(msg);
+    }
   };
 
-  const handleSaveEditLead = (data: LeadFormData) => {
+  const handleSaveEditLead = async (data: LeadFormData) => {
     if (!editingLead) return;
-    updateLead(editingLead.id, data as Lead);
-    setIsEditModalOpen(false);
+    setFormError(null);
+    try {
+      await updateLead(editingLead.id, data as Lead);
+      setIsEditModalOpen(false);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to save changes';
+      setFormError(msg);
+    }
   };
 
   const handleDeleteLead = (id: string) => {
@@ -345,8 +359,10 @@ export function LeadsView() {
             csvImportMessage={csvImportMessage}
             team={team}
             onSubmit={isAddModalOpen ? handleSubmitLead : handleSaveEditLead}
-            onClose={() => { setIsAddModalOpen(false); setIsEditModalOpen(false); }}
+            onClose={() => { setIsAddModalOpen(false); setIsEditModalOpen(false); setFormError(null); }}
             onDismissCsvMessage={() => setCsvImportMessage(null)}
+            formError={formError}
+            onValidationError={setFormError}
           />
         )}
       </AnimatePresence>

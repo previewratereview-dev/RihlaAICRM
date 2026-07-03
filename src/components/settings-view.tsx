@@ -20,6 +20,7 @@ import {
   Clock,
   Crown,
   AlertTriangle,
+  Mail,
 } from 'lucide-react';
 import { useCRMStore } from '@/hooks/use-crm-store';
 import { can } from '@/lib/permissions';
@@ -32,7 +33,7 @@ import {
   MessageSquareText,
 } from 'lucide-react';
 
-type SettingsTab = 'profile' | 'agency' | 'notifications' | 'billing' | 'ai' | 'integrations' | 'users' | 'audit' | 'ai_usage' | 'faq';
+type SettingsTab = 'profile' | 'agency' | 'email' | 'notifications' | 'billing' | 'ai' | 'integrations' | 'users' | 'audit' | 'ai_usage' | 'faq';
 
 interface SubscriptionData {
   plan: string;
@@ -112,6 +113,7 @@ export function SettingsView() {
   const tabs: { id: SettingsTab; label: string; icon: React.ComponentType<{ className?: string }>; permission?: Parameters<typeof can>[1] }[] = [
     { id: 'agency', label: 'Agency', icon: Palette },
     { id: 'profile', label: 'Profile', icon: User },
+    { id: 'email', label: 'Email', icon: Mail },
     { id: 'notifications', label: 'Notifications', icon: Bell },
     { id: 'ai', label: 'AI Config', icon: Cpu, permission: 'settings:ai:write' },
     { id: 'billing', label: 'Billing', icon: CreditCard },
@@ -281,10 +283,100 @@ export function SettingsView() {
           </motion.div>
         )}
 
+        {tab === 'email' && (
+          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-6 max-w-2xl">
+            {/* Auto-send Rules */}
+            <div className="space-y-3">
+              <div>
+                <h3 className="text-sm font-bold text-foreground">Auto-Send Rules</h3>
+                <p className="text-xs text-muted-foreground mt-1">Choose when emails are sent automatically. Manual send is always available from any booking.</p>
+              </div>
+              {[
+                { key: 'emailAutomation' as const, label: 'New booking follow-up', desc: 'Send a welcome email when a traveler submits a new booking inquiry', icon: '📩' },
+                { key: 'emailStatusAutomation' as const, label: 'Status change notification', desc: 'Notify the traveler when their booking status is updated (e.g. confirmed, in progress)', icon: '🔄' },
+              ].map((item) => (
+                <label key={item.key} className="flex items-center gap-4 p-4 rounded-xl bg-card/80 border border-border/60 cursor-pointer hover:border-primary/30 transition-colors">
+                  <span className="text-lg">{item.icon}</span>
+                  <div className="flex-1">
+                    <span className="text-sm font-semibold block">{item.label}</span>
+                    <span className="text-xs text-muted-foreground">{item.desc}</span>
+                  </div>
+                  <div className="relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0" style={{ backgroundColor: form[item.key] ? 'hsl(var(--primary))' : 'hsl(var(--input))' }}>
+                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform shadow-sm ${form[item.key] ? 'translate-x-6' : 'translate-x-1'}`} />
+                    <input type="checkbox" checked={form[item.key] ?? false} onChange={(e) => setForm({ ...form, [item.key]: e.target.checked })} className="sr-only" />
+                  </div>
+                </label>
+              ))}
+            </div>
+
+            {/* Email Identity */}
+            <div className="space-y-3">
+              <div>
+                <h3 className="text-sm font-bold text-foreground">Email Identity</h3>
+                <p className="text-xs text-muted-foreground mt-1">Customize how your emails appear to travelers.</p>
+              </div>
+              <div className="grid sm:grid-cols-2 gap-4">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-mono uppercase text-muted-foreground font-semibold">From Name</label>
+                  <input
+                    value={form.emailFromName || ''}
+                    onChange={(e) => setForm({ ...form, emailFromName: e.target.value })}
+                    placeholder="e.g. WanderBot Travel Team"
+                    className="h-10 rounded-xl bg-background border border-input px-3 text-sm focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
+                  />
+                  <p className="text-[10px] text-muted-foreground">Shown as the sender name in the traveler&apos;s inbox</p>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-mono uppercase text-muted-foreground font-semibold">Reply-To Email</label>
+                  <input
+                    type="email"
+                    value={form.emailReplyTo || ''}
+                    onChange={(e) => setForm({ ...form, emailReplyTo: e.target.value })}
+                    placeholder="e.g. bookings@youragency.com"
+                    className="h-10 rounded-xl bg-background border border-input px-3 text-sm focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
+                  />
+                  <p className="text-[10px] text-muted-foreground">Replies from travelers go to this address</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Email Template */}
+            <div className="space-y-3">
+              <div>
+                <h3 className="text-sm font-bold text-foreground">Follow-Up Email Template</h3>
+                <p className="text-xs text-muted-foreground mt-1">Default template for new booking follow-ups. Use {'{{name}}'} for traveler name and {'{{destination}}'} for destination.</p>
+              </div>
+              <textarea
+                value={form.emailFollowUpTemplate || ''}
+                onChange={(e) => setForm({ ...form, emailFollowUpTemplate: e.target.value })}
+                placeholder={`Hi {{name}},\n\nThank you for your travel inquiry{{#destination}} for {{destination}}{{/destination}}. A specialist will be in touch shortly to discuss your trip details.\n\nBest regards,\nYour Travel Team`}
+                rows={8}
+                className="w-full rounded-xl bg-background border border-input px-3 py-2 text-sm font-mono focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 resize-none"
+              />
+            </div>
+
+            {/* Email Status */}
+            <div className="p-4 rounded-xl bg-muted/30 border border-border/40 flex items-start gap-3">
+              <CheckCircle2 className="h-5 w-5 text-primary shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-semibold">Email Service Status</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Emails are sent via Resend. RESEND_API_KEY is {process.env.RESEND_API_KEY ? 'configured' : 'not configured'}.
+                  You can send emails manually from any booking detail view.
+                </p>
+              </div>
+            </div>
+
+            <button onClick={handleSaveAgency} disabled={saving} className="h-10 px-5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors shadow-md shadow-primary/20">
+              <Save className="h-4 w-4 inline mr-2" />
+              Save Email Settings
+            </button>
+          </motion.div>
+        )}
+
         {tab === 'notifications' && (
           <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-3 max-w-xl">
             {[
-              { key: 'emailAutomation' as const, label: 'Email automation' },
               { key: 'whatsappAutomation' as const, label: 'WhatsApp automation' },
               { key: 'smsAutomation' as const, label: 'SMS automation' },
             ].map((item) => (

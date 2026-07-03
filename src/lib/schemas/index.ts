@@ -83,7 +83,6 @@ export const taskSchema = z.object({
   priority: z.enum(['low', 'medium', 'high', 'urgent']),
   dueDate: z.string().min(1, 'Due date is required'),
   leadId: z.string(),
-  leadName: z.string(),
   assignedTo: z.string().min(1, 'Assignee is required'),
 });
 
@@ -96,7 +95,6 @@ export const TASK_DEFAULTS: TaskFormData = {
   priority: 'medium',
   dueDate: '',
   leadId: '',
-  leadName: '',
   assignedTo: '',
 };
 

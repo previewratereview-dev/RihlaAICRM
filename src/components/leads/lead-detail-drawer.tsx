@@ -14,11 +14,13 @@ import {
   Edit2,
   Video,
   CalendarDays,
+  Send,
 } from 'lucide-react';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { getScoreLabel } from '@/lib/ai/lead-scoring';
 import { LeadAiActions } from '@/components/lead-ai-actions';
 import { LEAD_STATUS_OPTIONS } from '@/lib/constants';
+import { useCRMStore } from '@/hooks/use-crm-store';
 import type { Lead, LeadNote, LeadActivity, User, LeadStatus } from '@/types';
 
 interface LeadDetailDrawerProps {
@@ -48,13 +50,49 @@ export function LeadDetailDrawer({
   onDeleteNote,
   currentUser,
 }: LeadDetailDrawerProps) {
+  const settings = useCRMStore((s) => s.settings);
   const [newNoteText, setNewNoteText] = useState('');
+  const [sendingEmail, setSendingEmail] = useState(false);
+  const [emailSent, setEmailSent] = useState(false);
 
   const handleAddNote = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newNoteText.trim()) return;
     onAddNote(lead.id, currentUser?.id || 'user-1', currentUser?.fullName || 'System', newNoteText.trim());
     setNewNoteText('');
+  };
+
+  const handleSendEmail = async () => {
+    if (!lead.email) return;
+    setSendingEmail(true);
+    setEmailSent(false);
+
+    const template = settings.emailFollowUpTemplate || `Hi {{name}},\n\nThank you for your travel inquiry{{#destination}} for {{destination}}{{/destination}}. A specialist will be in touch shortly.\n\nBest regards,\nYour Travel Team`;
+    const body = template
+      .replace(/\{\{name\}\}/g, lead.fullName)
+      .replace(/\{\{destination\}\}/g, lead.destination || '')
+      .replace(/\n/g, '<br>');
+
+    try {
+      const res = await fetch('/api/messaging/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          channel: 'email',
+          to: lead.email,
+          content: body,
+          leadName: lead.fullName,
+        }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        setEmailSent(true);
+      }
+    } catch {
+      // email send failed silently
+    } finally {
+      setSendingEmail(false);
+    }
   };
 
   return (
@@ -71,6 +109,20 @@ export function LeadDetailDrawer({
           <span className="font-heading font-bold text-foreground tracking-tight text-xs uppercase font-mono">Intelligence Profile</span>
         </div>
         <div className="flex items-center gap-2">
+          {lead.email && (
+            <button
+              onClick={handleSendEmail}
+              disabled={sendingEmail || emailSent}
+              className={`p-2 rounded-xl border transition-all cursor-pointer ${
+                emailSent
+                  ? 'border-green-200 bg-green-50 text-green-600'
+                  : 'border-border bg-background text-muted-foreground hover:text-primary hover:border-primary/40'
+              } disabled:opacity-60`}
+              title={emailSent ? 'Email sent' : 'Send follow-up email'}
+            >
+              <Send className="h-4 w-4" />
+            </button>
+          )}
           <button
             onClick={() => onEdit(lead)}
             className="p-2 rounded-xl border border-border bg-background text-muted-foreground hover:text-primary hover:border-primary/40 transition-all cursor-pointer"

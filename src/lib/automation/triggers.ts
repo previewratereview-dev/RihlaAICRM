@@ -1,11 +1,13 @@
 import type { Lead } from '@/types';
 import { dispatchWebhook, buildLeadWebhookPayload } from '@/lib/integrations/webhook';
-import { sendLeadFollowUpEmail } from '@/lib/integrations/email';
-import { sendWhatsApp } from '@/lib/integrations/whatsapp';
 
 export interface AutomationSettings {
   makeWebhookUrl?: string;
   emailAutomation?: boolean;
+  emailStatusAutomation?: boolean;
+  emailFromName?: string;
+  emailReplyTo?: string;
+  emailFollowUpTemplate?: string;
   whatsappAutomation?: boolean;
 }
 
@@ -99,6 +101,7 @@ export async function executeWorkflowActions(
         break;
       case 'email':
         if (lead.email) {
+          const { sendLeadFollowUpEmail } = await import('@/lib/integrations/email');
           await sendLeadFollowUpEmail({
             fullName: lead.fullName,
             email: lead.email,
@@ -108,6 +111,7 @@ export async function executeWorkflowActions(
         break;
       case 'whatsapp':
         if (lead.phone || lead.whatsapp) {
+          const { sendWhatsApp } = await import('@/lib/integrations/whatsapp');
           await sendWhatsApp(lead.tenantId, {
             to: lead.whatsapp || lead.phone,
             body: action.config.message || `Hi ${lead.fullName}, following up on your travel inquiry.`,
@@ -125,10 +129,14 @@ export async function runLeadCreatedAutomations(lead: Lead, settings: Automation
     await dispatchWebhook(settings.makeWebhookUrl, buildLeadWebhookPayload(lead as unknown as Record<string, unknown>, 'lead.created'));
   }
   if (settings.emailAutomation && lead.email) {
+    const { sendLeadFollowUpEmail } = await import('@/lib/integrations/email');
     await sendLeadFollowUpEmail({
       fullName: lead.fullName,
       email: lead.email,
       destination: lead.destination,
+      fromName: settings.emailFromName,
+      replyTo: settings.emailReplyTo,
+      template: settings.emailFollowUpTemplate,
     });
   }
 }
@@ -146,6 +154,17 @@ export async function runLeadStatusAutomations(
         'lead.status_changed'
       )
     );
+  }
+  if (settings.emailStatusAutomation && lead.email) {
+    const { sendLeadFollowUpEmail } = await import('@/lib/integrations/email');
+    await sendLeadFollowUpEmail({
+      fullName: lead.fullName,
+      email: lead.email,
+      destination: lead.destination,
+      fromName: settings.emailFromName,
+      replyTo: settings.emailReplyTo,
+      template: settings.emailFollowUpTemplate,
+    });
   }
 }
 

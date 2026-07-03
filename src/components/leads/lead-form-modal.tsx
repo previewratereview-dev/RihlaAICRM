@@ -15,6 +15,8 @@ interface LeadFormModalProps {
   onSubmit: (data: LeadFormData) => void;
   onClose: () => void;
   onDismissCsvMessage: () => void;
+  formError?: string | null;
+  onValidationError?: (message: string) => void;
 }
 
 function FieldError({ message }: { message?: string }) {
@@ -30,6 +32,8 @@ export function LeadFormModal({
   onSubmit,
   onClose,
   onDismissCsvMessage,
+  formError,
+  onValidationError,
 }: LeadFormModalProps) {
   const { register, handleSubmit, formState: { errors } } = useForm<LeadFormData>({
     resolver: zodResolver(leadSchema) as Resolver<LeadFormData>,
@@ -73,7 +77,11 @@ export function LeadFormModal({
           </button>
         </div>
 
-        <form onSubmit={handleSubmit(onSubmit)} className="flex-1 overflow-y-auto p-6 space-y-4 max-h-[75vh] scrollbar-thin text-sm text-foreground">
+        <form onSubmit={handleSubmit(onSubmit, (errors) => {
+          const firstError = Object.values(errors)[0];
+          const msg = firstError?.message || 'Please fix the errors below';
+          onValidationError?.(msg);
+        })} className="flex-1 overflow-y-auto p-6 space-y-4 max-h-[75vh] scrollbar-thin text-sm text-foreground">
           {csvImportMessage && (
             <div className={`px-4 py-2 rounded-lg text-sm font-medium ${
               csvImportMessage.startsWith('Successfully')
@@ -82,6 +90,12 @@ export function LeadFormModal({
             }`}>
               {csvImportMessage}
               <button type="button" onClick={onDismissCsvMessage} className="ml-2 underline">dismiss</button>
+            </div>
+          )}
+
+          {formError && (
+            <div className="px-4 py-2 rounded-lg text-sm font-medium bg-red-50 border border-red-200 text-red-700">
+              {formError}
             </div>
           )}
 

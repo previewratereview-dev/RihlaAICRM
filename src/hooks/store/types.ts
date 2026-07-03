@@ -8,6 +8,10 @@ export interface Settings {
   systemPrompt: string;
   makeWebhookUrl: string;
   emailAutomation: boolean;
+  emailStatusAutomation: boolean;
+  emailFromName: string;
+  emailReplyTo: string;
+  emailFollowUpTemplate: string;
   whatsappAutomation: boolean;
   smsAutomation: boolean;
   dailyTargetScore: number;

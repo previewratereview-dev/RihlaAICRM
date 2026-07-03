@@ -18,9 +18,12 @@ export async function sendEmail(options: {
   to: string;
   subject: string;
   html: string;
+  fromName?: string;
+  replyTo?: string;
 }): Promise<{ ok: boolean; error?: string }> {
   const apiKey = process.env.RESEND_API_KEY;
-  const from = process.env.RESEND_FROM || 'CRM <onboarding@resend.dev>';
+  const defaultFrom = process.env.RESEND_FROM || 'CRM <onboarding@resend.dev>';
+  const from = options.fromName ? `${options.fromName} <onboarding@resend.dev>` : defaultFrom;
 
   if (!apiKey) {
     logger.warn('[Email] RESEND_API_KEY not configured');
@@ -39,6 +42,7 @@ export async function sendEmail(options: {
         to: options.to,
         subject: options.subject,
         html: options.html,
+        ...(options.replyTo ? { reply_to: options.replyTo } : {}),
       }),
     });
 
@@ -56,10 +60,25 @@ export async function sendLeadFollowUpEmail(lead: {
   fullName: string;
   email: string;
   destination?: string;
+  fromName?: string;
+  replyTo?: string;
+  template?: string;
 }): Promise<{ ok: boolean; error?: string }> {
+  let html: string;
+  if (lead.template) {
+    html = lead.template
+      .replace(/\{\{name\}\}/g, escapeHtml(lead.fullName))
+      .replace(/\{\{destination\}\}/g, escapeHtml(lead.destination || ''))
+      .replace(/\n/g, '<br>');
+  } else {
+    html = `<p>Hi ${escapeHtml(lead.fullName)},</p><p>Thank you for your interest${lead.destination ? ` in travel to ${escapeHtml(lead.destination)}` : ''}. A travel specialist will be in touch shortly.</p>`;
+  }
+
   return sendEmail({
     to: lead.email,
     subject: `Your travel inquiry${lead.destination ? ` — ${lead.destination}` : ''}`,
-    html: `<p>Hi ${escapeHtml(lead.fullName)},</p><p>Thank you for your interest. A travel specialist will be in touch shortly.</p>`,
+    html,
+    fromName: lead.fromName,
+    replyTo: lead.replyTo,
   });
 }

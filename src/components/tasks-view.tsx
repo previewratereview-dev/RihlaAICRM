@@ -67,6 +67,7 @@ export function TasksView() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
 
   const { register, handleSubmit, reset, formState: { errors } } = useForm<TaskFormData>({
     resolver: zodResolver(taskSchema) as Resolver<TaskFormData>,
@@ -107,6 +108,7 @@ export function TasksView() {
 
   const openNewTaskModal = () => {
     setEditingTask(null);
+    setFormError(null);
     reset({
       title: '',
       description: '',
@@ -121,6 +123,7 @@ export function TasksView() {
 
   const openEditTaskModal = (task: typeof tasks[0]) => {
     setEditingTask(task.id);
+    setFormError(null);
     reset({
       title: task.title,
       description: task.description || '',
@@ -137,6 +140,7 @@ export function TasksView() {
     if (!currentUser) return;
 
     setSaving(true);
+    setFormError(null);
 
     try {
       if (editingTask) {
@@ -168,9 +172,11 @@ export function TasksView() {
       }
       setIsModalOpen(false);
       setEditingTask(null);
+      setFormError(null);
       reset();
-    } catch {
-      // error handled by store
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to save task';
+      setFormError(msg);
     } finally {
       setSaving(false);
     }
@@ -414,14 +420,23 @@ export function TasksView() {
                 </span>
                 <button
                   type="button"
-                  onClick={() => setIsModalOpen(false)}
+                  onClick={() => { setIsModalOpen(false); setFormError(null); }}
                   className="p-2 rounded-xl text-muted-foreground hover:text-foreground hover:bg-secondary transition-all cursor-pointer"
                 >
                   <X className="h-4 w-4" />
                 </button>
               </div>
 
-              <form onSubmit={handleSubmit(onSubmit)} className="p-6 space-y-4 max-h-[75vh] overflow-y-auto scrollbar-thin text-sm">
+              <form onSubmit={handleSubmit(onSubmit, (errors) => {
+                const firstError = Object.values(errors)[0];
+                const msg = firstError?.message || 'Please fix the errors below';
+                setFormError(msg);
+              })} className="p-6 space-y-4 max-h-[75vh] overflow-y-auto scrollbar-thin text-sm">
+                {formError && (
+                  <div className="px-4 py-2 rounded-lg text-sm font-medium bg-red-50 border border-red-200 text-red-700">
+                    {formError}
+                  </div>
+                )}
                 <div className="flex flex-col gap-1.5">
                   <label className="text-muted-foreground font-mono text-[10px] uppercase font-bold">Title</label>
                   <input
@@ -515,9 +530,9 @@ export function TasksView() {
 
                 <div className="flex justify-end gap-3 pt-2">
                   <button
-                    type="button"
-                    onClick={() => setIsModalOpen(false)}
-                    className="h-10 px-4 rounded-xl border border-border/60 bg-background text-sm font-medium text-foreground hover:bg-secondary transition-colors"
+                  type="button"
+                  onClick={() => { setIsModalOpen(false); setFormError(null); }}
+                  className="h-10 px-4 rounded-xl border border-border/60 bg-background text-sm font-medium text-foreground hover:bg-secondary transition-colors"
                   >
                     Cancel
                   </button>

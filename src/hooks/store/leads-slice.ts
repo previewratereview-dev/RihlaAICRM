@@ -16,18 +16,42 @@ export function createLeadsSlice(set: SetState, get: GetState) {
     addLead: async (newLeadData: Omit<Lead, 'id' | 'createdAt' | 'updatedAt' | 'aiScore' | 'aiSummary'>) => {
       const id = `lead-${generateId()}`;
       const now = new Date().toISOString();
+      const currentUser = get().currentUser;
+      if (!currentUser) throw new Error('User not authenticated');
+
+      // Duplicate detection — check email, phone, or name+business combination
+      const existingLeads = get().leads;
+      const newEmail = newLeadData.email?.toLowerCase().trim();
+      const newPhone = newLeadData.phone?.replace(/[^0-9+]/g, '').trim();
+      const newName = newLeadData.fullName?.toLowerCase().trim();
+      const newBusiness = newLeadData.businessName?.toLowerCase().trim();
+
+      const duplicate = existingLeads.find((l) => {
+        if (newEmail && l.email?.toLowerCase().trim() === newEmail) return true;
+        if (newPhone && l.phone?.replace(/[^0-9+]/g, '').trim() === newPhone) return true;
+        if (newName && newBusiness && l.fullName?.toLowerCase().trim() === newName && l.businessName?.toLowerCase().trim() === newBusiness) return true;
+        return false;
+      });
+
+      if (duplicate) {
+        const matchBy = newEmail && duplicate.email?.toLowerCase().trim() === newEmail
+          ? `email "${duplicate.email}"`
+          : newPhone && duplicate.phone?.replace(/[^0-9+]/g, '').trim() === newPhone
+            ? `phone "${duplicate.phone}"`
+            : `name "${duplicate.fullName}" and business "${duplicate.businessName}"`;
+        throw new Error(`A booking already exists for this traveler (${matchBy}). Please edit the existing booking instead.`);
+      }
 
       const draftLead: Lead = {
         ...newLeadData,
         id,
+        tenantId: newLeadData.tenantId || currentUser.tenantId,
         aiScore: 0,
         aiSummary: '',
         createdAt: now,
         updatedAt: now,
       };
       const newLead = enrichLeadWithAIScore(draftLead);
-      const currentUser = get().currentUser;
-      if (!currentUser) throw new Error('User not authenticated');
 
       await CRMDatabaseService.upsertLead(newLead, newLead.tenantId, currentUser.role, currentUser);
 
@@ -49,6 +73,9 @@ export function createLeadsSlice(set: SetState, get: GetState) {
         await runLeadCreatedAutomations(newLead, {
           makeWebhookUrl: get().settings.makeWebhookUrl,
           emailAutomation: get().settings.emailAutomation,
+          emailFromName: get().settings.emailFromName,
+          emailReplyTo: get().settings.emailReplyTo,
+          emailFollowUpTemplate: get().settings.emailFollowUpTemplate,
         });
       } catch {
         // automations are optional when integrations are not configured
@@ -90,7 +117,7 @@ export function createLeadsSlice(set: SetState, get: GetState) {
           isRead: true,
           createdAt: now
         };
-        await CRMDatabaseService.insertMessage(sysMsg, '', currentUser.role, currentUser);
+        await CRMDatabaseService.insertMessage(sysMsg, newConv.tenantId, currentUser.role, currentUser);
       }
 
       await get().syncData();
@@ -193,6 +220,10 @@ export function createLeadsSlice(set: SetState, get: GetState) {
           await runLeadStatusAutomations(updatedLead, currentLead.status, {
             makeWebhookUrl: get().settings.makeWebhookUrl,
             emailAutomation: get().settings.emailAutomation,
+            emailStatusAutomation: get().settings.emailStatusAutomation,
+            emailFromName: get().settings.emailFromName,
+            emailReplyTo: get().settings.emailReplyTo,
+            emailFollowUpTemplate: get().settings.emailFollowUpTemplate,
           });
         } catch {
           // optional integrations
