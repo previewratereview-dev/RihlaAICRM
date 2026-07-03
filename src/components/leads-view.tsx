@@ -12,18 +12,33 @@ import { can } from '@/lib/permissions';
 import type { LeadFormData } from '@/lib/schemas';
 
 const CSV_FIELD_MAP = {
-  fullName: ['name', 'fullname', 'contactname', 'leadname', 'full_name'],
-  businessName: ['business', 'company', 'entity', 'business_name'],
-  email: ['email', 'mail', 'node'],
-  phone: ['phone', 'mobile', 'tel', 'telephone'],
+  fullName: ['name', 'fullname', 'contactname', 'leadname', 'full_name', 'traveler'],
+  businessName: ['business', 'company', 'entity', 'business_name', 'group'],
+  email: ['email', 'mail', 'e-mail'],
+  phone: ['phone', 'mobile', 'tel', 'telephone', 'contact'],
   whatsapp: ['whatsapp', 'wa'],
   budget: ['budget', 'capital', 'fund'],
-  service: ['service', 'interested', 'solution', 'interestedservice'],
-  painPoints: ['pain', 'problem', 'difficulty', 'painpoints'],
-  dealValue: ['deal', 'value', 'revenue', 'arr', 'dealvalue'],
+  service: ['service', 'interested', 'solution', 'interestedservice', 'serviceinterested'],
+  painPoints: ['pain', 'problem', 'difficulty', 'painpoints', 'pain_points'],
+  dealValue: ['deal', 'value', 'revenue', 'arr', 'dealvalue', 'deal_value'],
   priority: ['priority', 'importance'],
-  leadSource: ['source', 'leadsource', 'discovery', 'channel'],
+  leadSource: ['source', 'leadsource', 'discovery', 'channel', 'lead_source'],
   status: ['status', 'stage'],
+  destination: ['destination', 'location', 'place', 'country', 'travel_to'],
+  tripType: ['trip', 'triptype', 'trip_type', 'travel_type', 'vacation'],
+  numberOfTravelers: ['travelers', 'travelergroup', 'numberoftravelers', 'group_size', 'pax'],
+  departureDate: ['departure', 'depart', 'departuredate', 'start_date', 'start'],
+  returnDate: ['return', 'returndate', 'end_date', 'end'],
+  travelClass: ['class', 'travelclass', 'travel_class', 'flight_class'],
+  specialRequests: ['requests', 'special', 'specialrequests', 'special_requests', 'notes'],
+  website: ['website', 'url', 'site'],
+  industry: ['industry', 'sector'],
+  linkedin: ['linkedin', 'linkedin_url'],
+  instagram: ['instagram', 'ig'],
+  employeeCount: ['employees', 'employeesize', 'employee_count', 'team_size'],
+  monthlyRevenue: ['revenue', 'monthlyrevenue', 'monthly_revenue', 'mrr'],
+  currentSoftware: ['software', 'currentsoftware', 'current_software', 'tools'],
+  sourceOfDiscovery: ['discovery', 'sourceofdiscovery', 'how_found', 'referral'],
 };
 
 export function LeadsView() {
@@ -57,6 +72,7 @@ export function LeadsView() {
   const [csvImportMessage, setCsvImportMessage] = useState<string | null>(null);
   const [csvPreview, setCsvPreview] = useState<{ headers: string[]; rows: string[][]; mapping: Record<string, number> } | null>(null);
   const [showCsvMapping, setShowCsvMapping] = useState(false);
+  const [importProgress, setImportProgress] = useState<{ current: number; total: number } | null>(null);
   const [bulkStatusLoading, setBulkStatusLoading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -229,48 +245,74 @@ export function LeadsView() {
       if (!text) return;
 
       const lines = text.split('\n').map((line) => line.trim()).filter(Boolean);
-      const headers = parseCSVLine(lines[0]);
       const m = csvPreview.mapping;
       let importCount = 0;
+      let errorCount = 0;
+      const totalRows = lines.length - 1;
+
+      setImportProgress({ current: 0, total: totalRows });
 
       for (let i = 1; i < lines.length; i++) {
         const values = parseCSVLine(lines[i]);
-        if (values.length === 0 || !values[m.fullName || 0]) continue;
+        if (values.length === 0 || !values[m.fullName || 0]) {
+          setImportProgress({ current: i, total: totalRows });
+          continue;
+        }
 
         const get = (field: string, fallback = '') => {
           const idx = m[field];
           return idx !== undefined && values[idx] !== undefined ? values[idx].replace(/^"|"$/g, '').trim() : fallback;
         };
 
-        const fullName = get('fullName', values[0] || '');
-        const businessName = get('businessName', 'Unknown Entity');
-        const email = get('email', '');
-        const phone = get('phone', '');
-        const budget = get('budget', '$5,000');
-        const service = get('service', 'Custom AI Agent');
-        const painPoints = get('painPoints', '');
-        const dealValue = Number(get('dealValue', '5000').replace(/[^0-9]/g, '')) || 5000;
-        const priorityVal = get('priority', 'medium').toLowerCase();
-        const priority: Priority = ['low', 'medium', 'high', 'urgent'].includes(priorityVal) ? (priorityVal as Priority) : 'medium';
-        const leadSourceVal = get('leadSource', 'website');
-        const statusVal = get('status', 'new').toLowerCase();
-        const status: LeadStatus = ['new', 'contacted', 'qualified', 'proposal', 'negotiation', 'closed_won', 'closed_lost'].includes(statusVal) ? (statusVal as LeadStatus) : 'new';
+        try {
+          const fullName = get('fullName', values[0] || '');
+          const businessName = get('businessName', '');
+          const email = get('email', '');
+          const phone = get('phone', '');
+          const whatsapp = get('whatsapp', phone);
+          const budget = get('budget', '');
+          const service = get('service', '');
+          const painPoints = get('painPoints', '');
+          const dealValue = Number(get('dealValue', '0').replace(/[^0-9]/g, '')) || 0;
+          const priorityVal = get('priority', 'medium').toLowerCase();
+          const priority: Priority = ['low', 'medium', 'high', 'urgent'].includes(priorityVal) ? (priorityVal as Priority) : 'medium';
+          const leadSourceVal = get('leadSource', 'website');
+          const statusVal = get('status', 'new').toLowerCase();
+          const status: LeadStatus = ['new', 'contacted', 'qualified', 'proposal', 'negotiation', 'inquiry_received', 'booking_confirmed', 'booking_lost'].includes(statusVal) ? (statusVal as LeadStatus) : 'new';
+          const destination = get('destination', '');
+          const tripType = get('tripType', 'Family Vacation');
+          const numberOfTravelers = get('numberOfTravelers', '1');
+          const departureDate = get('departureDate', '');
+          const returnDate = get('returnDate', '');
+          const travelClass = get('travelClass', 'economy');
+          const specialRequests = get('specialRequests', '');
 
-        await addLead({
-          fullName, businessName, email, phone, whatsapp: get('whatsapp', phone),
-          website: '', industry: 'AI & Machine Learning', country: 'United States', city: '',
-          linkedin: '', instagram: '', leadSource: leadSourceVal, employeeCount: '10-50',
-          monthlyRevenue: '$100K', currentSoftware: '', interestedService: service,
-          painPoints, budget, status, priority, dealValue,
-          assignedTo: currentUser?.id || 'user-2', tags: ['CSV Import'],
-          lastContacted: '', nextFollowUp: '', tripType: 'Family Vacation',
-          destination: '', numberOfTravelers: '1', departureDate: '', returnDate: '',
-          duration: '', travelClass: 'economy', specialRequests: '', sourceOfDiscovery: '',
-        } as Lead);
-        importCount++;
+          await addLead({
+            fullName, businessName, email, phone, whatsapp,
+            website: get('website', ''), industry: get('industry', ''), country: '', city: '',
+            linkedin: get('linkedin', ''), instagram: get('instagram', ''),
+            leadSource: leadSourceVal, employeeCount: get('employeeCount', ''),
+            monthlyRevenue: get('monthlyRevenue', ''), currentSoftware: get('currentSoftware', ''),
+            interestedService: service, painPoints, budget, status, priority, dealValue,
+            assignedTo: currentUser?.id || '', tags: ['CSV Import'],
+            lastContacted: '', nextFollowUp: '',
+            tripType, destination, numberOfTravelers, departureDate, returnDate,
+            duration: '', travelClass, specialRequests, sourceOfDiscovery: get('sourceOfDiscovery', ''),
+          } as Lead);
+          importCount++;
+        } catch {
+          errorCount++;
+        }
+
+        setImportProgress({ current: i, total: totalRows });
       }
 
-      setCsvImportMessage(`Successfully imported ${importCount} leads!`);
+      setImportProgress(null);
+      if (errorCount > 0) {
+        setCsvImportMessage(`Imported ${importCount} leads. ${errorCount} rows failed (missing name or validation error).`);
+      } else {
+        setCsvImportMessage(`Successfully imported ${importCount} leads!`);
+      }
       setShowCsvMapping(false);
       setCsvPreview(null);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -279,9 +321,21 @@ export function LeadsView() {
   };
 
   const handleExportCSV = () => {
-    const csvHeaders = ['ID', 'Full Name', 'Business Name', 'Email', 'Phone', 'WhatsApp', 'Lead Source', 'Deal Value', 'Status', 'Priority', 'Interested Service', 'Budget', 'Created At'];
+    const csvHeaders = [
+      'ID', 'Full Name', 'Business Name', 'Email', 'Phone', 'WhatsApp',
+      'Destination', 'Trip Type', 'Travelers', 'Departure Date', 'Return Date',
+      'Travel Class', 'Budget', 'Deal Value', 'Priority', 'Status',
+      'Lead Source', 'Interested Service', 'Assigned To', 'Created At',
+    ];
     const escape = (val: unknown) => { if (val === undefined || val === null) return '""'; return `"${String(val).replace(/"/g, '""')}"`; };
-    const csvRows = filteredLeads.map((l) => [escape(l.id), escape(l.fullName), escape(l.businessName), escape(l.email), escape(l.phone), escape(l.whatsapp), escape(l.leadSource), l.dealValue, escape(l.status), escape(l.priority), escape(l.interestedService), escape(l.budget), escape(l.createdAt)].join(','));
+    const csvRows = filteredLeads.map((l) => [
+      escape(l.id), escape(l.fullName), escape(l.businessName), escape(l.email),
+      escape(l.phone), escape(l.whatsapp), escape(l.destination), escape(l.tripType),
+      escape(l.numberOfTravelers), escape(l.departureDate), escape(l.returnDate),
+      escape(l.travelClass), escape(l.budget), escape(l.dealValue), escape(l.priority),
+      escape(l.status), escape(l.leadSource), escape(l.interestedService),
+      escape(l.assignedTo), escape(l.createdAt),
+    ].join(','));
     const csvContent = [csvHeaders.join(','), ...csvRows].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -431,11 +485,23 @@ export function LeadsView() {
                 </button>
                 <button
                   onClick={handleConfirmCsvImport}
-                  className="px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors cursor-pointer"
+                  disabled={!!importProgress}
+                  className="px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  Import {csvPreview.rows.length}+ leads
+                  {importProgress ? `Importing ${importProgress.current}/${importProgress.total}...` : `Import ${csvPreview.rows.length}+ leads`}
                 </button>
               </div>
+              {importProgress && (
+                <div className="mt-3">
+                  <div className="w-full bg-secondary rounded-full h-2 overflow-hidden">
+                    <div
+                      className="bg-primary h-full rounded-full transition-all duration-300"
+                      style={{ width: `${Math.round((importProgress.current / importProgress.total) * 100)}%` }}
+                    />
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1 text-right">{Math.round((importProgress.current / importProgress.total) * 100)}%</p>
+                </div>
+              )}
             </div>
           </div>
         )}

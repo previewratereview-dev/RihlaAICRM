@@ -90,9 +90,21 @@ export function LeadFilters({
         {canWrite && (
           <button
             onClick={() => {
-              const headers = ['Full Name', 'Business Name', 'Email', 'Phone', 'Budget', 'Interested Service', 'Pain Points', 'Deal Value', 'Priority'];
-              const example = ['John Smith', 'Acme Corp', 'john@example.com', '+1234567890', '$10,000', 'AI Automation', 'Manual data entry', '15000', 'high'];
-              const csv = [headers.join(','), example.join(',')].join('\n');
+              const headers = [
+                'Full Name', 'Business Name', 'Email', 'Phone', 'WhatsApp',
+                'Budget', 'Deal Value', 'Priority', 'Lead Source', 'Status',
+                'Destination', 'Trip Type', 'Travelers', 'Departure Date', 'Return Date',
+                'Travel Class', 'Interested Service', 'Special Requests', 'Website', 'Industry',
+                'LinkedIn', 'Pain Points', 'Source of Discovery',
+              ];
+              const example = [
+                'John Smith', 'Smith Family Trust', 'john@example.com', '+1234567890', '+1234567890',
+                '$15,000', '20000', 'high', 'website', 'inquiry_received',
+                'Maldives', 'Family Vacation', '4', '2026-03-15', '2026-03-22',
+                'business', 'Honeymoon Package', 'Vegetarian meals needed', 'example.com', 'Travel & Tourism',
+                'linkedin.com/in/johnsmith', 'Overwhelmed by booking options', 'Google search',
+              ];
+              const csv = [headers.join(','), example.map(v => `"${v}"`).join(',')].join('\n');
               const blob = new Blob([csv], { type: 'text/csv' });
               const url = URL.createObjectURL(blob);
               const link = document.createElement('a');
@@ -105,7 +117,7 @@ export function LeadFilters({
             aria-label="Download CSV template"
             className="inline-flex items-center gap-2 h-10 px-4 rounded-xl border border-input bg-card/80 hover:border-primary/40 text-foreground hover:text-primary transition-colors shadow-sm"
           >
-            <Download className="h-4 w-4 text-muted-foreground" />
+            <Download className="h-4 w-4 text-foreground" />
             <span className="text-sm font-medium">Template</span>
           </button>
         )}
