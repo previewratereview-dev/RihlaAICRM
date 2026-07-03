@@ -22,7 +22,7 @@ export function checkAIBudget({
   currentSpend?: { daily: number; monthly: number };
 }): BudgetDecision {
   const budgets = tenantAISettings?.budgets;
-  if (!budgets) {
+  if (!budgets || tenantAISettings?.customApiKey) {
     return { allowed: true };
   }
 

@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { callAIWithFallback, type AIResponse } from '@/lib/ai/ai-client';
 import type { TenantSettings } from '@/lib/tenant/config';
 import {
@@ -7,9 +8,32 @@ import {
   SpendCapExceededError,
   type AIProvider,
 } from '@/lib/ai/credential-resolver';
-import { buildAiRuntime } from '@/lib/ai/runtime';
+import { buildAiRuntime, getSubscriptionBlockedMessage } from '@/lib/ai/runtime';
 import { UsageStoreUnavailableError } from '@/lib/ai/usage-store';
 import { logger } from '@/lib/logger';
+import { open, type SealedSecret } from '@/lib/secrets/store';
+
+function getAdminClient(fallback: SupabaseClient): SupabaseClient {
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  if (serviceKey && url) {
+    return createServiceClient(url, serviceKey);
+  }
+  return fallback;
+}
+
+function decryptIfNeeded(stored: unknown): string | undefined {
+  if (!stored || typeof stored !== 'string') return undefined;
+  try {
+    const parsed = JSON.parse(stored) as SealedSecret;
+    if (parsed.iv && parsed.authTag && parsed.ciphertext && typeof parsed.keyVersion === 'number') {
+      return open(parsed) || undefined;
+    }
+  } catch {
+    // Not encrypted JSON — treat as legacy plaintext value
+  }
+  return stored;
+}
 
 export interface TenantAIContext {
   tenantId: string;
@@ -29,40 +53,70 @@ export async function resolveTenantAIContext(
   supabase: SupabaseClient,
   tenantId: string
 ): Promise<TenantAIContext> {
-  // NOTE: No `process.env` AI-key fallback here. AI credentials are resolved
-  // strictly by tier via the credential resolver (Requirements 4.8, 4.9); this
-  // context only carries non-secret tenant AI configuration plus the tenant's
-  // own keys (if any) for budget/model resolution.
+  const adminDb = getAdminClient(supabase);
   let openaiKey: string | undefined;
   let anthropicKey: string | undefined;
   let monthlyBudget = 100;
   let defaultModel = 'gpt-4o-mini';
   let systemPrompt = '';
 
-  const { data: settingsRow } = await supabase
+  const { data: settingsRow } = await adminDb
     .from('settings')
     .select('openai_key, anthropic_key, ai_budgets, system_prompt, ai_base_url, ai_api_key, ai_model, ai_use_anthropic_format')
     .eq('tenant_id', tenantId)
     .maybeSingle();
 
   if (settingsRow) {
-    openaiKey = settingsRow.openai_key || undefined;
-    anthropicKey = settingsRow.anthropic_key || undefined;
     systemPrompt = settingsRow.system_prompt || '';
     const budgets = settingsRow.ai_budgets as { monthlyBudget?: number; defaultModel?: string } | null;
     if (budgets?.monthlyBudget) monthlyBudget = budgets.monthlyBudget;
-    if (budgets?.defaultModel) defaultModel = budgets.defaultModel;
+
+    // Only allow custom provider keys or custom models if global super admin
+    if (tenantId === 'global') {
+      openaiKey = decryptIfNeeded(settingsRow.openai_key);
+      anthropicKey = decryptIfNeeded(settingsRow.anthropic_key);
+      if (budgets?.defaultModel) defaultModel = budgets.defaultModel;
+    }
   }
 
-  // Read custom provider config from settings
+  // Read custom provider config from settings if global
   let customBaseUrl: string | undefined;
   let customApiKey: string | undefined;
   let useAnthropicFormat = false;
-  if (settingsRow) {
+  if (settingsRow && tenantId === 'global') {
     customBaseUrl = settingsRow.ai_base_url || undefined;
-    customApiKey = settingsRow.ai_api_key || undefined;
+    customApiKey = decryptIfNeeded(settingsRow.ai_api_key);
     useAnthropicFormat = settingsRow.ai_use_anthropic_format || false;
     if (settingsRow.ai_model) defaultModel = settingsRow.ai_model;
+  }
+
+  // For all agencies (or if global didn't configure custom endpoint), use global platform settings
+  if (tenantId !== 'global' || !customBaseUrl || !customApiKey || defaultModel === 'gpt-4o-mini') {
+    const { data: platformRow } = await adminDb
+      .from('platform_settings')
+      .select('default_ai_model, settings')
+      .eq('id', 'platform')
+      .maybeSingle();
+
+    if (platformRow) {
+      const pSettings = (platformRow.settings as Record<string, unknown>) || {};
+      if ((tenantId !== 'global' || !customBaseUrl) && typeof pSettings.defaultAiBaseUrl === 'string' && pSettings.defaultAiBaseUrl) {
+        customBaseUrl = pSettings.defaultAiBaseUrl;
+      }
+      if ((tenantId !== 'global' || !customApiKey) && typeof pSettings.defaultAiApiKey === 'string' && pSettings.defaultAiApiKey) {
+        customApiKey = decryptIfNeeded(pSettings.defaultAiApiKey);
+      }
+      if ((tenantId !== 'global' || !settingsRow?.ai_use_anthropic_format) && typeof pSettings.aiUseAnthropicFormat === 'boolean') {
+        useAnthropicFormat = pSettings.aiUseAnthropicFormat;
+      }
+      if (
+        (tenantId !== 'global' || defaultModel === 'gpt-4o-mini' || !settingsRow?.ai_model) &&
+        typeof platformRow.default_ai_model === 'string' &&
+        platformRow.default_ai_model
+      ) {
+        defaultModel = platformRow.default_ai_model;
+      }
+    }
   }
 
   const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString();
@@ -135,44 +189,60 @@ export async function executeAIRequest({
   userId?: string | null;
 }): Promise<AIRequestResult> {
   const ctx = await resolveTenantAIContext(supabase, tenantId);
+  const { customBaseUrl, customApiKey, useAnthropicFormat } = ctx;
   const fullPrompt = injectSystemPrompt(ctx.systemPrompt, prompt);
 
   // Wire the tier-aware credential resolver, per-period limits, and the durable
   // shared usage store to this request's Supabase client (Requirements 4, 9.9).
   const runtime = await buildAiRuntime(supabase, tenantId);
 
+  // Requirement 1: Lock AI features behind subscription for all agencies.
+  if (tenantId !== 'global' && runtime.tier === 'free') {
+    const blockedMsg = getSubscriptionBlockedMessage(runtime);
+    console.log(`[AI Request Blocked] Tenant ${tenantId} locked behind subscription (${runtime.subscriptionStatus}).`);
+    return {
+      content: blockedMsg,
+      usage: null,
+      blocked: true,
+      blockReason: 'configuration',
+    };
+  }
+
   // 1. Enforce the per-period AI usage limit BEFORE doing any work. Reads the
   //    durable shared counter; fail closed if the store is unavailable (9.12).
-  try {
-    const withinLimit = await runtime.usageStore.wouldStayWithin(
-      runtime.callsRef,
-      runtime.aiCallLimit,
-      1,
-    );
-    if (!withinLimit) {
-      return {
-        content:
-          "Your plan's AI usage limit for this period has been reached. A travel specialist will help you shortly.",
-        usage: null,
-        blocked: true,
-        blockReason: 'limit',
-      };
+  //    Skip limit enforcement if using custom API credentials or global super admin.
+  if (!customApiKey && tenantId !== 'global') {
+    try {
+      const withinLimit = await runtime.usageStore.wouldStayWithin(
+        runtime.callsRef,
+        runtime.aiCallLimit,
+        1,
+      );
+      if (!withinLimit) {
+        console.log(`[AI Request Blocked] Tenant ${tenantId} reached AI usage limit.`);
+        return {
+          content:
+            "Your plan's AI usage limit for this period has been reached. A travel specialist will help you shortly.",
+          usage: null,
+          blocked: true,
+          blockReason: 'limit',
+        };
+      }
+    } catch (err) {
+      if (err instanceof UsageStoreUnavailableError) {
+        return {
+          content: FALLBACK_MESSAGE,
+          usage: null,
+          blocked: true,
+          blockReason: 'service_unavailable',
+        };
+      }
+      throw err;
     }
-  } catch (err) {
-    if (err instanceof UsageStoreUnavailableError) {
-      return {
-        content: FALLBACK_MESSAGE,
-        usage: null,
-        blocked: true,
-        blockReason: 'service_unavailable',
-      };
-    }
-    throw err;
   }
 
   // 2. Check for a custom provider key (ai_api_key column) first — skip the
   //    old credential resolver entirely when a custom base URL is configured.
-  const { customBaseUrl, customApiKey, useAnthropicFormat } = ctx;
   let resolvedBaseUrl = customBaseUrl || 'https://api.openai.com/v1';
   let resolvedApiKey = customApiKey || '';
   let aiModel = ctx.defaultModel || 'gpt-4o-mini';
@@ -187,6 +257,7 @@ export async function executeAIRequest({
         apiKeys[provider as 'openai' | 'anthropic'] = resolution.apiKey;
       } catch (err) {
         if (err instanceof SpendCapExceededError) {
+          console.log(`[AI Request Blocked] Spend cap exceeded for tenant ${tenantId}`);
           return {
             content:
               'Our AI assistant has reached its monthly limit for your plan. A travel specialist will help you shortly.',
@@ -203,6 +274,7 @@ export async function executeAIRequest({
     }
 
     if (!apiKeys.openai && !apiKeys.anthropic) {
+      console.log(`[AI Request Blocked] No API keys configured for tenant ${tenantId}`);
       return {
         content: FALLBACK_MESSAGE,
         usage: null,
@@ -223,8 +295,13 @@ export async function executeAIRequest({
     }
   }
 
-  // Allow caller to override the model
-  const finalModel = model || aiModel;
+  // Requirement 2: Allow caller to override the model ONLY if global super admin
+  const finalModel = tenantId === 'global' ? (model || aiModel) : aiModel;
+
+  console.log(`\n=================== [AI REQUEST INITIATED] ===================`);
+  console.log(`Feature: ${feature} | Tenant: ${tenantId} | Endpoint: ${resolvedBaseUrl} | Model: ${finalModel}`);
+  console.log(`Prompt sent to AI:\n${fullPrompt}`);
+  console.log(`==============================================================\n`);
 
   const aiSettings: TenantSettings['ai'] = {
     defaultModel: finalModel,
@@ -271,6 +348,12 @@ export async function executeAIRequest({
       status: 'success',
     });
 
+    console.log(`\n=================== [AI RESPONSE SUCCESS] ===================`);
+    console.log(`Model Used: ${result.model} | Provider: ${result.provider}`);
+    console.log(`Tokens In: ${result.tokensIn} | Tokens Out: ${result.tokensOut} | Cost: $${result.costEstimate}`);
+    console.log(`Generated Response:\n${result.text}`);
+    console.log(`=============================================================\n`);
+
     return { content: result.text, usage: result, blocked: false };
   } catch (aiError) {
     const message = aiError instanceof Error ? aiError.message : 'AI request failed';
@@ -288,6 +371,12 @@ export async function executeAIRequest({
       cost_estimate: 0,
       status: blocked ? 'blocked' : 'error',
     });
+
+    console.log(`\n==================== [AI RESPONSE ERROR / BLOCKED] ====================`);
+    console.log(`Error Message:`, message);
+    console.log(`Blocked:`, blocked);
+    console.log(`Fallback Response returned to UI:`, blocked ? 'Our AI assistant has reached its monthly budget limit...' : FALLBACK_MESSAGE);
+    console.log(`=======================================================================\n`);
 
     return {
       content: blocked

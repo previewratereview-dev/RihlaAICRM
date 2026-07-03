@@ -17,6 +17,17 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { createClient as createServiceClient } from '@supabase/supabase-js';
+import { open, type SealedSecret } from '@/lib/secrets/store';
+
+function getAdminClient(fallback: SupabaseClient): SupabaseClient {
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  if (serviceKey && url) {
+    return createServiceClient(url, serviceKey);
+  }
+  return fallback;
+}
 import {
   effectiveTier,
   effectiveLimits,
@@ -81,10 +92,63 @@ export async function loadSubscription(
   };
 }
 
+function decryptKeyIfNeeded(stored: unknown): string | null {
+  if (!stored || typeof stored !== 'string') return null;
+  try {
+    const parsed = JSON.parse(stored) as SealedSecret;
+    if (parsed.iv && parsed.authTag && parsed.ciphertext && typeof parsed.keyVersion === 'number') {
+      return open(parsed) || null;
+    }
+  } catch {
+    // Not encrypted JSON — treat as legacy plaintext value
+  }
+  return stored;
+}
+
 /**
- * Resolve a tenant's own configured API key for a provider from the tenant's
- * `settings` row. This is the tenant's *own* key (Pro tier), never a shared
- * environment value. Providers without a stored column yield `null`.
+ * Resolve a platform-managed API key for a provider (Premium/Pro tiers).
+ * Strictly reads from `platform_settings` table or superadmin `global` settings row.
+ * Never falls back to `process.env` / `env.local`.
+ */
+async function resolvePlatformKey(supabase: SupabaseClient, provider: AIProvider): Promise<string | null> {
+  const adminDb = getAdminClient(supabase);
+  // 1. Check platform_settings first
+  const { data: platformRow } = await adminDb
+    .from('platform_settings')
+    .select('settings')
+    .eq('id', 'platform')
+    .maybeSingle();
+
+  if (platformRow && platformRow.settings) {
+    const pSettings = platformRow.settings as Record<string, unknown>;
+    if (typeof pSettings.defaultAiApiKey === 'string' && pSettings.defaultAiApiKey) {
+      const decrypted = decryptKeyIfNeeded(pSettings.defaultAiApiKey);
+      if (decrypted) return decrypted;
+    }
+  }
+
+  // 2. Fall back to Super Admin settings row (tenant_id = 'global')
+  const column = provider === 'anthropic' ? 'anthropic_key' : provider === 'openai' ? 'openai_key' : 'ai_api_key';
+  const { data: settingsRow } = await adminDb
+    .from('settings')
+    .select(column)
+    .eq('tenant_id', 'global')
+    .maybeSingle();
+
+  if (settingsRow) {
+    const raw = (settingsRow as Record<string, unknown>)[column];
+    if (typeof raw === 'string' && raw) {
+      const decrypted = decryptKeyIfNeeded(raw);
+      if (decrypted) return decrypted;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Resolve a tenant's configured API key for a provider.
+ * For paid agencies, agencies inherit the Super Admin configured platform model & provider.
  */
 async function resolveTenantKey(
   supabase: SupabaseClient,
@@ -92,9 +156,7 @@ async function resolveTenantKey(
   provider: AIProvider,
 ): Promise<string | null> {
   if (provider !== 'openai' && provider !== 'anthropic') {
-    // Only openai/anthropic keys are persisted today; other providers are
-    // treated as not-configured rather than falling back to anything shared.
-    return null;
+    return resolvePlatformKey(supabase, provider);
   }
 
   const column = provider === 'anthropic' ? 'anthropic_key' : 'openai_key';
@@ -104,37 +166,22 @@ async function resolveTenantKey(
     .eq('tenant_id', tenantId)
     .maybeSingle();
 
-  if (error || !data) return null;
-  const value = (data as Record<string, unknown>)[column];
-  return typeof value === 'string' && value.length > 0 ? value : null;
-}
-
-/**
- * Resolve a platform-managed API key for a provider (Premium tier only). These
- * are the platform's own keys, sourced from the platform environment; they are
- * used exclusively for Premium tenants and never as a fallback for non-Premium
- * tenants (the credential resolver enforces that).
- */
-function resolvePlatformKey(provider: AIProvider): string | null {
-  switch (provider) {
-    case 'openai':
-      return process.env.PLATFORM_OPENAI_API_KEY || process.env.OPENAI_API_KEY || null;
-    case 'anthropic':
-      return process.env.PLATFORM_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY || null;
-    case 'gemini':
-      return process.env.PLATFORM_GEMINI_API_KEY || process.env.GEMINI_API_KEY || null;
-    case 'groq':
-      return process.env.PLATFORM_GROQ_API_KEY || process.env.GROQ_API_KEY || null;
-    case 'openrouter':
-      return process.env.PLATFORM_OPENROUTER_API_KEY || process.env.OPENROUTER_API_KEY || null;
-    default:
-      return null;
+  if (!error && data) {
+    const value = (data as Record<string, unknown>)[column];
+    if (typeof value === 'string' && value.length > 0) {
+      const decrypted = decryptKeyIfNeeded(value);
+      if (decrypted) return decrypted;
+    }
   }
+
+  // For paid agencies without custom keys, use the superadmin configured platform key
+  return resolvePlatformKey(supabase, provider);
 }
 
 /** Read the platform-managed monthly AI spend cap from `platform_settings`. */
 async function resolveMonthlyCap(supabase: SupabaseClient): Promise<number> {
-  const { data, error } = await supabase
+  const adminDb = getAdminClient(supabase);
+  const { data, error } = await adminDb
     .from('platform_settings')
     .select('platform_monthly_ai_cap')
     .eq('id', 'platform')
@@ -159,6 +206,22 @@ export interface AiRuntimeContext {
   aiCallLimit: number;
   /** The tenant's effective subscription tier. */
   tier: PlanTier;
+  /** The raw subscription status or 'none' if no subscription row exists. */
+  subscriptionStatus: SubscriptionStatus | 'none';
+}
+
+/**
+ * Returns a polite, professional message explaining why AI features are locked
+ * based on whether the agency is on a Free tier or an expired/past-due subscription.
+ */
+export function getSubscriptionBlockedMessage(runtime: {
+  tier: PlanTier;
+  subscriptionStatus: SubscriptionStatus | 'none';
+}): string {
+  if (runtime.subscriptionStatus === 'expired' || runtime.subscriptionStatus === 'past_due') {
+    return "Your agency's subscription has ended or is past due. To resume access to our AI features, please renew or update your subscription. Thank you!";
+  }
+  return "Our AI features are exclusive to subscribed agencies. Please upgrade your agency to a Pro or Premium subscription to unlock AI-powered tools and assistants. We look forward to supporting your growth!";
 }
 
 /**
@@ -175,6 +238,7 @@ export async function buildAiRuntime(
   const sub = await loadSubscription(supabase, tenantId);
   const tier = sub ? effectiveTier(sub) : 'free';
   const limits = sub ? effectiveLimits(sub) : limitsForTier('free');
+  const subscriptionStatus: SubscriptionStatus | 'none' = sub ? sub.status : 'none';
 
   const period = currentBillingPeriod(now);
   const callsRef: UsageCounterRef = { tenantId, period, dimension: 'calls' };
@@ -193,7 +257,7 @@ export async function buildAiRuntime(
   const resolverDeps: ResolverDeps = {
     tier: () => tier,
     tenantKey: (t, provider) => resolveTenantKey(supabase, t, provider),
-    platformKey: (provider) => resolvePlatformKey(provider),
+    platformKey: (provider) => resolvePlatformKey(supabase, provider),
     spend,
   };
 
@@ -204,5 +268,6 @@ export async function buildAiRuntime(
     costRef,
     aiCallLimit: limits.aiCalls,
     tier,
+    subscriptionStatus,
   };
 }

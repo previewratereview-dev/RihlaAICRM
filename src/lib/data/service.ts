@@ -286,19 +286,20 @@ export const CRMDatabaseService = {
     if (settings.logoText !== undefined) dbSet.logo_text = settings.logoText;
     if (settings.accentColor !== undefined) dbSet.accent_color = settings.accentColor;
     if (settings.systemPrompt !== undefined) dbSet.system_prompt = settings.systemPrompt;
-    // Encrypt API keys at rest using the secret store's AES-256-GCM encryption.
-    if (settings.openAiKey !== undefined) dbSet.openai_key = encryptBeforeStore(settings.openAiKey);
-    if (settings.anthropicKey !== undefined) dbSet.anthropic_key = encryptBeforeStore(settings.anthropicKey);
     if (settings.makeWebhookUrl !== undefined) dbSet.make_webhook_url = settings.makeWebhookUrl;
     if (settings.emailAutomation !== undefined) dbSet.email_automation = settings.emailAutomation;
     if (settings.whatsappAutomation !== undefined) dbSet.whatsapp_automation = settings.whatsappAutomation;
     if (settings.smsAutomation !== undefined) dbSet.sms_automation = settings.smsAutomation;
     if (settings.dailyTargetScore !== undefined) dbSet.daily_target_score = settings.dailyTargetScore;
-    // OpenAI-compatible provider config
-    if (settings.aiBaseUrl !== undefined) dbSet.ai_base_url = settings.aiBaseUrl;
-    if (settings.aiApiKey !== undefined && settings.aiApiKey !== '••••••••') dbSet.ai_api_key = encryptBeforeStore(settings.aiApiKey);
-    if (settings.aiModel !== undefined) dbSet.ai_model = settings.aiModel;
-    if (settings.aiUseAnthropicFormat !== undefined) dbSet.ai_use_anthropic_format = settings.aiUseAnthropicFormat;
+    // Only global super admin can update provider keys and model config
+    if (tenantId === 'global') {
+      if (settings.openAiKey !== undefined) dbSet.openai_key = encryptBeforeStore(settings.openAiKey);
+      if (settings.anthropicKey !== undefined) dbSet.anthropic_key = encryptBeforeStore(settings.anthropicKey);
+      if (settings.aiBaseUrl !== undefined) dbSet.ai_base_url = settings.aiBaseUrl;
+      if (settings.aiApiKey !== undefined && settings.aiApiKey !== '••••••••') dbSet.ai_api_key = encryptBeforeStore(settings.aiApiKey);
+      if (settings.aiModel !== undefined) dbSet.ai_model = settings.aiModel;
+      if (settings.aiUseAnthropicFormat !== undefined) dbSet.ai_use_anthropic_format = settings.aiUseAnthropicFormat;
+    }
     const { error } = await db.from('settings').update(dbSet).eq('tenant_id', tenantId);
     if (error) throw error;
   },

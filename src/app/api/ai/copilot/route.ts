@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/server';
 import { executeAIRequest } from '@/lib/ai/route-helper';
 import { embedText, rankBySimilarity, buildRAGContext } from '@/lib/ai/rag';
 import { AICopilotSchema, validateRequest } from '@/lib/validation/schemas';
+import { buildAiRuntime, getSubscriptionBlockedMessage } from '@/lib/ai/runtime';
 
 const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -18,7 +19,10 @@ function getServiceClientInstance() {
 export async function POST(request: NextRequest) {
   try {
     const guard = await guardRoute(request, { scope: 'copilot', limit: 30 });
-    if (guard instanceof NextResponse) return guard;
+    if (guard instanceof NextResponse) {
+      console.log(`[Copilot Guard Rejection] Route blocked with status ${guard.status}`);
+      return guard;
+    }
 
     const body = await request.json().catch(() => null);
     if (!body) {
@@ -32,8 +36,18 @@ export async function POST(request: NextRequest) {
 
     const { message, context } = validation.data;
 
+    console.log(`[Copilot] Request initiated for tenant: ${guard.tenantId}`);
+
     const cookieStore = await cookies();
     const supabase = createClient(cookieStore);
+
+    if (guard.tenantId !== 'global') {
+      const runtime = await buildAiRuntime(supabase, guard.tenantId);
+      if (runtime.tier === 'free') {
+        const blockedMsg = getSubscriptionBlockedMessage(runtime);
+        return NextResponse.json({ content: blockedMsg });
+      }
+    }
 
     let ragContext = '';
     const serviceClient = getServiceClientInstance();

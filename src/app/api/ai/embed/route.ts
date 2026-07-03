@@ -4,6 +4,7 @@ import { createClient } from '@supabase/supabase-js';
 import { embedText } from '@/lib/ai/rag';
 import { generateId } from '@/lib/utils';
 import { AIEmbedSchema, validateRequest } from '@/lib/validation/schemas';
+import { buildAiRuntime, getSubscriptionBlockedMessage } from '@/lib/ai/runtime';
 
 const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -16,6 +17,17 @@ function getServiceClient() {
 export async function POST(request: NextRequest) {
   const guard = await guardRoute(request, { scope: 'ai-embed', limit: 30 });
   if (guard instanceof NextResponse) return guard;
+
+  if (guard.tenantId !== 'global') {
+    const supabaseService = getServiceClient();
+    if (supabaseService) {
+      const runtime = await buildAiRuntime(supabaseService, guard.tenantId);
+      if (runtime.tier === 'free') {
+        const blockedMsg = getSubscriptionBlockedMessage(runtime);
+        return NextResponse.json({ error: blockedMsg }, { status: 403 });
+      }
+    }
+  }
 
   const body = await request.json();
   const validation = validateRequest(AIEmbedSchema, body);
