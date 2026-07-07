@@ -300,7 +300,9 @@ export const CRMDatabaseService = {
       if (settings.aiModel !== undefined) dbSet.ai_model = settings.aiModel;
       if (settings.aiUseAnthropicFormat !== undefined) dbSet.ai_use_anthropic_format = settings.aiUseAnthropicFormat;
     }
-    const { error } = await db.from('settings').update(dbSet).eq('tenant_id', tenantId);
+    dbSet.id = tenantId;
+    dbSet.tenant_id = tenantId;
+    const { error } = await db.from('settings').upsert(dbSet, { onConflict: 'id' });
     if (error) throw error;
   },
 

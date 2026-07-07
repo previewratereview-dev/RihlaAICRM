@@ -133,6 +133,12 @@ export function SettingsView() {
     setMessage(null);
     try {
       await updateSettings(form);
+      if (form.accentColor?.startsWith('#')) {
+        document.documentElement.style.setProperty('--primary', form.accentColor);
+        useCRMStore.setState((s) => ({
+          tenantBranding: { ...s.tenantBranding, primaryColor: form.accentColor },
+        }));
+      }
       initialFormRef.current = form;
       toast.success('Settings saved successfully.');
     } catch {

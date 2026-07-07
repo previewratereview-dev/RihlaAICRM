@@ -32,7 +32,7 @@ export async function GET(request: NextRequest) {
 
   const branding = {
     logoUrl: tenant?.logo_url || defaultTenantSettings.branding.logoUrl,
-    primaryColor: tenant?.primary_color || settingsRow?.accent_color || '#FF6B35',
+    primaryColor: settingsRow?.accent_color || tenant?.primary_color || '#FF6B35',
     secondaryColor: tenant?.secondary_color,
     agencyName: settingsRow?.agency_name || tenant?.name || 'WanderBot AI',
   };

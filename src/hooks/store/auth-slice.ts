@@ -152,12 +152,18 @@ export function createAuthSlice(set: SetState, get: GetState) {
           }
         }
 
+        const loadedSettings = (settings as unknown as import('./types').Settings) || get().settings;
+
         set({
           leads: rawLeads,
           tasks: rawTasks,
           conversations: rawConvs,
           team,
-          settings: (settings as unknown as import('./types').Settings) || get().settings,
+          settings: loadedSettings,
+          tenantBranding: {
+            ...get().tenantBranding,
+            primaryColor: loadedSettings.accentColor || get().tenantBranding.primaryColor,
+          },
           notes,
           activities,
           messages,

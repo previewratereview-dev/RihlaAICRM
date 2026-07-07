@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { useCRMStore } from '@/hooks/use-crm-store';
 import type { TenantFeatures } from '@/lib/tenant/config';
 
@@ -25,7 +25,10 @@ export function useTenantContext() {
 }
 
 export function TenantProvider({ children }: { children: React.ReactNode }) {
-  const [state, setState] = useState<TenantContextValue>({
+  const accentColor = useCRMStore((s) => s.settings.accentColor);
+  const tenantPrimaryColor = useCRMStore((s) => s.tenantBranding.primaryColor);
+
+  const [fetched, setFetched] = useState<TenantContextValue>({
     loading: true,
     tenantId: null,
     agencyName: 'WanderBot AI',
@@ -44,13 +47,12 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
         const agencyName = branding.agencyName || 'WanderBot AI';
         const primaryColor = branding.primaryColor || '#FF6B35';
 
-        document.documentElement.style.setProperty('--primary', primaryColor);
         useCRMStore.setState({
           tenantBranding: { agencyName, primaryColor, logoUrl: branding.logoUrl },
           tenantFeatures: features,
         });
 
-        setState({
+        setFetched({
           loading: false,
           tenantId: data.tenantId,
           agencyName,
@@ -59,12 +61,23 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
         });
       })
       .catch(() => {
-        if (!cancelled) setState((s) => ({ ...s, loading: false }));
+        if (!cancelled) setFetched((s) => ({ ...s, loading: false }));
       });
     return () => {
       cancelled = true;
     };
   }, []);
 
-  return <TenantCtx.Provider value={state}>{children}</TenantCtx.Provider>;
+  const primaryColor = tenantPrimaryColor || accentColor || '#FF6B35';
+
+  useEffect(() => {
+    document.documentElement.style.setProperty('--primary', primaryColor);
+  }, [primaryColor]);
+
+  const value = useMemo<TenantContextValue>(
+    () => ({ ...fetched, primaryColor }),
+    [fetched, primaryColor],
+  );
+
+  return <TenantCtx.Provider value={value}>{children}</TenantCtx.Provider>;
 }
