@@ -60,7 +60,9 @@ export function ConversationsView() {
     [conversations, selectedId]
   );
 
-  const threadMessages = selectedId ? messages[selectedId] ?? [] : [];
+  const threadMessages = useMemo(() => {
+    return selectedId ? messages[selectedId] ?? [] : [];
+  }, [messages, selectedId]);
   const isContactTyping = selectedId ? !!typingState[selectedId] : false;
 
   const latestQuickReplies = useMemo(() => {
@@ -76,7 +78,10 @@ export function ConversationsView() {
   // Auto-select first conversation
   useEffect(() => {
     if (filteredConversations.length > 0 && !selectedId) {
-      setSelectedId(filteredConversations[0].id);
+      const firstId = filteredConversations[0].id;
+      Promise.resolve().then(() => {
+        setSelectedId(firstId);
+      });
     }
   }, [filteredConversations, selectedId]);
 

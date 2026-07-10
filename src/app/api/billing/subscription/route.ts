@@ -65,7 +65,7 @@ export async function GET(request: Request) {
         .from('subscriptions')
         .insert({
           tenant_id: profile.tenant_id,
-          plan: 'pro',
+          plan: 'starter',
           status: 'trialing',
           trial_start: now.toISOString(),
           trial_end: trialEnd.toISOString(),
@@ -78,7 +78,7 @@ export async function GET(request: Request) {
       }
 
       return NextResponse.json({
-        plan: 'pro',
+        plan: 'starter',
         status: 'trialing',
         trialActive: true,
         trialDaysLeft: 7,
@@ -103,7 +103,6 @@ export async function GET(request: Request) {
       currentPeriodEnd: subscription.current_period_end,
     });
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Failed to get subscription';
     logger.error('Subscription API error', err);
     return NextResponse.json({ error: 'Failed to get subscription' }, { status: 500 });
   }

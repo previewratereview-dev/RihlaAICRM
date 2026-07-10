@@ -9,6 +9,7 @@ import { PricingCards } from '@/components/pricing-cards';
 interface PaywallModalProps {
   isOpen: boolean;
   onClose?: () => void;
+  currentPlan?: string;
 }
 
 declare global {
@@ -40,7 +41,7 @@ interface RazorpayResponse {
   razorpay_signature: string;
 }
 
-export function PaywallModal({ isOpen, onClose }: PaywallModalProps) {
+export function PaywallModal({ isOpen, onClose, currentPlan }: PaywallModalProps) {
   const [loading, setLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -189,7 +190,7 @@ export function PaywallModal({ isOpen, onClose }: PaywallModalProps) {
               <X className="h-5 w-5" />
             </button>
           )}
-          <div className="text-center mb-8">
+          <div className="text-center mb-6">
             <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary/10 mb-4">
               <Lock className="h-8 w-8 text-primary" />
             </div>
@@ -204,7 +205,10 @@ export function PaywallModal({ isOpen, onClose }: PaywallModalProps) {
               {error}
             </div>
           )}
-          <PricingCards onSelectPlan={handleSelectPlan} loading={loading} />
+          <PricingCards onSelectPlan={handleSelectPlan} loading={loading} currentPlan={currentPlan} />
+          <p className="text-center text-xs text-muted-foreground mt-6">
+            Secure checkout via Razorpay. Cancel or change your plan anytime.
+          </p>
         </motion.div>
       </motion.div>
     </AnimatePresence>

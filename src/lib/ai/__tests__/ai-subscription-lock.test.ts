@@ -5,10 +5,10 @@ describe('AI Subscription Lock & Polite Responses', () => {
   it('returns polite message asking to upgrade when on free tier with active or no subscription', () => {
     const msgNone = getSubscriptionBlockedMessage({ tier: 'free', subscriptionStatus: 'none' });
     expect(msgNone).toContain('Our AI features are exclusive to subscribed agencies.');
-    expect(msgNone).toContain('Please upgrade your agency to a Pro or Premium subscription');
+    expect(msgNone).toContain('Please upgrade your agency to a Starter, Pro, or Premium subscription');
 
     const msgActive = getSubscriptionBlockedMessage({ tier: 'free', subscriptionStatus: 'active' });
-    expect(msgActive).toContain('Please upgrade your agency to a Pro or Premium subscription');
+    expect(msgActive).toContain('Please upgrade your agency to a Starter, Pro, or Premium subscription');
   });
 
   it('returns polite message asking to renew when subscription ended or is past due', () => {

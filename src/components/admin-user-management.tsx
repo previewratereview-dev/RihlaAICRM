@@ -295,7 +295,7 @@ export function AdminUserManagement() {
           ))}
           {users.length === 0 && (
             <div className="p-8 text-center text-sm text-muted-foreground">
-              No users found. Click 'Add User' to invite a team member.
+              No users found. Click &apos;Add User&apos; to invite a team member.
             </div>
           )}
         </div>

@@ -19,9 +19,12 @@ export function getRazorpay() {
 }
 
 export const PLAN_PRICES = {
-  monthly: { amount: 49900, label: 'Monthly', period: 'monthly' },
-  yearly: { amount: 519900, label: 'Yearly', period: 'yearly' },
-  lifetime: { amount: 2499900, label: 'Lifetime', period: 'once' },
+  starter_monthly: { amount: 99900, label: 'Starter Monthly', tier: 'starter', period: 'monthly' },
+  starter_yearly: { amount: 999000, label: 'Starter Yearly', tier: 'starter', period: 'yearly' },
+  pro_monthly: { amount: 249900, label: 'Pro Monthly', tier: 'pro', period: 'monthly' },
+  pro_yearly: { amount: 2499000, label: 'Pro Yearly', tier: 'pro', period: 'yearly' },
+  premium_monthly: { amount: 499900, label: 'Premium Monthly', tier: 'premium', period: 'monthly' },
+  premium_yearly: { amount: 4999000, label: 'Premium Yearly', tier: 'premium', period: 'yearly' },
 } as const;
 
 export type PlanType = keyof typeof PLAN_PRICES;

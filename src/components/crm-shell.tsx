@@ -241,7 +241,7 @@ export function CrmShell({ initialTab }: CrmShellProps) {
 
       {/* Paywall Modal — never shown to super admins */}
       {currentUser?.role !== 'super_admin' && (
-        <PaywallModal isOpen={showPaywall} onClose={() => setShowPaywall(false)} />
+        <PaywallModal isOpen={showPaywall} onClose={() => setShowPaywall(false)} currentPlan={subscription?.plan} />
       )}
     </TenantProvider>
   );

@@ -63,7 +63,8 @@ export async function POST(request: Request) {
       receipt: `rcpt_${shortTenantId}_${Date.now()}`,
       notes: {
         tenant_id: profile.tenant_id,
-        plan,
+        plan: priceConfig.tier,
+        period: priceConfig.period,
       },
     });
 
@@ -71,16 +72,17 @@ export async function POST(request: Request) {
       orderId: order.id,
       amount: order.amount,
       currency: order.currency,
-      plan,
+      plan: priceConfig.tier,
+      period: priceConfig.period,
     });
   } catch (err: unknown) {
     let message = 'Failed to create order';
     if (err instanceof Error) {
       message = err.message;
     } else if (err && typeof err === 'object' && 'error' in err) {
-      const razorpayError = (err as any).error;
-      if (razorpayError && typeof razorpayError.description === 'string') {
-        message = razorpayError.description;
+      const razorpayError = err as { error?: { description?: string } };
+      if (razorpayError.error && typeof razorpayError.error.description === 'string') {
+        message = razorpayError.error.description;
       }
     }
     return NextResponse.json({ error: message }, { status: 500 });

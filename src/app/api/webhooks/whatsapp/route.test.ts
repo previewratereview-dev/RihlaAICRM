@@ -102,7 +102,7 @@ beforeEach(() => {
 describe('WhatsApp webhook — per-tenant inbound resolution (5.6, 5.7)', () => {
   it('rejects without processing when no destination identifier is present', async () => {
     const { POST } = await loadRoute();
-    const res = await POST(buildRequest({ From: 'whatsapp:+1999', Body: 'hi' }));
+    const res = await POST(buildRequest({ From: 'whatsapp:+19999999999', Body: 'hi' }));
 
     expect(res.status).toBe(401);
     expect(resolveInboundTenant).not.toHaveBeenCalled();
@@ -114,7 +114,7 @@ describe('WhatsApp webhook — per-tenant inbound resolution (5.6, 5.7)', () => 
     const { POST } = await loadRoute();
 
     const res = await POST(
-      buildRequest({ To: 'whatsapp:+14155238886', From: 'whatsapp:+1999', Body: 'hi' }),
+      buildRequest({ To: 'whatsapp:+14155238886', From: 'whatsapp:+19999999999', Body: 'hi' }),
     );
 
     expect(res.status).toBe(401);
@@ -130,7 +130,7 @@ describe('WhatsApp webhook — per-tenant inbound resolution (5.6, 5.7)', () => 
     const { POST } = await loadRoute();
 
     const res = await POST(
-      buildRequest({ To: 'whatsapp:+14155238886', From: 'whatsapp:+1999', Body: 'hi' }),
+      buildRequest({ To: 'whatsapp:+14155238886', From: 'whatsapp:+19999999999', Body: 'hi' }),
     );
 
     expect(res.status).toBe(401);
@@ -148,7 +148,7 @@ describe('WhatsApp webhook — per-tenant inbound resolution (5.6, 5.7)', () => 
     const { POST } = await loadRoute();
 
     const res = await POST(
-      buildRequest({ To: 'whatsapp:+14155238886', From: 'whatsapp:+1999', Body: 'hi' }),
+      buildRequest({ To: 'whatsapp:+14155238886', From: 'whatsapp:+19999999999', Body: 'hi' }),
     );
 
     expect(res.status).toBe(401);
@@ -165,7 +165,7 @@ describe('WhatsApp webhook — per-tenant inbound resolution (5.6, 5.7)', () => 
     const { POST } = await loadRoute();
 
     const res = await POST(
-      buildRequest({ To: 'whatsapp:+14155238886', From: 'whatsapp:+1999', Body: 'hello' }),
+      buildRequest({ To: 'whatsapp:+14155238886', From: 'whatsapp:+19999999999', Body: 'hello' }),
     );
     const json = await res.json();
 

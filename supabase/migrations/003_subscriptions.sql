@@ -1,13 +1,11 @@
 -- ====================================================================
 -- Migration 003: Subscriptions Table
--- ====================================================================
 -- Creates the subscriptions table for billing and trial management.
 -- Must run BEFORE provision_agency() (migration 004).
 -- Run on: Fresh install or existing DB without this table.
-
 CREATE TABLE IF NOT EXISTS public.subscriptions (
   tenant_id text PRIMARY KEY REFERENCES public.tenants(id) ON DELETE CASCADE,
-  plan text NOT NULL DEFAULT 'free' CHECK (plan IN ('free','pro','premium')),
+  plan text NOT NULL DEFAULT 'free' CHECK (plan IN ('free','starter','pro','premium')),
   status text NOT NULL DEFAULT 'active' CHECK (status IN ('active','trialing','past_due','cancelled')),
   trial_start timestamptz,
   trial_end timestamptz,

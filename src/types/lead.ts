@@ -117,7 +117,7 @@ export interface LeadAssignmentHistory {
   previousAssignee?: string;
   newAssignee?: string;
   changedBy?: string;
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 export interface LeadNote {

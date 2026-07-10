@@ -46,7 +46,7 @@ export async function POST(request: NextRequest) {
       baseUrl = baseUrl.replace(/\/completions$/, '');
     }
 
-    let rawModelsUrl = baseUrl.endsWith('/models') ? baseUrl : `${baseUrl}/models`;
+    const rawModelsUrl = baseUrl.endsWith('/models') ? baseUrl : `${baseUrl}/models`;
     const urlObj = new URL(rawModelsUrl);
     if (!urlObj.searchParams.has('limit')) urlObj.searchParams.set('limit', '1000');
     if (!urlObj.searchParams.has('pageSize')) urlObj.searchParams.set('pageSize', '1000');

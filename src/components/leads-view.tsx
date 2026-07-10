@@ -84,8 +84,11 @@ export function LeadsView() {
   // Sync global search into local search state
   useEffect(() => {
     if (globalSearchQuery) {
-      setSearchTerm(globalSearchQuery);
-      setGlobalSearchQuery('');
+      const query = globalSearchQuery;
+      Promise.resolve().then(() => {
+        setSearchTerm(query);
+        setGlobalSearchQuery('');
+      });
     }
   }, [globalSearchQuery, setGlobalSearchQuery]);
 
@@ -248,8 +251,6 @@ export function LeadsView() {
       const lines = text.split('\n').map((line) => line.trim()).filter(Boolean);
       const m = csvPreview.mapping;
       let importCount = 0;
-      let errorCount = 0;
-      const totalRows = lines.length - 1;
 
       const leadsPayload: Partial<Lead>[] = [];
 

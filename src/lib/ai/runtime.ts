@@ -221,7 +221,7 @@ export function getSubscriptionBlockedMessage(runtime: {
   if (runtime.subscriptionStatus === 'expired' || runtime.subscriptionStatus === 'past_due') {
     return "Your agency's subscription has ended or is past due. To resume access to our AI features, please renew or update your subscription. Thank you!";
   }
-  return "Our AI features are exclusive to subscribed agencies. Please upgrade your agency to a Pro or Premium subscription to unlock AI-powered tools and assistants. We look forward to supporting your growth!";
+  return "Our AI features are exclusive to subscribed agencies. Please upgrade your agency to a Starter, Pro, or Premium subscription to unlock AI-powered tools and assistants. We look forward to supporting your growth!";
 }
 
 /**

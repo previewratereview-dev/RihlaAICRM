@@ -72,17 +72,17 @@ export async function POST(request: Request) {
     }
 
     const now = new Date();
-    let periodEnd: Date;
-
-    if (plan === 'lifetime') {
-      periodEnd = new Date('2099-12-31');
-    } else if (plan === 'yearly') {
-      periodEnd = new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000);
-    } else {
-      periodEnd = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+    const planConfig = PLAN_PRICES[plan as PlanType];
+    if (!planConfig) {
+      return NextResponse.json({ error: 'Invalid plan.' }, { status: 400 });
     }
 
-    const planTier = plan === 'lifetime' ? 'premium' : plan === 'yearly' ? 'premium' : 'pro';
+    const planTier = planConfig.tier;
+
+    const periodEnd =
+      planConfig.period === 'yearly'
+        ? new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000)
+        : new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
 
     const { error: upsertError } = await supabase
       .from('subscriptions')

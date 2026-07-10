@@ -16,8 +16,8 @@
  * logic stays pure and testable without a live database.
  */
 
-/** Subscription tiers offered by the platform (Requirement 4.1). */
-export type PlanTier = 'free' | 'pro' | 'premium';
+/** Subscription tiers offered by the platform. */
+export type PlanTier = 'free' | 'starter' | 'pro' | 'premium';
 
 /** Lifecycle status of a Subscription (Requirement 4.11). */
 export type SubscriptionStatus = 'active' | 'past_due' | 'expired';
@@ -49,7 +49,7 @@ export interface UsageCounters {
 
 /** Feature entitlement flags carried by a Plan. */
 export interface PlanFeatures {
-  /** Tenant supplies and uses its own AI provider keys (Pro and above). */
+  /** Tenant supplies and uses its own AI provider keys (Starter and above). */
   customAiKeys: boolean;
   /** Tenant may use multiple configured AI providers (Pro and above). */
   multiProviderAi: boolean;
@@ -57,8 +57,18 @@ export interface PlanFeatures {
   platformManagedAi: boolean;
   /** Access to premium AI models (Premium only). */
   premiumModels: boolean;
-  /** Advanced analytics / reporting features (Pro and above). */
+  /** Advanced analytics / reporting features (Starter and above). */
   advancedAnalytics: boolean;
+  /** Custom branding: logo, colors (Starter and above). */
+  customBranding: boolean;
+  /** Custom banner/hero images (Premium only). */
+  customBanner: boolean;
+  /** Custom email templates (Pro and above). */
+  customEmailTemplates: boolean;
+  /** White-label login page (Premium only). */
+  whiteLabelLogin: boolean;
+  /** Remove "Powered by" branding (Premium only). */
+  removePoweredBy: boolean;
 }
 
 /** A subscription Plan: a tier with its Usage_Limits and feature entitlements. */
@@ -85,8 +95,6 @@ export interface Subscription {
  * The canonical Plan catalog. This is the source of truth for Usage_Limits and
  * is upserted into the `plans` table by {@link seedPlans}. A value of
  * {@link UNLIMITED} denotes no cap on that dimension.
- *
- * (Requirement 4.1)
  */
 export const PLANS: Readonly<Record<PlanTier, Plan>> = Object.freeze({
   free: {
@@ -94,9 +102,9 @@ export const PLANS: Readonly<Record<PlanTier, Plan>> = Object.freeze({
     limits: {
       users: 1,
       storageGb: 1,
-      aiCalls: 100,
-      reports: 5,
-      automationRules: 3,
+      aiCalls: 50,
+      reports: 3,
+      automationRules: 2,
     },
     features: {
       customAiKeys: false,
@@ -104,6 +112,33 @@ export const PLANS: Readonly<Record<PlanTier, Plan>> = Object.freeze({
       platformManagedAi: false,
       premiumModels: false,
       advancedAnalytics: false,
+      customBranding: false,
+      customBanner: false,
+      customEmailTemplates: false,
+      whiteLabelLogin: false,
+      removePoweredBy: false,
+    },
+  },
+  starter: {
+    tier: 'starter',
+    limits: {
+      users: 5,
+      storageGb: 10,
+      aiCalls: 2_000,
+      reports: 20,
+      automationRules: 10,
+    },
+    features: {
+      customAiKeys: true,
+      multiProviderAi: false,
+      platformManagedAi: false,
+      premiumModels: false,
+      advancedAnalytics: false,
+      customBranding: true,
+      customBanner: false,
+      customEmailTemplates: false,
+      whiteLabelLogin: false,
+      removePoweredBy: false,
     },
   },
   pro: {
@@ -111,7 +146,7 @@ export const PLANS: Readonly<Record<PlanTier, Plan>> = Object.freeze({
     limits: {
       users: 20,
       storageGb: 50,
-      aiCalls: 10_000,
+      aiCalls: 20_000,
       reports: 100,
       automationRules: 50,
     },
@@ -121,16 +156,21 @@ export const PLANS: Readonly<Record<PlanTier, Plan>> = Object.freeze({
       platformManagedAi: false,
       premiumModels: false,
       advancedAnalytics: true,
+      customBranding: true,
+      customBanner: true,
+      customEmailTemplates: true,
+      whiteLabelLogin: false,
+      removePoweredBy: false,
     },
   },
   premium: {
     tier: 'premium',
     limits: {
-      users: 20,
-      storageGb: 500,
+      users: 50,
+      storageGb: 200,
       aiCalls: 100_000,
-      reports: 1_000,
-      automationRules: 500,
+      reports: 500,
+      automationRules: 200,
     },
     features: {
       customAiKeys: true,
@@ -138,6 +178,11 @@ export const PLANS: Readonly<Record<PlanTier, Plan>> = Object.freeze({
       platformManagedAi: true,
       premiumModels: true,
       advancedAnalytics: true,
+      customBranding: true,
+      customBanner: true,
+      customEmailTemplates: true,
+      whiteLabelLogin: true,
+      removePoweredBy: true,
     },
   },
 });

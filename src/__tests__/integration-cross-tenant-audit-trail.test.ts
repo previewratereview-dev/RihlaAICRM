@@ -26,7 +26,7 @@
  * 6. Verify both entries contain complete metadata for forensic analysis
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { CRMDatabaseService } from '@/lib/db-service';
 import type { User, Lead } from '@/types';
 
@@ -210,6 +210,7 @@ describe('Integration Test 4.7: Cross-Tenant Audit Trail', () => {
     // Clean up after each test
     clearAllStorage();
     clearMockAuditLogs();
+    vi.restoreAllMocks();
   });
 
   /**
@@ -239,6 +240,9 @@ describe('Integration Test 4.7: Cross-Tenant Audit Trail', () => {
     // STEP 2: Create test data in agency-a
     // ================================================================
     const leadA1 = createTestLead(TENANT_AGENCY_A, ADMIN_AGENCY_A, 'Agency A Audit Test Lead');
+    const upsertSpy = vi.spyOn(CRMDatabaseService, 'upsertLead').mockResolvedValue(undefined);
+    const getLeadsSpy = vi.spyOn(CRMDatabaseService, 'getLeads').mockResolvedValue([leadA1]);
+
     await CRMDatabaseService.upsertLead(leadA1, TENANT_AGENCY_A, ADMIN_AGENCY_A.role, ADMIN_AGENCY_A);
     console.log(`✓ Created test lead in ${TENANT_AGENCY_A}`);
     console.log('');

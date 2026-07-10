@@ -458,7 +458,7 @@ export function SettingsView() {
             <div>
               <label className="text-xs font-mono uppercase text-muted-foreground">Agency AI System Prompt</label>
               <p className="text-xs text-muted-foreground mb-1">
-                Customize your agency assistant's personality, behavior, and specific rules below.
+                Customize your agency assistant&apos;s personality, behavior, and specific rules below.
               </p>
               <textarea
                 value={form.systemPrompt}

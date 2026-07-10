@@ -217,7 +217,7 @@ export async function resolveAICredentials(
     return resolvePremium(tenantId, provider, deps);
   }
 
-  if (tier === 'pro') {
+  if (tier === 'pro' || tier === 'starter') {
     return resolvePro(tenantId, provider, deps);
   }
 

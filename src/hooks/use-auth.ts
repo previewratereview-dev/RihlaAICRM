@@ -115,7 +115,7 @@ export function useAuth() {
               ? JSON.parse(localStorage.getItem('crm_team') || '[]')
               : [];
 
-          let matchedMember: User | undefined = team.find(
+          const matchedMember: User | undefined = team.find(
             (m: User) => m.email.toLowerCase() === email.toLowerCase()
           );
 

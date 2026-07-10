@@ -9,11 +9,11 @@ export const VerifyPaymentSchema = z.object({
   razorpay_order_id: z.string().min(1).max(255),
   razorpay_payment_id: z.string().min(1).max(255),
   razorpay_signature: z.string().min(1).max(512),
-  plan: z.enum(['monthly', 'yearly', 'lifetime']),
+  plan: z.enum(['starter_monthly', 'starter_yearly', 'pro_monthly', 'pro_yearly', 'premium_monthly', 'premium_yearly']),
 });
 
 export const CreateOrderSchema = z.object({
-  plan: z.enum(['monthly', 'yearly', 'lifetime']),
+  plan: z.enum(['starter_monthly', 'starter_yearly', 'pro_monthly', 'pro_yearly', 'premium_monthly', 'premium_yearly']),
 });
 
 // --- Auth ---
