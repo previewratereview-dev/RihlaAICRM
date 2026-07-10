@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { Check, Zap, Crown, Gem } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
@@ -221,13 +221,15 @@ function PlanGrid({
 }
 
 export function PricingCards({ onSelectPlan, loading, currentPlan }: PricingCardsProps) {
-  const [period, setPeriod] = useState<BillingPeriod>('monthly');
+  const [period, setPeriod] = useState<BillingPeriod>(
+    currentPlan?.endsWith('_yearly') ? 'yearly' : 'monthly'
+  );
+  const [prevPlan, setPrevPlan] = useState(currentPlan);
 
-  useEffect(() => {
-    if (currentPlan?.endsWith('_yearly')) {
-      setPeriod('yearly');
-    }
-  }, [currentPlan]);
+  if (currentPlan !== prevPlan) {
+    setPrevPlan(currentPlan);
+    setPeriod(currentPlan?.endsWith('_yearly') ? 'yearly' : 'monthly');
+  }
 
   return (
     <Tabs
