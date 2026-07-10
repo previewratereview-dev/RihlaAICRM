@@ -2,17 +2,14 @@
 
 ## Fresh Install
 
-Run **one file** in Supabase SQL Editor:
+Run these files in order in Supabase SQL Editor:
 
-```
-supabase_schema.sql   (root of project)
-```
-
-This creates ALL 17 tables, 6 functions, 9 triggers, RLS policies, and indexes.
+1. `supabase/01_supabase_schema.sql` (Creates all tables, functions, triggers, etc.)
+2. `supabase/02_setup_super_admin.sql` (Optionally sets up your super admin role, after creating the user)
 
 ## Existing Database (Incremental Updates)
 
-Run these in order **only if you haven't already run `supabase_schema.sql`**:
+Run these in order **only if you haven't already run `01_supabase_schema.sql`**:
 
 | # | File | Purpose |
 |---|------|---------|

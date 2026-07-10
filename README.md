@@ -39,7 +39,9 @@ Open [http://localhost:3000](http://localhost:3000)
 ### Supabase setup
 
 1. Create a Supabase project
-2. Run `supabase_schema.sql` in the SQL Editor
+2. Run the SQL files in order from the `supabase/` directory in the Supabase SQL Editor:
+   - First: [supabase/01_supabase_schema.sql](file:///c:/Users/Raes/Desktop/Projects/NextJs/crm/StateAICRM/supabase/01_supabase_schema.sql) (Consolidated schema)
+   - Second (after creating your auth user): [supabase/02_setup_super_admin.sql](file:///c:/Users/Raes/Desktop/Projects/NextJs/crm/StateAICRM/supabase/02_setup_super_admin.sql) (Super Admin provision script)
 3. Set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` in `.env.local`
 4. Create auth users in Supabase Dashboard; profiles are auto-created via trigger
 

@@ -159,7 +159,7 @@ describe('Fix #10 — Audit logs are append-only', () => {
   it('supabase_schema.sql should not have FOR ALL on audit_logs', async () => {
     const fs = await import('fs');
     const path = await import('path');
-    const filePath = path.resolve(process.cwd(), 'supabase_schema.sql');
+    const filePath = path.resolve(process.cwd(), 'supabase/01_supabase_schema.sql');
     const content = fs.readFileSync(filePath, 'utf-8');
 
     // Find the audit_logs section and verify it doesn't have FOR ALL
@@ -170,7 +170,7 @@ describe('Fix #10 — Audit logs are append-only', () => {
   it('supabase_schema.sql should have separate INSERT policy for audit_logs', async () => {
     const fs = await import('fs');
     const path = await import('path');
-    const filePath = path.resolve(process.cwd(), 'supabase_schema.sql');
+    const filePath = path.resolve(process.cwd(), 'supabase/01_supabase_schema.sql');
     const content = fs.readFileSync(filePath, 'utf-8');
 
     expect(content).toContain('Authenticated users can insert audit_logs');
@@ -303,7 +303,7 @@ describe('Fix #1 — get_user_role reads from profiles.role', () => {
   it('supabase_schema.sql get_user_role should query profiles, not auth.users metadata', async () => {
     const fs = await import('fs');
     const path = await import('path');
-    const filePath = path.resolve(process.cwd(), 'supabase_schema.sql');
+    const filePath = path.resolve(process.cwd(), 'supabase/01_supabase_schema.sql');
     const content = fs.readFileSync(filePath, 'utf-8');
 
     // Find the get_user_role function definition
@@ -326,7 +326,7 @@ describe('Fix #2 — Profiles RLS is tenant-scoped', () => {
   it('supabase_schema.sql profiles read policy should use tenant_id comparison', async () => {
     const fs = await import('fs');
     const path = await import('path');
-    const filePath = path.resolve(process.cwd(), 'supabase_schema.sql');
+    const filePath = path.resolve(process.cwd(), 'supabase/01_supabase_schema.sql');
     const content = fs.readFileSync(filePath, 'utf-8');
 
     // Find the profiles read policy
