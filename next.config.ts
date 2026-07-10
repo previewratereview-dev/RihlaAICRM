@@ -1,12 +1,11 @@
 import type { NextConfig } from "next";
 
-const isDev = process.env.NODE_ENV === 'development';
-
 const scriptSrcDirective = [
-  "script-src 'self' 'unsafe-eval'",
-  isDev ? "'unsafe-inline'" : "",
-  "https://checkout.razorpay.com https://cdn.razorpay.com",
-].filter(Boolean).join(' ');
+  "script-src 'self'",
+  "'unsafe-eval'",
+  "'unsafe-inline'",
+  "https://checkout.razorpay.com https://cdn.razorpay.com https://vercel.live",
+].join(' ');
 
 const securityHeaders = [
   { key: 'X-Frame-Options', value: 'DENY' },
@@ -23,8 +22,8 @@ const securityHeaders = [
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' blob: data: https:",
       "font-src 'self'",
-      "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.resend.com https://api.openai.com https://api.anthropic.com https://api.stripe.com https://lumberjack.razorpay.com https://api.razorpay.com",
-      "frame-src 'self' https://api.razorpay.com/",
+      "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.resend.com https://api.openai.com https://api.anthropic.com https://api.stripe.com https://lumberjack.razorpay.com https://api.razorpay.com https://vercel.live wss://vercel.live",
+      "frame-src 'self' https://api.razorpay.com/ https://vercel.live",
       "frame-ancestors 'none'",
       "base-uri 'self'",
       "form-action 'self'",
