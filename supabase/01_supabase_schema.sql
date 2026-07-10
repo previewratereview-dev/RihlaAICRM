@@ -298,7 +298,7 @@ create table if not exists public.knowledge_documents (
 -- 1.14 Subscriptions (billing & trial management)
 create table if not exists public.subscriptions (
   tenant_id text primary key references public.tenants(id) on delete cascade,
-  plan text not null default 'free' check (plan in ('free','pro','premium')),
+  plan text not null default 'free' check (plan in ('free','starter','pro','premium')),
   status text not null default 'active' check (status in ('active','trialing','past_due','cancelled')),
   trial_start timestamptz,
   trial_end timestamptz,
