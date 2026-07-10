@@ -209,8 +209,8 @@ create table if not exists public.notes (
 create table if not exists public.settings (
   id text primary key default 'global',
   tenant_id text not null default 'global' references public.tenants(id) on delete cascade,
-  agency_name text not null default 'WanderBot AI',
-  logo_text text not null default 'WANDERBOT.AI',
+  agency_name text not null default 'Rihla',
+  logo_text text not null default 'RIHLA',
   accent_color text not null default '#FF6B35',
   system_prompt text,
   openai_key text,
@@ -225,7 +225,7 @@ create table if not exists public.settings (
 );
 
 insert into public.settings (id, tenant_id, agency_name)
-values ('global', 'global', 'WanderBot AI')
+values ('global', 'global', 'Rihla')
 on conflict (id) do update set tenant_id = excluded.tenant_id;
 
 -- 1.9 AI Usage Logging

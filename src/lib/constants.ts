@@ -1,4 +1,4 @@
-export const APP_NAME = 'WanderBot AI';
+export const APP_NAME = 'Rihla';
 export const APP_TAGLINE = 'Your Intelligent Travel Concierge';
 export const APP_DESCRIPTION = 'The Next-Gen Travel Booking & Management Platform';
 export const ACCENT_COLOR = '#FF6B35';

@@ -34,7 +34,7 @@ export async function GET(request: NextRequest) {
     logoUrl: tenant?.logo_url || defaultTenantSettings.branding.logoUrl,
     primaryColor: settingsRow?.accent_color || tenant?.primary_color || '#FF6B35',
     secondaryColor: tenant?.secondary_color,
-    agencyName: settingsRow?.agency_name || tenant?.name || 'WanderBot AI',
+    agencyName: settingsRow?.agency_name || tenant?.name || 'Rihla',
   };
 
   const aiBudgets = (settingsRow?.ai_budgets as Record<string, unknown>) || {};

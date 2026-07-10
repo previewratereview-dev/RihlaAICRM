@@ -136,7 +136,7 @@ const FAQ_DATABASE: FAQItem[] = [
     id: 'support-1',
     category: 'Support',
     question: 'How do I contact support?',
-    answer: 'We\'re here 24/7: WhatsApp: +1-555-0100, Email: help@wanderbot.ai, Phone: 1-800-WANDER. Urgent issues? Use WhatsApp for fastest response.',
+    answer: 'We\'re here 24/7: WhatsApp: +1-555-0100, Email: help@rihla.ai, Phone: 1-800-WANDER. Urgent issues? Use WhatsApp for fastest response.',
     keywords: ['contact', 'support', 'help', 'reach', 'call', 'phone number'],
     quickReplies: ['WhatsApp now', 'Send email']
   },

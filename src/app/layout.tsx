@@ -23,7 +23,7 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "WanderBot AI | Travel CRM",
+  title: "Rihla | Travel CRM",
   description: "The intelligent travel customer relationship management platform for modern travel agencies.",
 };
 

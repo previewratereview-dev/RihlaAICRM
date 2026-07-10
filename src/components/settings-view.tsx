@@ -372,7 +372,7 @@ export function SettingsView() {
                   <input
                     value={form.emailFromName || ''}
                     onChange={(e) => setForm({ ...form, emailFromName: e.target.value })}
-                    placeholder="e.g. WanderBot Travel Team"
+                    placeholder="e.g. Rihla Travel Team"
                     className="h-10 rounded-xl bg-background border border-input px-3 text-sm focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
                   />
                   <p className="text-[10px] text-muted-foreground">Shown as the sender name in the traveler&apos;s inbox</p>

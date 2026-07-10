@@ -130,7 +130,7 @@ export function Sidebar() {
           <img
             src="/logo.png"
             className="h-7 w-auto object-contain invert shrink-0 select-none"
-            alt="WanderBot AI Logo"
+            alt="Rihla Logo"
           />
           {sidebarExpanded && (
             <motion.div

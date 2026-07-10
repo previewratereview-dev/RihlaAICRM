@@ -14,7 +14,7 @@ export function verificationEmailTemplate(otp: string, confirmUrl: string) {
           <!-- Header -->
           <tr>
             <td style="background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%); padding: 40px; text-align: center;">
-              <img src="https://res.cloudinary.com/demo/image/upload/w_120,h_40,c_fit/logo.png" alt="WanderBot AI" style="margin-bottom: 16px; filter: brightness(0) invert(1);">
+              <img src="https://res.cloudinary.com/demo/image/upload/w_120,h_40,c_fit/logo.png" alt="Rihla" style="margin-bottom: 16px; filter: brightness(0) invert(1);">
               <h1 style="color: #ffffff; font-size: 24px; font-weight: 700; margin: 0;">Verify Your Email</h1>
             </td>
           </tr>
@@ -70,8 +70,8 @@ export function verificationEmailTemplate(otp: string, confirmUrl: string) {
               <table width="100%" cellpadding="0" cellspacing="0">
                 <tr>
                   <td style="color: #94a3b8; font-size: 11px; text-align: center;">
-                    <p style="margin: 0 0 8px 0;">© ${new Date().getFullYear()} WanderBot AI. All rights reserved.</p>
-                    <p style="margin: 0;">Powered by WanderBot AI — Smart Agency Management</p>
+                    <p style="margin: 0 0 8px 0;">© ${new Date().getFullYear()} Rihla. All rights reserved.</p>
+                    <p style="margin: 0;">Powered by Rihla — Smart Agency Management</p>
                   </td>
                 </tr>
               </table>

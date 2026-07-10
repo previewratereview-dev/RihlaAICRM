@@ -87,7 +87,7 @@ export default function RegisterPage() {
     return (
       <div className="flex h-screen w-screen items-center justify-center bg-background select-none">
         <div className="flex flex-col items-center gap-4">
-          <img src="/logo.png" className="h-10 w-auto object-contain animate-pulse" alt="WanderBot AI Logo" />
+          <img src="/logo.png" className="h-10 w-auto object-contain animate-pulse" alt="Rihla Logo" />
           <div className="flex flex-col items-center gap-1">
             <div className="h-5 w-5 animate-spin rounded-full border-2 border-[#2563EB] border-t-transparent" />
             <span className="font-mono text-[9px] text-[#64748B] mt-2">Loading...</span>
@@ -110,11 +110,11 @@ export default function RegisterPage() {
       >
         <div className="text-center space-y-2 mb-8">
           <div className="flex justify-center mb-4">
-            <img src="/logo.png" className="h-12 w-auto object-contain" alt="WanderBot AI Logo" />
+            <img src="/logo.png" className="h-12 w-auto object-contain" alt="Rihla Logo" />
           </div>
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-secondary/80 border border-border/60 mb-2 font-mono text-[9px] font-bold text-muted-foreground">
             <Cpu className="h-3 w-3 text-primary" />
-            <span>WanderBot AI</span>
+            <span>Rihla</span>
           </div>
           <h2 className="text-lg font-bold text-foreground tracking-tight font-heading">
             Create Your Agency
@@ -179,7 +179,7 @@ export default function RegisterPage() {
               type="text"
               value={agencyName}
               onChange={(e) => setAgencyName(e.target.value)}
-              placeholder="e.g. WanderBot Travel Agency"
+              placeholder="e.g. Rihla Travel Agency"
               required
               className="h-10 rounded-xl bg-background border border-input px-3.5 text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 transition-all font-sans"
             />

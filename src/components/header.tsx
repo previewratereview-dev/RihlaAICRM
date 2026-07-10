@@ -112,7 +112,7 @@ export function Header() {
       case 'sa_settings':
         return 'Platform Settings';
       default:
-        return currentUser.role === 'super_admin' ? 'Platform Admin' : 'WanderBot AI Travel CRM';
+        return currentUser.role === 'super_admin' ? 'Platform Admin' : 'Rihla Travel CRM';
     }
   };
 

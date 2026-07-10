@@ -15,7 +15,7 @@ type TenantContextValue = {
 const TenantCtx = createContext<TenantContextValue>({
   loading: true,
   tenantId: null,
-  agencyName: 'WanderBot AI',
+  agencyName: 'Rihla',
   primaryColor: '#FF6B35',
   features: {},
 });
@@ -31,7 +31,7 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
   const [fetched, setFetched] = useState<TenantContextValue>({
     loading: true,
     tenantId: null,
-    agencyName: 'WanderBot AI',
+    agencyName: 'Rihla',
     primaryColor: '#FF6B35',
     features: {},
   });
@@ -44,7 +44,7 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
         if (cancelled) return;
         const branding = data.branding || {};
         const features = data.settings?.features || {};
-        const agencyName = branding.agencyName || 'WanderBot AI';
+        const agencyName = branding.agencyName || 'Rihla';
         const primaryColor = branding.primaryColor || '#FF6B35';
 
         useCRMStore.setState({

@@ -12,7 +12,7 @@ export function createUiSlice(set: SetState, get: GetState) {
     dataLoading: false,
     typingState: {} as Record<string, boolean>,
     globalSearchQuery: '',
-    tenantBranding: { agencyName: 'WanderBot AI', primaryColor: '#FF6B35' },
+    tenantBranding: { agencyName: 'Rihla', primaryColor: '#FF6B35' },
     tenantFeatures: {},
     impersonateTenantId: null as string | null,
     impersonateTenantName: null as string | null,
