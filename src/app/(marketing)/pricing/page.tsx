@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { Check, Minus, ChevronDown } from "lucide-react";
 import { Reveal } from "@/components/marketing/sections/reveal";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -342,8 +342,8 @@ export default function PricingPage() {
               </thead>
               <tbody>
                 {comparisonCategories.map((cat) => (
-                  <>
-                    <tr key={cat.category}>
+                  <Fragment key={cat.category}>
+                    <tr>
                       <td colSpan={4} className="pb-2 pt-6 text-xs font-bold uppercase tracking-wider text-ink">
                         {cat.category}
                       </td>
@@ -356,7 +356,7 @@ export default function PricingPage() {
                         <td className="py-3.5 text-center"><CellValue value={row.premium} /></td>
                       </tr>
                     ))}
-                  </>
+                  </Fragment>
                 ))}
               </tbody>
             </table>
