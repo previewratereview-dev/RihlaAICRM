@@ -41,7 +41,7 @@ export function DashboardPreview() {
                 "rounded-full border px-4 py-2 text-sm font-medium transition-all duration-200",
                 active === d.key
                   ? "border-ink/20 bg-ink text-white shadow-md"
-                  : "border-ink/10 bg-white/80 text-ink-muted backdrop-blur-sm hover:text-ink hover:border-ink/20 hover:shadow-sm"
+                  : "border-ink/10 bg-card/80 text-ink-muted backdrop-blur-sm hover:text-ink hover:border-ink/20 hover:shadow-sm"
               )}
             >
               {d.label}

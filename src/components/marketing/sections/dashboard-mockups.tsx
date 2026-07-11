@@ -2,7 +2,7 @@ import { MessageCircle, MapPin, TrendingUp, Sparkles, CheckCircle2, User, Messag
 
 function DeviceFrame({ children }: { children: React.ReactNode }) {
   return (
-    <div className="rounded-2xl border border-line bg-white shadow-hero-card overflow-hidden">
+    <div className="rounded-2xl border border-line bg-card shadow-hero-card overflow-hidden">
       <div className="flex items-center gap-2 border-b border-line px-5 py-3.5">
         <span className="h-3 w-3 rounded-full bg-red-400" />
         <span className="h-3 w-3 rounded-full bg-amber-400" />
@@ -52,7 +52,7 @@ export function PipelineMockup() {
       {/* Header */}
       <div className="mb-6 flex items-center justify-between">
         <h3 className="text-lg font-bold text-ink">Lead Pipeline</h3>
-        <span className="inline-flex items-center gap-2 rounded-full border border-line bg-white px-4 py-1.5 text-xs font-semibold text-ink shadow-sm">
+        <span className="inline-flex items-center gap-2 rounded-full border border-line bg-background px-4 py-1.5 text-xs font-semibold text-ink shadow-sm">
           <span className="h-2 w-2 rounded-full" style={{ backgroundColor: "#C6FF3D" }} />
           LIVE
         </span>
@@ -63,7 +63,7 @@ export function PipelineMockup() {
         {stages.map((stage) => {
           const Icon = stage.icon;
           return (
-            <div key={stage.label} className="rounded-xl border border-line bg-white p-4 transition-shadow hover:shadow-md">
+            <div key={stage.label} className="rounded-xl border border-line bg-background p-4 transition-shadow hover:shadow-md">
               {/* Column header */}
               <div className="mb-1 flex items-center justify-between">
                 <div className="flex items-center gap-2.5">
@@ -93,7 +93,7 @@ export function PipelineMockup() {
                 {stage.items.map((item) => (
                   <div
                     key={item.name}
-                    className="rounded-lg border border-line bg-white p-3 transition-all duration-200 hover:border-ink/15 hover:shadow-sm"
+                    className="rounded-lg border border-line bg-card p-3 transition-all duration-200 hover:border-ink/15 hover:shadow-sm"
                   >
                     <div className="flex items-start gap-2">
                       <span
@@ -128,7 +128,7 @@ export function InboxMockup() {
         <span className="text-sm font-medium text-ink">WhatsApp Inbox</span>
       </div>
       <div className="space-y-3">
-        <div className="flex items-start gap-3 rounded-xl border border-line bg-white p-3">
+        <div className="flex items-start gap-3 rounded-xl border border-line bg-card p-3">
           <div className="h-8 w-8 shrink-0 rounded-full bg-ink" />
           <div>
             <p className="text-xs text-ink-muted">
@@ -136,7 +136,7 @@ export function InboxMockup() {
             </p>
           </div>
         </div>
-        <div className="ml-6 flex items-start gap-2 rounded-xl border border-line bg-white p-3">
+        <div className="ml-6 flex items-start gap-2 rounded-xl border border-line bg-background p-3">
           <Sparkles size={14} className="mt-0.5 shrink-0 text-accent" />
           <p className="text-xs text-ink-muted">
             <span className="font-medium text-ink">AI draft:</span> &ldquo;Yes! December has
@@ -160,7 +160,7 @@ export function ItineraryMockup() {
           (d) => (
             <div
               key={d}
-              className="flex items-center justify-between rounded-lg border border-line bg-white px-3 py-2 text-xs text-ink-muted"
+              className="flex items-center justify-between rounded-lg border border-line bg-card px-3 py-2 text-xs text-ink-muted"
             >
               <span>{d}</span>
               <CheckCircle2 size={14} className="text-accent" />

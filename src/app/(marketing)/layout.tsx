@@ -25,7 +25,7 @@ export const metadata = {
 
 export default function MarketingLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="font-[family-name:var(--font-dm-sans)]">
+    <div className="marketing-light min-h-screen bg-background text-foreground font-[family-name:var(--font-dm-sans)]">
       <Navbar />
       <main>{children}</main>
       <Footer />

@@ -4,7 +4,7 @@ import { footer } from "@/lib/marketing/content";
 
 export function Footer() {
   return (
-    <footer className="border-t border-line bg-white">
+    <footer className="border-t border-line bg-background">
       <div className="section grid grid-cols-2 gap-10 py-16 md:grid-cols-6">
         <div className="col-span-2">
           <Link href="/" className="flex items-center gap-2.5 font-display text-lg font-bold tracking-tight">

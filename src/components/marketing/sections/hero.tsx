@@ -109,7 +109,7 @@ function RevenueCard({ delay }: { delay: number }) {
 
 export function Hero() {
   return (
-    <section className="relative overflow-hidden bg-white">
+    <section className="relative overflow-hidden bg-background">
       {/* Subtle lime radial glow */}
       <div
         className="pointer-events-none absolute inset-0"
@@ -202,7 +202,7 @@ export function Hero() {
             initial={{ opacity: 0, y: 40, scale: 0.95 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             transition={{ duration: 0.8, delay: 0.4, ease: "easeOut" }}
-            className="pointer-events-auto absolute left-1/2 top-12 -translate-x-1/2 overflow-hidden rounded-2xl border border-line bg-white shadow-float-lg"
+            className="pointer-events-auto absolute left-1/2 top-12 -translate-x-1/2 overflow-hidden rounded-2xl border border-line bg-card shadow-float-lg"
           >
             <Image
               src="/dashboard-ref.png"
@@ -237,7 +237,7 @@ export function Hero() {
       </div>
 
       {/* Bottom fade */}
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-gradient-to-b from-transparent to-white" />
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-gradient-to-b from-transparent to-background" />
     </section>
   );
 }
