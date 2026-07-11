@@ -3,85 +3,90 @@
 import { useState } from "react";
 import { Check, Minus, ChevronDown } from "lucide-react";
 import { Reveal } from "@/components/marketing/sections/reveal";
-import { Card } from "@/components/marketing/ui/card";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/marketing/ui/button";
 import { cn } from "@/lib/utils";
+
+type BillingPeriod = "monthly" | "yearly";
 
 const plans = [
   {
     name: "Starter",
     tagline: "Everything you need to manage your travel business.",
-    price: "₹499",
-    period: "/month",
     highlighted: false,
     badge: "",
     cta: "Start Free Trial",
     ctaVariant: "secondary" as const,
+    pricing: {
+      monthly: { price: "₹999", period: "/month" },
+      yearly: {
+        price: "₹9,990",
+        period: "/year",
+        monthlyEquivalent: "~₹833/mo",
+        savings: "Save ₹1,998/year",
+      },
+    },
     features: [
-      "Dashboard",
-      "Bulk Import & Export",
-      "Booking Management",
-      "Booking Pipeline",
-      "Past Travel Records",
-      "Calendar & Meeting Scheduler",
-      "Tasks & Reminders",
-      "Customer Database",
-      "Lead Management",
-      "Booking Status Tracking",
-      "Activity Timeline",
-      "Basic Search & Filters",
-      "Up to 10 Team Members",
+      "Up to 5 team members",
+      "10 GB storage",
+      "2,000 AI calls/month",
+      "Custom AI provider keys",
+      "Custom branding (logo, colors)",
+      "Email support",
     ],
   },
   {
     name: "Pro",
     tagline: "Everything in Starter, plus advanced analytics and permissions.",
-    price: "₹799",
-    period: "/month",
     highlighted: true,
     badge: "Most Popular",
     cta: "Get Started",
     ctaVariant: "primary" as const,
+    pricing: {
+      monthly: { price: "₹2,499", period: "/month" },
+      yearly: {
+        price: "₹24,990",
+        period: "/year",
+        monthlyEquivalent: "~₹2,083/mo",
+        savings: "Save ₹4,998/year",
+      },
+    },
     features: [
-      "Team Performance Dashboard",
-      "AI Reports & Analytics",
-      "Audit Logs",
-      "Sales Reports",
-      "Revenue Reports",
-      "Team Productivity Metrics",
-      "Advanced Filters",
-      "Custom Views",
-      "Booking Insights",
-      "Customer Analytics",
-      "Follow-up Tracking",
-      "Role-Based Permissions",
-      "Up to 20 Team Members",
+      "Up to 20 team members",
+      "50 GB storage",
+      "20,000 AI calls/month",
+      "Multi-provider AI support",
+      "Advanced analytics & reports",
+      "Custom branding + banner images",
+      "Custom email templates",
+      "Priority support",
     ],
   },
   {
     name: "Premium",
     tagline: "Everything in Pro, plus AI co-pilot and full integrations.",
-    price: "₹1,599",
-    period: "/month",
     highlighted: false,
     badge: "",
     cta: "Contact Sales",
     ctaVariant: "secondary" as const,
+    pricing: {
+      monthly: { price: "₹4,999", period: "/month" },
+      yearly: {
+        price: "₹49,990",
+        period: "/year",
+        monthlyEquivalent: "~₹4,166/mo",
+        savings: "Save ₹9,998/year",
+      },
+    },
     features: [
-      "AI Co-Pilot",
-      "White Label / Rebranding",
-      "Custom Branding",
-      "Third-Party Integrations",
-      "WhatsApp Integration",
-      "Google Calendar Integration",
-      "Google Meet Integration",
-      "Payment Gateway Integration",
-      "Email Integration",
-      "API Access",
-      "Workflow Automation",
-      "Custom Automations",
-      "Unlimited Team Members",
-      "Priority Support",
+      "Up to 50 team members",
+      "200 GB storage",
+      "100,000 AI calls/month",
+      "Platform-managed AI (premium models)",
+      "White-label login page",
+      "Remove \"Powered by\" branding",
+      "Custom email templates",
+      "Dedicated account manager",
     ],
   },
 ];
@@ -105,48 +110,50 @@ const comparisonCategories = [
     ],
   },
   {
-    category: "Analytics & Reports",
+    category: "AI & Analytics",
     rows: [
-      { feature: "Team Performance Dashboard", starter: false, pro: true, premium: true },
-      { feature: "AI Reports & Analytics", starter: false, pro: true, premium: true },
+      { feature: "Custom AI provider keys", starter: true, pro: true, premium: true },
+      { feature: "Multi-provider AI support", starter: false, pro: true, premium: true },
+      { feature: "Platform-managed AI (premium models)", starter: false, pro: false, premium: true },
+      { feature: "Advanced analytics & reports", starter: false, pro: true, premium: true },
       { feature: "Audit Logs", starter: false, pro: true, premium: true },
       { feature: "Sales Reports", starter: false, pro: true, premium: true },
       { feature: "Revenue Reports", starter: false, pro: true, premium: true },
       { feature: "Team Productivity Metrics", starter: false, pro: true, premium: true },
       { feature: "Booking Insights", starter: false, pro: true, premium: true },
       { feature: "Customer Analytics", starter: false, pro: true, premium: true },
+      { feature: "Custom email templates", starter: false, pro: true, premium: true },
+      { feature: "Priority support", starter: false, pro: true, premium: true },
     ],
   },
   {
-    category: "Advanced Features",
+    category: "Branding & Automation",
     rows: [
-      { feature: "Advanced Filters", starter: false, pro: true, premium: true },
-      { feature: "Custom Views", starter: false, pro: true, premium: true },
-      { feature: "Follow-up Tracking", starter: false, pro: true, premium: true },
-      { feature: "Role-Based Permissions", starter: false, pro: true, premium: true },
-      { feature: "AI Co-Pilot", starter: false, pro: false, premium: true },
-      { feature: "White Label / Rebranding", starter: false, pro: false, premium: true },
-      { feature: "Custom Branding", starter: false, pro: false, premium: true },
+      { feature: "Custom branding (logo, colors)", starter: true, pro: true, premium: true },
+      { feature: "Custom branding + banner images", starter: false, pro: true, premium: true },
+      { feature: "White label / rebranding", starter: false, pro: false, premium: true },
+      { feature: "Remove \"Powered by\" branding", starter: false, pro: false, premium: true },
+      { feature: "Workflow automation", starter: false, pro: false, premium: true },
+      { feature: "Custom automations", starter: false, pro: false, premium: true },
+      { feature: "Dedicated account manager", starter: false, pro: false, premium: true },
     ],
   },
   {
-    category: "Integrations & Automations",
+    category: "Integrations",
     rows: [
-      { feature: "WhatsApp Integration", starter: false, pro: false, premium: true },
-      { feature: "Google Calendar Integration", starter: false, pro: false, premium: true },
-      { feature: "Google Meet Integration", starter: false, pro: false, premium: true },
-      { feature: "Payment Gateway Integration", starter: false, pro: false, premium: true },
-      { feature: "Email Integration", starter: false, pro: false, premium: true },
-      { feature: "API Access", starter: false, pro: false, premium: true },
-      { feature: "Workflow Automation", starter: false, pro: false, premium: true },
-      { feature: "Custom Automations", starter: false, pro: false, premium: true },
+      { feature: "WhatsApp integration", starter: false, pro: false, premium: true },
+      { feature: "Google Calendar integration", starter: false, pro: false, premium: true },
+      { feature: "Google Meet integration", starter: false, pro: false, premium: true },
+      { feature: "Payment gateway integration", starter: false, pro: false, premium: true },
+      { feature: "Email integration", starter: false, pro: false, premium: true },
+      { feature: "API access", starter: false, pro: false, premium: true },
     ],
   },
   {
     category: "Team & Support",
     rows: [
-      { feature: "Team Members", starter: "Up to 10", pro: "Up to 20", premium: "Unlimited" },
-      { feature: "Priority Support", starter: false, pro: false, premium: true },
+      { feature: "Team Members", starter: "Up to 5", pro: "Up to 20", premium: "Up to 50" },
+      { feature: "Priority support", starter: false, pro: true, premium: true },
     ],
   },
 ];
@@ -201,6 +208,8 @@ function FaqItem({ q, a }: { q: string; a: string }) {
 }
 
 export default function PricingPage() {
+  const [billingPeriod, setBillingPeriod] = useState<BillingPeriod>("monthly");
+
   return (
     <>
       <section className="section py-24 md:py-32">
@@ -217,7 +226,27 @@ export default function PricingPage() {
         </Reveal>
 
         {/* Pricing Cards */}
-        <div className="mx-auto mt-16 grid max-w-[1100px] items-start gap-6 md:grid-cols-3">
+        <Reveal className="flex justify-center">
+          <Tabs
+            value={billingPeriod}
+            onValueChange={(value) => setBillingPeriod(value as BillingPeriod)}
+            className="w-full max-w-[380px]"
+          >
+            <TabsList className="h-10 p-1" aria-label="Billing period">
+              <TabsTrigger value="monthly" className="px-6">
+                Monthly
+              </TabsTrigger>
+              <TabsTrigger value="yearly" className="px-6 gap-2">
+                Yearly
+                <span className="text-[10px] font-bold uppercase tracking-wide text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded">
+                  2 mo free
+                </span>
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+        </Reveal>
+
+        <div className="mx-auto mt-10 grid max-w-[1100px] items-start gap-6 md:grid-cols-3">
           {plans.map((plan, i) => (
             <Reveal key={plan.name} delay={i * 0.08}>
               <div
@@ -253,9 +282,14 @@ export default function PricingPage() {
 
                 {/* Price */}
                 <div className="relative mt-6 flex items-baseline gap-1">
-                  <span className="text-4xl font-semibold text-ink">{plan.price}</span>
-                  <span className="text-sm text-ink-muted">{plan.period}</span>
+                  <span className="text-4xl font-semibold text-ink">{plan.pricing[billingPeriod].price}</span>
+                  <span className="text-sm text-ink-muted">{plan.pricing[billingPeriod].period}</span>
                 </div>
+                {billingPeriod === "yearly" && plan.pricing[billingPeriod].monthlyEquivalent ? (
+                  <p className="mt-2 text-xs text-ink-muted">
+                    {plan.pricing[billingPeriod].monthlyEquivalent} billed annually
+                  </p>
+                ) : null}
 
                 {/* Divider */}
                 <div className="relative my-6 h-px w-full rounded-full" style={{ backgroundColor: "rgba(198,255,61,0.3)" }} />
