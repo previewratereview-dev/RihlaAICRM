@@ -227,3 +227,166 @@
 .animate-pulse-soft {
   animation: pulse-soft 2s ease-in-out infinite;
 }
+
+/* ========================================
+   Rihla Marketing Design Tokens (Tailwind v4)
+   ======================================== */
+
+@theme inline {
+  /* Rihla color tokens */
+  --color-base: #FFFFFF;
+  --color-base-raised: #FAFAFA;
+  --color-base-overlay: #F5F5F5;
+  --color-line: #E5E7EB;
+  --color-line-strong: #D1D5DB;
+  --color-ink: #111111;
+  --color-ink-muted: #666666;
+  --color-ink-faint: #999999;
+  --color-accent-lime: #C6FF3D;
+  --color-accent-lime-light: #D4FF66;
+  --color-accent-lime-dark: #A8E030;
+  --color-surface: rgba(198, 255, 61, 0.06);
+  --color-surface-strong: rgba(198, 255, 61, 0.12);
+
+  /* Marketing shadows */
+  --shadow-glow: 0 0 60px -15px rgba(198, 255, 61, 0.3);
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.04), 0 8px 24px rgba(0, 0, 0, 0.06);
+  --shadow-hero-card: 0 8px 32px rgba(0, 0, 0, 0.06), 0 2px 8px rgba(0, 0, 0, 0.03);
+  --shadow-hero-card-hover: 0 16px 48px rgba(0, 0, 0, 0.1), 0 4px 12px rgba(0, 0, 0, 0.05);
+  --shadow-float-sm: 0 4px 20px rgba(0, 0, 0, 0.05);
+  --shadow-float-md: 0 8px 32px rgba(0, 0, 0, 0.06);
+  --shadow-float-lg: 0 12px 48px rgba(0, 0, 0, 0.08);
+
+  /* Marketing font */
+  --font-display: var(--font-dm-sans);
+
+  /* Marketing animations */
+  --animate-float: float 6s ease-in-out infinite;
+  --animate-float-slow: float-slow 8s ease-in-out infinite;
+  --animate-float-medium: float-medium 6s ease-in-out infinite;
+  --animate-float-fast: float-fast 4s ease-in-out infinite;
+  --animate-fade-up: fade-up 0.6s ease-out forwards;
+  --animate-fade-in-scale: fade-in-scale 0.8s ease-out forwards;
+  --animate-shimmer: shimmer 3s linear infinite;
+}
+
+/* Rihla keyframes */
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-12px); }
+}
+
+@keyframes float-slow {
+  0%, 100% { transform: translateY(0px) rotate(0deg); }
+  50% { transform: translateY(-8px) rotate(1deg); }
+}
+
+@keyframes float-medium {
+  0%, 100% { transform: translateY(0px) rotate(0deg); }
+  50% { transform: translateY(-14px) rotate(-1deg); }
+}
+
+@keyframes float-fast {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-18px); }
+}
+
+@keyframes fade-up {
+  0% { opacity: 0; transform: translateY(16px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fade-in-scale {
+  0% { opacity: 0; transform: scale(0.95) translateY(20px); }
+  100% { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+/* Rihla marketing component utilities */
+@layer components {
+  .glass {
+    @apply relative rounded-2xl border border-line bg-white backdrop-blur-xl;
+    box-shadow: var(--shadow-hero-card);
+  }
+
+  .glass-strong {
+    @apply relative rounded-2xl border border-line bg-white;
+    box-shadow: var(--shadow-hero-card);
+  }
+
+  .glass-float {
+    @apply relative rounded-2xl border border-line bg-white;
+    box-shadow: var(--shadow-float-md);
+  }
+
+  .hero-card {
+    @apply relative overflow-hidden rounded-2xl border border-line bg-white transition-shadow duration-300;
+    box-shadow: var(--shadow-hero-card);
+  }
+  .hero-card:hover {
+    box-shadow: var(--shadow-hero-card-hover);
+  }
+
+  .text-gradient {
+    background: #C6FF3D;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .section {
+    @apply mx-auto w-full max-w-7xl px-6 md:px-10;
+  }
+
+  .eyebrow {
+    @apply inline-flex items-center gap-2 rounded-full border border-line bg-white px-4 py-1.5 text-xs font-mono uppercase tracking-widest text-ink-muted;
+  }
+
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-full bg-ink px-7 py-3.5 text-sm font-semibold text-white shadow-md transition-all duration-200 hover:scale-[1.03] hover:shadow-lg active:scale-[0.98];
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 rounded-full border border-line bg-white px-7 py-3.5 text-sm font-semibold text-ink transition-all duration-200 hover:border-ink/20 hover:shadow-md;
+  }
+
+  .btn-lime {
+    @apply inline-flex items-center justify-center gap-2 rounded-full px-7 py-3.5 text-sm font-bold shadow-md transition-all duration-200 hover:scale-[1.03] hover:shadow-lg active:scale-[0.98];
+    background-color: #C6FF3D;
+    color: #111111;
+  }
+  .btn-lime:hover {
+    background-color: #D4FF66;
+  }
+}
+
+/* Marketing selection and focus styles */
+.marketing-selection ::selection {
+  background-color: #C6FF3D;
+  color: #111111;
+}
+
+.marketing-selection :focus-visible {
+  outline: 2px solid #C6FF3D;
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+/* Reduced motion for marketing animations */
+@media (prefers-reduced-motion: reduce) {
+  .animate-float,
+  .animate-float-slow,
+  .animate-float-medium,
+  .animate-float-fast,
+  .animate-fade-up,
+  .animate-fade-in-scale,
+  .animate-shimmer {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

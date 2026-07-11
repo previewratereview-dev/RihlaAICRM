@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Inter, Plus_Jakarta_Sans, JetBrains_Mono } from "next/font/google";
+import { Inter, Plus_Jakarta_Sans, JetBrains_Mono, DM_Sans } from "next/font/google";
 import { AuthBridge } from "@/components/auth-bridge";
 import { ErrorBoundary } from "@/components/error-boundary";
 import "./globals.css";
@@ -22,8 +22,14 @@ const jetbrainsMono = JetBrains_Mono({
   display: "swap",
 });
 
+const dmSans = DM_Sans({
+  variable: "--font-dm-sans",
+  subsets: ["latin"],
+  display: "swap",
+});
+
 export const metadata: Metadata = {
-  title: "Rihla | Travel CRM",
+  title: "Rihla by State AI | Travel CRM",
   description: "The intelligent travel customer relationship management platform for modern travel agencies.",
 };
 
@@ -36,7 +42,7 @@ export default function RootLayout({
     <html
       lang="en"
       suppressHydrationWarning
-      className={`${inter.variable} ${plusJakarta.variable} ${jetbrainsMono.variable} h-full antialiased`}
+      className={`${inter.variable} ${plusJakarta.variable} ${jetbrainsMono.variable} ${dmSans.variable} h-full antialiased`}
     >
       <head>
         <script

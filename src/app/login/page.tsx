@@ -32,7 +32,7 @@ export default function LoginPage() {
   // Redirect if already authenticated
   useEffect(() => {
     if (!sessionLoading && currentUser) {
-      router.push('/');
+      router.push('/app');
     }
   }, [currentUser, sessionLoading, router]);
 
@@ -54,7 +54,7 @@ export default function LoginPage() {
           setErrorMsg('Platform is in maintenance mode. Only super admins can sign in.');
           return;
         }
-        router.push('/');
+        router.push('/app');
       } else {
         setErrorMsg(res.error || 'Login failed.');
       }

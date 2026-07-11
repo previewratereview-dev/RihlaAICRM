@@ -22,6 +22,7 @@ import {
   Award,
   ScrollText,
   Cpu,
+  Globe,
 } from 'lucide-react';
 
 interface SidebarItem {
@@ -210,6 +211,30 @@ export function Sidebar() {
           );
         })}
       </nav>
+
+      {/* Website Link */}
+      <div className="px-3 py-2 border-t border-sidebar-border/50">
+        <a
+          href="/"
+          target="_blank"
+          rel="noopener noreferrer"
+          className={cn(
+            "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-all duration-200 group",
+            "text-muted-foreground hover:text-foreground hover:bg-sidebar-accent/50"
+          )}
+        >
+          <Globe className="h-4 w-4 shrink-0" />
+          {sidebarExpanded && (
+            <motion.span
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="truncate text-left"
+            >
+              Website
+            </motion.span>
+          )}
+        </a>
+      </div>
 
       {/* Database Connection Status Indicator */}
       <div className="px-3 py-2.5 border-t border-sidebar-border/50 bg-sidebar-accent/30">

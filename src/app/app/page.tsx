@@ -2,6 +2,6 @@
 
 import { CrmShell } from '@/components/crm-shell';
 
-export default function AppHome() {
+export default function CrmHome() {
   return <CrmShell />;
 }

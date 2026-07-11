@@ -22,7 +22,7 @@ export default function RegisterPage() {
 
   useEffect(() => {
     if (!sessionLoading && currentUser) {
-      router.push('/');
+      router.push('/app');
     }
   }, [currentUser, sessionLoading, router]);
 
@@ -71,7 +71,7 @@ export default function RegisterPage() {
         const passwords: Record<string, string> = JSON.parse(localStorage.getItem('crm_team_passwords') || '{}');
         passwords[data.userId] = password;
         localStorage.setItem('crm_team_passwords', JSON.stringify(passwords));
-        router.push('/');
+        router.push('/app');
       } else {
         // In Supabase mode, redirect to email verification
         router.push(`/auth/confirm?token=${data.token}&email=${encodeURIComponent(email)}`);

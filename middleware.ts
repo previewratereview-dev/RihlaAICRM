@@ -28,8 +28,21 @@ import {
  * the authentication gate that precedes it.
  */
 
-/** Public page routes reachable without authentication. */
-const PUBLIC_PAGE_PREFIXES = ['/login', '/register', '/forgot-password', '/auth'];
+/**
+ * Public page routes reachable without authentication.
+ * Includes marketing/landing pages and auth routes.
+ */
+const PUBLIC_PAGE_PREFIXES = [
+  '/',
+  '/login',
+  '/register',
+  '/forgot-password',
+  '/auth',
+  '/pricing',
+  '/about',
+  '/privacy',
+  '/terms',
+];
 
 /**
  * Public API prefixes. Inbound provider webhooks authenticate via per-tenant
