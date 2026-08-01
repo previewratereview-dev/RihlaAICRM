@@ -121,12 +121,22 @@ export function LeadsView() {
   };
 
   const handleSubmitLead = async (data: LeadFormData) => {
+    console.log('handleSubmitLead called with data:', data);
     setFormError(null);
     try {
       await addLead(data as Lead);
+      console.log('addLead successful in handleSubmitLead');
       setIsAddModalOpen(false);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to create booking';
+    } catch (err: any) {
+      console.error('addLead caught error in handleSubmitLead:', err);
+      let msg = err instanceof Error ? err.message : 'Failed to create booking';
+      
+      if (err?.code === 'PGRST204') {
+        msg = "Database schema cache is stale (missing columns). Please go to Supabase Dashboard > Settings > API and click 'Reload Schema Cache', or run `NOTIFY pgrst, 'reload schema'` in the SQL Editor.";
+      } else if (err?.message) {
+        msg = err.message;
+      }
+
       setFormError(msg);
     }
   };

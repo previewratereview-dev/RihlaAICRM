@@ -14,10 +14,14 @@ export function createLeadsSlice(set: SetState, get: GetState) {
     activities: {} as Record<string, LeadActivity[]>,
 
     addLead: async (newLeadData: Omit<Lead, 'id' | 'createdAt' | 'updatedAt' | 'aiScore' | 'aiSummary'>) => {
+      console.log('addLead in slice called with data:', newLeadData);
       const id = `lead-${generateId()}`;
       const now = new Date().toISOString();
       const currentUser = get().currentUser;
-      if (!currentUser) throw new Error('User not authenticated');
+      if (!currentUser) {
+        console.error('addLead failed: User not authenticated');
+        throw new Error('User not authenticated');
+      }
 
       // Duplicate detection — check email, phone, or name+business combination
       const existingLeads = get().leads;
@@ -32,6 +36,8 @@ export function createLeadsSlice(set: SetState, get: GetState) {
         if (newName && newBusiness && l.fullName?.toLowerCase().trim() === newName && l.businessName?.toLowerCase().trim() === newBusiness) return true;
         return false;
       });
+
+      console.log('Duplicate check result:', { duplicate, existingLeadsCount: existingLeads.length });
 
       if (duplicate) {
         const matchBy = newEmail && duplicate.email?.toLowerCase().trim() === newEmail
@@ -52,22 +58,33 @@ export function createLeadsSlice(set: SetState, get: GetState) {
         updatedAt: now,
       };
       const newLead = enrichLeadWithAIScore(draftLead);
+      console.log('Enriched lead data ready for upsert:', newLead);
 
-      await CRMDatabaseService.upsertLead(newLead, newLead.tenantId, currentUser.role, currentUser);
+      try {
+        await CRMDatabaseService.upsertLead(newLead, newLead.tenantId, currentUser.role, currentUser);
+        console.log('CRMDatabaseService.upsertLead success');
+      } catch (err) {
+        console.error('CRMDatabaseService.upsertLead failed:', err);
+        throw err;
+      }
 
-      const activity: LeadActivity = {
-        id: `act-${generateId()}`,
-        leadId: id,
-        userId: get().currentUser?.id || 'system',
-        userName: get().currentUser?.fullName || 'AI System',
-        type: 'created',
-        title: 'Lead Created',
-        description: `Lead added manually in system by ${get().currentUser?.fullName || 'admin'}. Assigned to ${get().team.find(t => t.id === newLeadData.assignedTo)?.fullName || 'Unassigned'}.`,
-        createdAt: now,
-        tenantId: newLead.tenantId,
-      };
-      await CRMDatabaseService.insertActivity(activity, activity.tenantId, currentUser.role, currentUser);
-      await get().logAuditEvent('create_lead', `Created lead "${newLead.fullName}" of business "${newLead.businessName}".`);
+      try {
+        const activity: LeadActivity = {
+          id: `act-${generateId()}`,
+          leadId: id,
+          userId: get().currentUser?.id || 'system',
+          userName: get().currentUser?.fullName || 'AI System',
+          type: 'created',
+          title: 'Lead Created',
+          description: `Lead added manually in system by ${get().currentUser?.fullName || 'admin'}. Assigned to ${get().team.find(t => t.id === newLeadData.assignedTo)?.fullName || 'Unassigned'}.`,
+          createdAt: now,
+          tenantId: newLead.tenantId,
+        };
+        await CRMDatabaseService.insertActivity(activity, activity.tenantId, currentUser.role, currentUser);
+        await get().logAuditEvent('create_lead', `Created lead "${newLead.fullName}" of business "${newLead.businessName}".`);
+      } catch (err) {
+        console.error('Failed to log activity or audit event:', err);
+      }
 
       try {
         await runLeadCreatedAutomations(newLead, {
@@ -84,41 +101,45 @@ export function createLeadsSlice(set: SetState, get: GetState) {
       const hasConversations = get().conversations.some(c => c.leadId === id);
 
       if (!hasConversations && (newLead.whatsapp || newLead.phone)) {
-        const convId = `conv-${generateId()}`;
-        const assUser = get().team.find(t => t.id === newLead.assignedTo);
+        try {
+          const convId = `conv-${generateId()}`;
+          const assUser = get().team.find(t => t.id === newLead.assignedTo);
 
-        const newConv: Conversation = {
-          id: convId,
-          tenantId: newLead.tenantId,
-          leadId: id,
-          leadName: newLead.fullName,
-          leadAvatar: '',
-          leadCompany: newLead.businessName || '',
-          leadEmail: newLead.email || '',
-          channel: newLead.whatsapp ? 'whatsapp' : 'sms',
-          assignedTo: newLead.assignedTo,
-          assignedName: assUser?.fullName || 'Sarah Chen',
-          status: 'open',
-          lastMessage: 'Lead added to CRM system.',
-          lastMessageAt: now,
-          unreadCount: 0,
-          isOnline: true,
-          phone: newLead.whatsapp || newLead.phone
-        };
-        await CRMDatabaseService.upsertConversation(newConv, newConv.tenantId, currentUser.role, currentUser);
+          const newConv: Conversation = {
+            id: convId,
+            tenantId: newLead.tenantId,
+            leadId: id,
+            leadName: newLead.fullName,
+            leadAvatar: '',
+            leadCompany: newLead.businessName || '',
+            leadEmail: newLead.email || '',
+            channel: newLead.whatsapp ? 'whatsapp' : 'sms',
+            assignedTo: newLead.assignedTo,
+            assignedName: assUser?.fullName || 'Sarah Chen',
+            status: 'open',
+            lastMessage: 'Lead added to CRM system.',
+            lastMessageAt: now,
+            unreadCount: 0,
+            isOnline: true,
+            phone: newLead.whatsapp || newLead.phone
+          };
+          await CRMDatabaseService.upsertConversation(newConv, newConv.tenantId, currentUser.role, currentUser);
 
-        const sysMsg: Message = {
-          id: `msg-${generateId()}`,
-          conversationId: convId,
-          senderType: 'system',
-          senderId: 'system',
-          senderName: 'CRM Bot',
-          content: 'Conversation channel initialized. Lead is ready for contact.',
-          messageType: 'template',
-          isRead: true,
-          createdAt: now
-        };
-        await CRMDatabaseService.insertMessage(sysMsg, newConv.tenantId, currentUser.role, currentUser);
+          const sysMsg: Message = {
+            id: `msg-${generateId()}`,
+            conversationId: convId,
+            senderType: 'system',
+            senderId: 'system',
+            senderName: 'CRM Bot',
+            content: 'Conversation channel initialized. Lead is ready for contact.',
+            messageType: 'template',
+            isRead: true,
+            createdAt: now
+          };
+          await CRMDatabaseService.insertMessage(sysMsg, newConv.tenantId, currentUser.role, currentUser);
+        } catch (err) {
+          console.error('Failed to initialize conversation for lead:', err);
+        }
       }
 
       await get().syncData();

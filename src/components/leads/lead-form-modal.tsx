@@ -183,7 +183,7 @@ export function LeadFormModal({
 
           <div className="grid grid-cols-3 gap-4">
             <div className="flex flex-col gap-1.5">
-              <label className="text-muted-foreground font-mono text-[10px] uppercase font-semibold tracking-wider">Deal Value ($)</label>
+              <label className="text-muted-foreground font-mono text-[10px] uppercase font-semibold tracking-wider">Deal Value (₹)</label>
               <input
                 type="number"
                 placeholder="5000"
@@ -205,7 +205,7 @@ export function LeadFormModal({
               <label className="text-muted-foreground font-mono text-[10px] uppercase font-semibold tracking-wider">Budget</label>
               <input
                 type="text"
-                placeholder="$5,000"
+                placeholder="₹5,000"
                 {...register('budget')}
                 className={inputClass}
               />

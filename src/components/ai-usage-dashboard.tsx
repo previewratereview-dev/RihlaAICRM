@@ -108,7 +108,7 @@ export function AIUsageDashboard() {
           <h3 className="text-base font-bold text-foreground font-heading mb-4">Budget Controls</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider block mb-2">Monthly Budget ($)</label>
+              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider block mb-2">Monthly Budget (₹)</label>
               <div className="h-10 px-4 rounded-xl bg-white border border-input text-sm font-mono">
                 {budgetStatus.monthlyBudget.toFixed(2)}
               </div>

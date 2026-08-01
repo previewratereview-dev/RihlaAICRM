@@ -170,7 +170,7 @@ export function ItineraryMockup() {
       </div>
       <div className="mt-4 flex items-center justify-between rounded-lg border border-line bg-white px-3 py-2 text-xs">
         <span className="text-ink-muted">Total (4 pax)</span>
-        <span className="font-mono font-medium text-ink">$3,240</span>
+        <span className="font-mono font-medium text-ink">₹3,240</span>
       </div>
     </DeviceFrame>
   );
@@ -199,7 +199,7 @@ export function AnalyticsMockup() {
           <p className="text-[10px] text-ink-faint">Active leads</p>
         </div>
         <div>
-          <p className="font-mono text-lg font-semibold text-ink">$48K</p>
+          <p className="font-mono text-lg font-semibold text-ink">₹48K</p>
           <p className="text-[10px] text-ink-faint">Pipeline value</p>
         </div>
       </div>

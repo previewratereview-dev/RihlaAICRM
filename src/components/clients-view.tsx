@@ -75,7 +75,7 @@ export function ClientsView() {
         returnDate: '',
         duration: client.duration || '',
         travelClass: client.travelClass || 'economy',
-        budget: client.budget || '$5,000',
+        budget: client.budget || '₹5,000',
         dealValue: client.dealValue || 5000,
         status: 'inquiry_received',
         priority: 'medium',

@@ -609,7 +609,7 @@ export function SuperAdminSettingsView() {
             <h3 className="font-bold flex items-center gap-2"><Cpu className="h-4 w-4 text-primary" /> AI Budget Limits</h3>
             <div className="grid sm:grid-cols-2 gap-4">
               <div>
-                <label className="text-xs font-mono uppercase text-muted-foreground">Platform Monthly AI Cap ($)</label>
+                <label className="text-xs font-mono uppercase text-muted-foreground">Platform Monthly AI Cap (₹)</label>
                 <input type="number" value={form.platformMonthlyAiCap} onChange={(e) => setForm({ ...form, platformMonthlyAiCap: Number(e.target.value) })} className="mt-1 w-full h-10 rounded-xl border px-3 text-sm" />
               </div>
               <div>

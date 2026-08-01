@@ -91,7 +91,7 @@ function RevenueCard({ delay }: { delay: number }) {
     <FloatingCard className="p-5" delay={delay} animation="float-slow">
       <p className="text-xs font-medium text-ink-muted uppercase tracking-wider">Revenue</p>
       <div className="mt-2 flex items-baseline gap-2">
-        <span className="font-display text-2xl font-bold text-ink">$48,250</span>
+        <span className="font-display text-2xl font-bold text-ink">₹48,250</span>
         <span className="text-xs font-medium" style={{ color: "#111111" }}>+24.5%</span>
       </div>
       <div className="mt-3 flex items-end gap-1">

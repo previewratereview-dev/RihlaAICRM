@@ -50,7 +50,7 @@ const FAQ_DATABASE: FAQItem[] = [
     id: 'pricing-1',
     category: 'Pricing & Payment',
     question: 'What payment methods do you accept?',
-    answer: 'We accept credit/debit cards (Visa, MasterCard, Amex), bank transfers, and PayPal. For bookings over $5,000, we offer installment plans.',
+    answer: 'We accept credit/debit cards (Visa, MasterCard, Amex), bank transfers, and PayPal. For bookings over ₹5,000, we offer installment plans.',
     keywords: ['payment', 'pay', 'credit card', 'paypal', 'how to pay'],
     quickReplies: ['View payment plans']
   },
@@ -58,7 +58,7 @@ const FAQ_DATABASE: FAQItem[] = [
     id: 'pricing-2',
     category: 'Pricing & Payment',
     question: 'Do you offer payment plans?',
-    answer: 'Yes! For bookings over $3,000, we offer 3 installments: 30% deposit, 40% at 30 days, 30% final payment. No hidden fees or interest.',
+    answer: 'Yes! For bookings over ₹3,000, we offer 3 installments: 30% deposit, 40% at 30 days, 30% final payment. No hidden fees or interest.',
     keywords: ['payment plan', 'installments', 'emi', 'pay later', 'financing'],
     quickReplies: ['Start booking', 'Learn more']
   },
@@ -66,7 +66,7 @@ const FAQ_DATABASE: FAQItem[] = [
     id: 'pricing-3',
     category: 'Pricing & Payment',
     question: 'What is your cancellation policy?',
-    answer: 'Cancellation varies by package: 60+ days: Full refund minus $100 fee. 30-59 days: 50% refund. Under 30 days: Non-refundable. Travel insurance is highly recommended.',
+    answer: 'Cancellation varies by package: 60+ days: Full refund minus ₹100 fee. 30-59 days: 50% refund. Under 30 days: Non-refundable. Travel insurance is highly recommended.',
     keywords: ['cancel', 'cancellation', 'refund', 'policy', 'money back'],
     quickReplies: ['Get travel insurance', 'View full policy']
   },

@@ -99,7 +99,7 @@ export function LeadFilters({
               ];
               const example = [
                 'John Smith', 'Smith Family Trust', 'john@example.com', '+1234567890', '+1234567890',
-                '$15,000', '20000', 'high', 'website', 'inquiry_received',
+                '₹15,000', '20000', 'high', 'website', 'inquiry_received',
                 'Maldives', 'Family Vacation', '4', '2026-03-15', '2026-03-22',
                 'business', 'Honeymoon Package', 'Vegetarian meals needed', 'example.com', 'Travel & Tourism',
                 'linkedin.com/in/johnsmith', 'Overwhelmed by booking options', 'Google search',
