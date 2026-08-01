@@ -1,4 +1,4 @@
-# Rihla Travel CRM (State AI CRM)
+# Rihla Travel CRM (State AI CRM).
 
 Multi-tenant travel CRM with AI lead scoring, FAQ chatbot, pipeline management, and Supabase persistence.
 
