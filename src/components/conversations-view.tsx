@@ -86,11 +86,17 @@ export function ConversationsView() {
   }, [filteredConversations, selectedId]);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const el = messagesEndRef.current?.parentElement;
+    if (el) {
+      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    }
   }, [threadMessages, isContactTyping]);
 
   useEffect(() => {
-    aiEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const el = aiEndRef.current?.parentElement;
+    if (el) {
+      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    }
   }, [aiMessages, aiIsTyping]);
 
   const handleSelectConversation = (id: string) => {

@@ -97,7 +97,7 @@ export function PasswordInput({ email, fullName, agencyName }: { email: string, 
   return (
     <div className="p-4 rounded-xl border border-border bg-card shadow-sm mt-4">
       <h3 className="font-semibold text-sm mb-1">Set Your Password</h3>
-      <p className="text-xs text-muted-foreground mb-4">You're almost done setting up {agencyName}.</p>
+      <p className="text-xs text-muted-foreground mb-4">You&apos;re almost done setting up {agencyName}.</p>
       
       <form onSubmit={handleSubmit} className="space-y-3">
         <input

@@ -24,6 +24,7 @@ export function CopilotRegistrationInner() {
   const currentUser = useCRMStore(state => state.currentUser);
   const sessionLoading = useCRMStore(state => state.sessionLoading);
   const login = useCRMStore(state => state.login);
+  const logout = useCRMStore(state => state.logout);
 
   const [input, setInput] = useState('');
   const [uiState, setUIState] = useUIState();
@@ -32,6 +33,8 @@ export function CopilotRegistrationInner() {
 
   const isPreviewingRef = useRef(false);
   const hasOverriddenRef = useRef(false);
+  const previewContainerRef = useRef<HTMLDivElement>(null);
+  const previewInnerRef = useRef<HTMLDivElement>(null);
   const [previewMode, setPreviewMode] = useState(false);
   const [setupProgress, setSetupProgress] = useState('welcome');
 
@@ -44,8 +47,7 @@ export function CopilotRegistrationInner() {
           role: 'assistant',
           display: (
             <div className="prose prose-sm dark:prose-invert max-w-none prose-p:leading-relaxed prose-strong:text-foreground prose-strong:font-semibold">
-              {/* @ts-ignore */}
-              Welcome back, <strong>{currentUser.first_name || currentUser.fullName || 'Admin'}</strong>! You are already logged in to your workspace. Do you need help with anything, or would you like to go to your dashboard?
+              Welcome back, <strong>{(currentUser as { first_name?: string }).first_name || currentUser.fullName || 'Admin'}</strong>! You are already logged in to your workspace. Do you need help with anything, or would you like to go to your dashboard?
             </div>
           )
         }
@@ -63,6 +65,25 @@ export function CopilotRegistrationInner() {
     return () => window.removeEventListener('triggerPreviewMode', handlePreview);
   }, [login]);
 
+  const handleExitPreview = async () => {
+    await logout();
+    setPreviewMode(false);
+    isPreviewingRef.current = false;
+    setSetupProgress('welcome');
+    hasOverriddenRef.current = false; // allow a new welcome message later if needed
+    setUIState([
+      {
+        id: Date.now().toString(),
+        role: 'assistant',
+        display: (
+          <div className="prose prose-sm dark:prose-invert max-w-none prose-p:leading-relaxed prose-strong:text-foreground prose-strong:font-semibold">
+            Preview ended. Ready to create your own workspace or sign in?
+          </div>
+        )
+      }
+    ]);
+  };
+
   useEffect(() => {
     const handleProgress = (e: Event) => {
       const customEvent = e as CustomEvent;
@@ -71,6 +92,24 @@ export function CopilotRegistrationInner() {
     window.addEventListener('updateSetupProgress', handleProgress);
     return () => window.removeEventListener('updateSetupProgress', handleProgress);
   }, []);
+
+  useEffect(() => {
+    const c = previewContainerRef.current;
+    const i = previewInnerRef.current;
+    if (!c || !i) return;
+    const preventScroll = (e: Event) => {
+      const target = e.target as HTMLElement;
+      if (target.scrollTop !== 0) target.scrollTop = 0;
+      if (target.scrollLeft !== 0) target.scrollLeft = 0;
+    };
+    // Use capture phase to intercept scroll immediately
+    c.addEventListener('scroll', preventScroll, { capture: true });
+    i.addEventListener('scroll', preventScroll, { capture: true });
+    return () => {
+      c.removeEventListener('scroll', preventScroll, { capture: true });
+      i.removeEventListener('scroll', preventScroll, { capture: true });
+    };
+  }, [previewMode]);
 
   // Use a chat container ref instead of scrollIntoView to prevent layout shifting/cutoffs
   const chatContainerRef = useRef<HTMLDivElement>(null);
@@ -339,6 +378,7 @@ export function CopilotRegistrationInner() {
             </motion.div>
           ) : (
             <motion.div
+              ref={previewContainerRef}
               key="preview"
               initial={{ opacity: 0, x: 50, scale: 0.95 }}
               animate={{ opacity: 1, x: 0, scale: 1 }}
@@ -346,7 +386,20 @@ export function CopilotRegistrationInner() {
               transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1], delay: 0.1 }}
               className="flex-[1.1] h-[90%] bg-background border border-border shadow-2xl rounded-[24px] overflow-hidden flex flex-col hidden md:flex relative"
             >
-              <div className="flex-1 relative bg-zinc-50 dark:bg-black/50 overflow-hidden">
+              <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-muted/30 shrink-0">
+                <div className="flex items-center gap-2">
+                  <div className="flex gap-1.5">
+                    <div className="w-3 h-3 rounded-full bg-red-500/80 shadow-sm" />
+                    <div className="w-3 h-3 rounded-full bg-amber-500/80 shadow-sm" />
+                    <div className="w-3 h-3 rounded-full bg-green-500/80 shadow-sm" />
+                  </div>
+                  <span className="ml-2 text-xs font-semibold text-muted-foreground uppercase tracking-widest">Live Preview</span>
+                </div>
+                <Button variant="ghost" size="sm" className="h-7 text-xs hover:bg-destructive/10 hover:text-destructive transition-colors" onClick={handleExitPreview}>
+                  Exit Preview
+                </Button>
+              </div>
+              <div ref={previewInnerRef} className="flex-1 relative bg-zinc-50 dark:bg-black/50 overflow-hidden">
                 <iframe
                   src="/app"
                   className="absolute inset-0 border-0 bg-background"

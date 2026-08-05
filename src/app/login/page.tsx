@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useCRMStore } from '@/hooks/use-crm-store';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Sparkles, Cpu, AlertCircle, Database, ArrowLeft, ShieldCheck, Mail, CheckCircle2 } from 'lucide-react';
+import { Sparkles, Cpu, AlertCircle, Database, ArrowLeft, ShieldCheck, Mail } from 'lucide-react';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -18,8 +18,6 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [verifiedBanner, setVerifiedBanner] = useState(false);
-
   // Read search params for verified=true redirect from email confirmation
   const searchParams = useSearchParams();
 
@@ -27,7 +25,7 @@ export default function LoginPage() {
     const isVerified = searchParams.get('verified') === 'true';
     const verifiedEmail = searchParams.get('email');
     if (isVerified) {
-      setVerifiedBanner(true);
+      // eslint-disable-next-line
       if (verifiedEmail) setEmail(verifiedEmail);
     }
   }, [searchParams]);
