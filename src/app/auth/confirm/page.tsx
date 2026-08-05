@@ -78,8 +78,11 @@ function ConfirmEmailForm() {
       }
 
       setSuccess(true);
+      // Redirect to login with verified=true so the login page can show a
+      // success banner and pre-fill the email. The user will sign in with
+      // their credentials (we don't have the password on this standalone page).
       setTimeout(() => {
-        router.push('/login');
+        router.push(`/login?verified=true&email=${encodeURIComponent(email)}`);
       }, 2000);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Verification failed');
@@ -127,7 +130,7 @@ function ConfirmEmailForm() {
         >
           <CheckCircle2 className="h-16 w-16 text-emerald-500 mx-auto mb-4" />
           <h2 className="text-2xl font-bold text-foreground">Email Verified!</h2>
-          <p className="text-muted-foreground mt-2">Redirecting you to your dashboard...</p>
+          <p className="text-muted-foreground mt-2">Redirecting you to sign in...</p>
         </motion.div>
       </div>
     );

@@ -139,7 +139,7 @@ export function Header() {
           </button>
         </div>
       )}
-    <header className="relative flex h-16 items-center justify-between px-6 lg:px-8 border-b border-border/40 bg-background/80 backdrop-blur-xl z-10 shrink-0 select-none shadow-sm">
+    <header className="relative flex h-[14.4rem] md:h-[3.6rem] items-center justify-between px-6 lg:px-8 border-b border-border/40 bg-background/80 backdrop-blur-xl z-10 shrink-0 select-none shadow-sm">
       {/* Page Title & Status */}
       <div className="flex items-center gap-4">
         <MobileNav />

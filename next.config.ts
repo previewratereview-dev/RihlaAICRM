@@ -8,7 +8,7 @@ const scriptSrcDirective = [
 ].join(' ');
 
 const securityHeaders = [
-  { key: 'X-Frame-Options', value: 'DENY' },
+  { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
   { key: 'X-Content-Type-Options', value: 'nosniff' },
   { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
   { key: 'X-XSS-Protection', value: '0' },
@@ -24,7 +24,7 @@ const securityHeaders = [
       "font-src 'self'",
       "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.resend.com https://api.openai.com https://api.anthropic.com https://api.stripe.com https://lumberjack.razorpay.com https://api.razorpay.com https://vercel.live wss://vercel.live",
       "frame-src 'self' https://api.razorpay.com/ https://vercel.live",
-      "frame-ancestors 'none'",
+      "frame-ancestors 'self'",
       "base-uri 'self'",
       "form-action 'self'",
     ].join('; '),

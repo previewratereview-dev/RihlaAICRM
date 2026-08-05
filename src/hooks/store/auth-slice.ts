@@ -40,23 +40,23 @@ export function createAuthSlice(set: SetState, get: GetState) {
       }
     },
 
-    login: async (email: string, password: string) => {
-      set({ sessionLoading: true });
+    login: async (email: string, password: string, isPreviewFlow: boolean = false) => {
+      if (email.toLowerCase() === 'demo@stateai.in' && !isPreviewFlow) {
+        return { success: false, error: 'Direct login to the demo account is restricted. Please use the Preview CRM option instead.' };
+      }
       const adapter = getAuthAdapter();
       if (!adapter) {
-        set({ sessionLoading: false });
         return { success: false, error: 'Auth not initialized' };
       }
       const result = await adapter.login(email, password);
       const user = (result as { user?: User }).user || adapter.user;
       if (result.success && user) {
         const defaultTab = user.role === 'super_admin' ? 'sa_dashboard' : 'dashboard';
-        set({ currentUser: user, tenantId: user.tenantId, sessionLoading: false, activeTab: defaultTab });
+        set({ currentUser: user, tenantId: user.tenantId, activeTab: defaultTab });
         await get().syncData();
         await get().logAuditEvent('login', `${user.fullName} logged in successfully.`);
         return { success: true, error: null };
       }
-      set({ sessionLoading: false });
       return { success: false, error: result.error };
     },
 

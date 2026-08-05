@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Inter, Plus_Jakarta_Sans, JetBrains_Mono, DM_Sans } from "next/font/google";
 import { AuthBridge } from "@/components/auth-bridge";
 import { ErrorBoundary } from "@/components/error-boundary";
+import { AI } from "@/lib/ai/rihla-copilot/actions";
 import "./globals.css";
 
 const inter = Inter({
@@ -61,7 +62,9 @@ export default function RootLayout({
         <ErrorBoundary>
           <AuthBridge />
         </ErrorBoundary>
-        <ErrorBoundary>{children}</ErrorBoundary>
+        <ErrorBoundary>
+          <AI>{children}</AI>
+        </ErrorBoundary>
       </body>
     </html>
   );

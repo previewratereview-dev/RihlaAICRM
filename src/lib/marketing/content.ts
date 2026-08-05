@@ -17,7 +17,7 @@ export const hero = {
   headline: "Run your travel business without losing a single lead.",
   subheading:
     "Rihla is the AI-powered CRM built for travel agencies, tour operators, DMCs, and visa consultants. It captures every lead, drafts every follow-up, and keeps bookings, payments, and visas organized — so your team spends less time on admin and more time closing trips.",
-  primaryCta: { label: "Book a Free Demo", href: "/pricing" },
+  primaryCta: { label: "Try Rihla", href: "/register" },
   secondaryCta: { label: "See How It Works", href: "/#product-overview" },
   trustLine: "No credit card required · Live in a day · Built specifically for travel businesses",
 };
@@ -177,7 +177,7 @@ export const faqHome = [
 export const finalCta = {
   headline: "Stop running your business from memory and messages.",
   subheading: "See how Rihla brings your leads, bookings, payments, and team into one system — built for travel, powered by AI.",
-  primaryCta: { label: "Book a Free Demo", href: "/pricing" },
+  primaryCta: { label: "Try Rihla", href: "/register" },
   secondaryCta: { label: "Log in", href: "/login" },
 };
 
