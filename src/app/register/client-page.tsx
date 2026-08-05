@@ -29,7 +29,7 @@ export function CopilotRegistrationInner() {
   const [uiState, setUIState] = useUIState();
   const { submitUserMessage } = useActions() as { submitUserMessage: (content: string, clientContext?: { isLoggedIn: boolean, firstName?: string, tenantId?: string }) => Promise<{ id: string, display: React.ReactNode }> };
   const [loading, setLoading] = useState(false);
-  
+
   const isPreviewingRef = useRef(false);
   const hasOverriddenRef = useRef(false);
   const [previewMode, setPreviewMode] = useState(false);
@@ -111,7 +111,7 @@ export function CopilotRegistrationInner() {
         ),
       },
     ]);
-    
+
     setInput('');
     setLoading(true);
 
@@ -172,9 +172,9 @@ export function CopilotRegistrationInner() {
       </Button>
 
       <div className={`w-full min-h-screen flex items-start sm:items-center justify-center relative z-10 gap-6 mx-auto pt-16 sm:pt-6 transition-all duration-700 ease-in-out ${previewMode ? 'max-w-[98vw] 2xl:max-w-[1800px] px-4 md:px-8' : 'max-w-5xl px-4 sm:px-6'}`}>
-        
+
         {/* Chat Container */}
-        <motion.div 
+        <motion.div
           initial={false}
           animate={{
             width: previewMode ? '400px' : '100%',
@@ -188,9 +188,9 @@ export function CopilotRegistrationInner() {
           className="h-[calc(100vh-6rem)] sm:h-[calc(100vh-8rem)] w-full flex flex-col relative shrink-0 overflow-hidden"
         >
           <div className="flex flex-col h-full w-full pt-4 pb-6 px-4">
-        
+
             {/* Header */}
-            <motion.div 
+            <motion.div
               initial={{ opacity: 0, y: -10 }}
               animate={{ opacity: 1, y: 0 }}
               className="flex flex-col items-center justify-center pt-2 pb-4 shrink-0"
@@ -215,8 +215,8 @@ export function CopilotRegistrationInner() {
               <div className="space-y-4 px-2 flex flex-col">
                 <AnimatePresence initial={false}>
                   {uiState.map((msg: UIMessage, index: number) => (
-                    <motion.div 
-                      key={msg.id} 
+                    <motion.div
+                      key={msg.id}
                       initial={{ opacity: 0, scale: 0.96, y: 10 }}
                       animate={{ opacity: 1, scale: 1, y: 0 }}
                       className="flex flex-col"
@@ -243,7 +243,7 @@ export function CopilotRegistrationInner() {
                   ))}
 
                   {loading && (
-                    <motion.div 
+                    <motion.div
                       initial={{ opacity: 0, scale: 0.96, y: 10 }}
                       animate={{ opacity: 1, scale: 1, y: 0 }}
                       className="flex flex-col"
@@ -264,7 +264,7 @@ export function CopilotRegistrationInner() {
             {/* Input Area */}
             <div className="absolute bottom-6 left-0 w-full px-4 pointer-events-none">
               <div className="w-full pointer-events-auto">
-                <motion.div 
+                <motion.div
                   initial={{ y: 20, opacity: 0 }}
                   animate={{ y: 0, opacity: 1 }}
                   className="relative flex items-center bg-white/80 dark:bg-zinc-900/80 backdrop-blur-2xl rounded-[28px] border border-black/10 dark:border-white/10 shadow-[0_8px_32px_-8px_rgba(0,0,0,0.1)] focus-within:shadow-[0_8px_32px_-8px_rgba(0,0,0,0.2)] focus-within:border-purple-500/40 dark:focus-within:border-purple-500/40 transition-all p-1.5"
@@ -282,10 +282,10 @@ export function CopilotRegistrationInner() {
                     className="min-h-[44px] max-h-32 resize-none text-[14px] border-0 focus-visible:ring-0 shadow-none bg-transparent py-3 px-4 font-medium"
                     rows={1}
                   />
-                  <Button 
-                    size="icon" 
-                    onClick={() => send()} 
-                    disabled={loading || !input.trim()} 
+                  <Button
+                    size="icon"
+                    onClick={() => send()}
+                    disabled={loading || !input.trim()}
                     className="shrink-0 h-10 w-10 rounded-full ml-2 bg-purple-600 text-white hover:bg-purple-700 transition-all self-end mb-[2px] mr-[2px]"
                   >
                     <ArrowUp className="h-4 w-4" />
@@ -318,20 +318,18 @@ export function CopilotRegistrationInner() {
                   const isActive = index === currentStepIndex;
                   return (
                     <div key={step.id} className="flex items-center gap-3">
-                      <div className={`relative flex items-center justify-center w-6 h-6 rounded-full transition-colors ${
-                        isCompleted ? 'bg-purple-500 text-white' : 
-                        isActive ? 'bg-purple-500/20 text-purple-500 border border-purple-500/50' : 
-                        'bg-muted text-muted-foreground'
-                      }`}>
-                        {isCompleted ? <CheckCircle2 className="w-4 h-4" /> : 
-                         isActive ? <Circle className="w-3 h-3 fill-current animate-pulse" /> : 
-                         <span className="text-[10px] font-bold">{index + 1}</span>}
+                      <div className={`relative flex items-center justify-center w-6 h-6 rounded-full transition-colors ${isCompleted ? 'bg-purple-500 text-white' :
+                          isActive ? 'bg-purple-500/20 text-purple-500 border border-purple-500/50' :
+                            'bg-muted text-muted-foreground'
+                        }`}>
+                        {isCompleted ? <CheckCircle2 className="w-4 h-4" /> :
+                          isActive ? <Circle className="w-3 h-3 fill-current animate-pulse" /> :
+                            <span className="text-[10px] font-bold">{index + 1}</span>}
                       </div>
-                      <span className={`text-sm font-medium transition-colors ${
-                        isActive ? 'text-foreground font-bold' : 
-                        isCompleted ? 'text-foreground' : 
-                        'text-muted-foreground'
-                      }`}>
+                      <span className={`text-sm font-medium transition-colors ${isActive ? 'text-foreground font-bold' :
+                          isCompleted ? 'text-foreground' :
+                            'text-muted-foreground'
+                        }`}>
                         {step.label}
                       </span>
                     </div>
@@ -349,8 +347,8 @@ export function CopilotRegistrationInner() {
               className="flex-[1.1] h-[90%] bg-background border border-border shadow-2xl rounded-[24px] overflow-hidden flex flex-col hidden md:flex relative"
             >
               <div className="flex-1 relative bg-zinc-50 dark:bg-black/50 overflow-hidden">
-                <iframe 
-                  src="http://localhost:3000/app" 
+                <iframe
+                  src="/app"
                   className="absolute inset-0 border-0 bg-background"
                   style={{
                     width: '111.11%',
