@@ -76,19 +76,18 @@ export async function loadSubscription(
 ): Promise<Subscription | null> {
   const { data, error } = await supabase
     .from('subscriptions')
-    .select('tenant_id, tier, status, usage, period_start')
+    .select('tenant_id, plan, status, current_period_start')
     .eq('tenant_id', tenantId)
     .maybeSingle();
 
   if (error || !data) return null;
 
-  const usage = (data.usage as Partial<UsageCounters> | null) ?? {};
   return {
     tenantId: String(data.tenant_id),
-    tier: (data.tier as PlanTier) ?? 'free',
+    tier: (data.plan as PlanTier) ?? 'free',
     status: (data.status as SubscriptionStatus) ?? 'active',
-    usage: { ...zeroCounters(), ...usage },
-    periodStart: String(data.period_start ?? new Date().toISOString()),
+    usage: zeroCounters(), // Usage not tracked on this table currently
+    periodStart: String(data.current_period_start ?? new Date().toISOString()),
   };
 }
 

@@ -1,9 +1,12 @@
 /**
- * Email integration via Resend (optional).
- * Set RESEND_API_KEY and RESEND_FROM in environment variables.
+ * Email integration via Resend.
+ * Supports tenant-specific API keys via integration credentials,
+ * with a fallback to platform RESEND_API_KEY for OTPs and platform emails.
  */
 import { logger } from '@/lib/logger';
 import { fetchWithTimeout } from '@/lib/http';
+import { resolveOutbound, IntegrationConfigurationError } from './credential-service';
+import { ensureIntegrationRuntime } from './runtime';
 
 function escapeHtml(str: string): string {
   return str
@@ -15,18 +18,42 @@ function escapeHtml(str: string): string {
 }
 
 export async function sendEmail(options: {
+  tenantId?: string;
   to: string;
   subject: string;
   html: string;
   fromName?: string;
   replyTo?: string;
 }): Promise<{ ok: boolean; error?: string }> {
-  const apiKey = process.env.RESEND_API_KEY;
+  let apiKey = process.env.RESEND_API_KEY;
   const defaultFrom = process.env.RESEND_FROM || 'CRM <onboarding@resend.dev>';
-  const from = options.fromName ? `${options.fromName} <onboarding@resend.dev>` : defaultFrom;
+  let from = options.fromName ? `${options.fromName} <onboarding@resend.dev>` : defaultFrom;
+
+  if (options.tenantId) {
+    ensureIntegrationRuntime();
+    try {
+      const cred = await resolveOutbound(options.tenantId, 'email');
+      if (cred && cred.values.apiKey) {
+        apiKey = cred.values.apiKey;
+        if (cred.sendingIdentifiers.length > 0) {
+          from = options.fromName 
+            ? `${options.fromName} <${cred.sendingIdentifiers[0]}>` 
+            : cred.sendingIdentifiers[0];
+        }
+      }
+    } catch (err) {
+      if (err instanceof IntegrationConfigurationError) {
+        // Fall back to platform email if tenant hasn't configured one, or fail?
+        // We will fall back to platform email so features still work if platform allows it.
+        logger.warn(`[Email] Tenant ${options.tenantId} email not configured, using platform fallback.`);
+      } else {
+        logger.error('[Email] Failed to resolve tenant email credentials', err);
+      }
+    }
+  }
 
   if (!apiKey) {
-    logger.warn('[Email] RESEND_API_KEY not configured');
+    logger.warn('[Email] RESEND_API_KEY not configured and no tenant key found');
     return { ok: false, error: 'Email not configured' };
   }
 
@@ -57,6 +84,7 @@ export async function sendEmail(options: {
 }
 
 export async function sendLeadFollowUpEmail(lead: {
+  tenantId: string;
   fullName: string;
   email: string;
   destination?: string;
@@ -75,6 +103,7 @@ export async function sendLeadFollowUpEmail(lead: {
   }
 
   return sendEmail({
+    tenantId: lead.tenantId,
     to: lead.email,
     subject: `Your travel inquiry${lead.destination ? ` — ${lead.destination}` : ''}`,
     html,

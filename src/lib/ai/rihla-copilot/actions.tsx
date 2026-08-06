@@ -135,94 +135,92 @@ export async function submitUserMessage(content: string, clientContext?: { isLog
           return <SettingsCard integration={integrationName} />;
         },
       },
-      ...(!isLoggedIn ? {
-        updateProgressAndAsk: {
-          description: 'Update the visual progress tracker AND ask the next question. Use this when the user completes a setup step.',
-          inputSchema: z.object({
-            step: z.enum(['welcome', 'company', 'team', 'preferences', 'complete']),
-            nextQuestion: z.string().describe('The natural conversational text asking the next question.'),
-          }),
-          generate: async ({ step, nextQuestion }: { step: 'welcome' | 'company' | 'team' | 'preferences' | 'complete', nextQuestion: string }) => {
-            aiState.done({
-              ...aiState.get(),
-              messages: [
-                ...aiState.get().messages,
-                {
-                  id: generateId(),
-                  role: 'assistant' as const,
-                  content: nextQuestion,
-                },
-              ],
-            });
-            return (
-              <div className="flex flex-col gap-2">
-                <ProgressTrigger step={step} />
-                <div className="prose prose-sm dark:prose-invert max-w-none prose-p:leading-relaxed">
-                  <ReactMarkdown>{nextQuestion}</ReactMarkdown>
-                </div>
+      updateProgressAndAsk: {
+        description: 'Update the visual progress tracker AND ask the next question. Use this when the user completes a setup step.',
+        inputSchema: z.object({
+          step: z.enum(['welcome', 'company', 'team', 'preferences', 'complete']),
+          nextQuestion: z.string().describe('The natural conversational text asking the next question.'),
+        }),
+        generate: async ({ step, nextQuestion }: { step: 'welcome' | 'company' | 'team' | 'preferences' | 'complete', nextQuestion: string }) => {
+          aiState.done({
+            ...aiState.get(),
+            messages: [
+              ...aiState.get().messages,
+              {
+                id: generateId(),
+                role: 'assistant' as const,
+                content: nextQuestion,
+              },
+            ],
+          });
+          return (
+            <div className="flex flex-col gap-2">
+              <ProgressTrigger step={step} />
+              <div className="prose prose-sm dark:prose-invert max-w-none prose-p:leading-relaxed">
+                <ReactMarkdown>{nextQuestion}</ReactMarkdown>
               </div>
-            );
-          }
+            </div>
+          );
+        }
+      },
+      askForPassword: {
+        description: 'Show a secure password input field to complete user registration.',
+        inputSchema: z.object({
+          email: z.string(),
+          fullName: z.string(),
+          agencyName: z.string(),
+        }),
+        generate: async ({ email, fullName, agencyName }: { email: string, fullName: string, agencyName: string }) => {
+          aiState.done({
+            ...aiState.get(),
+            messages: [
+              ...aiState.get().messages,
+              {
+                id: generateId(),
+                role: 'assistant' as const,
+                content: `Waiting for user to set password for ${email}`,
+              },
+            ],
+          });
+          return <PasswordInput email={email} fullName={fullName} agencyName={agencyName} />;
         },
-        askForPassword: {
-          description: 'Show a secure password input field to complete user registration.',
-          inputSchema: z.object({
-            email: z.string(),
-            fullName: z.string(),
-            agencyName: z.string(),
-          }),
-          generate: async ({ email, fullName, agencyName }: { email: string, fullName: string, agencyName: string }) => {
-            aiState.done({
-              ...aiState.get(),
-              messages: [
-                ...aiState.get().messages,
-                {
-                  id: generateId(),
-                  role: 'assistant' as const,
-                  content: `Waiting for user to set password for ${email}`,
-                },
-              ],
-            });
-            return <PasswordInput email={email} fullName={fullName} agencyName={agencyName} />;
-          },
+      },
+      showLogin: {
+        description: 'Provide the user with a login interface so they can log into their existing account.',
+        inputSchema: z.object({}),
+        generate: async () => {
+          aiState.done({
+            ...aiState.get(),
+            messages: [
+              ...aiState.get().messages,
+              {
+                id: generateId(),
+                role: 'assistant' as const,
+                content: `Showing the secure login interface.`,
+              },
+            ],
+          });
+          return <LoginInput />;
         },
-        showLogin: {
-          description: 'Provide the user with a login interface so they can log into their existing account.',
-          inputSchema: z.object({}),
-          generate: async () => {
-            aiState.done({
-              ...aiState.get(),
-              messages: [
-                ...aiState.get().messages,
-                {
-                  id: generateId(),
-                  role: 'assistant' as const,
-                  content: `Showing the secure login interface.`,
-                },
-              ],
-            });
-            return <LoginInput />;
-          },
+      },
+      tryGuestAccess: {
+        description: 'Trigger the Guest Preview mode so the user can try the CRM without logging in.',
+        inputSchema: z.object({}),
+        generate: async () => {
+          aiState.done({
+            ...aiState.get(),
+            messages: [
+              ...aiState.get().messages,
+              {
+                id: generateId(),
+                role: 'assistant' as const,
+                content: `Triggered the CRM guest preview mode.`,
+              },
+            ],
+          });
+          return <PreviewTrigger />;
         },
-        tryGuestAccess: {
-          description: 'Trigger the Guest Preview mode so the user can try the CRM without logging in.',
-          inputSchema: z.object({}),
-          generate: async () => {
-            aiState.done({
-              ...aiState.get(),
-              messages: [
-                ...aiState.get().messages,
-                {
-                  id: generateId(),
-                  role: 'assistant' as const,
-                  content: `Triggered the CRM guest preview mode.`,
-                },
-              ],
-            });
-            return <PreviewTrigger />;
-          },
-        },
-      } : {}),
+      },
     },
   };
 

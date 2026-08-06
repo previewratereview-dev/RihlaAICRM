@@ -103,6 +103,7 @@ export async function executeWorkflowActions(
         if (lead.email) {
           const { sendLeadFollowUpEmail } = await import('@/lib/integrations/email');
           await sendLeadFollowUpEmail({
+            tenantId: lead.tenantId,
             fullName: lead.fullName,
             email: lead.email,
             destination: lead.destination,
@@ -131,6 +132,7 @@ export async function runLeadCreatedAutomations(lead: Lead, settings: Automation
   if (settings.emailAutomation && lead.email) {
     const { sendLeadFollowUpEmail } = await import('@/lib/integrations/email');
     await sendLeadFollowUpEmail({
+      tenantId: lead.tenantId,
       fullName: lead.fullName,
       email: lead.email,
       destination: lead.destination,
@@ -158,6 +160,7 @@ export async function runLeadStatusAutomations(
   if (settings.emailStatusAutomation && lead.email) {
     const { sendLeadFollowUpEmail } = await import('@/lib/integrations/email');
     await sendLeadFollowUpEmail({
+      tenantId: lead.tenantId,
       fullName: lead.fullName,
       email: lead.email,
       destination: lead.destination,

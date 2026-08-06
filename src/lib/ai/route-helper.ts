@@ -71,12 +71,9 @@ export async function resolveTenantAIContext(
     const budgets = settingsRow.ai_budgets as { monthlyBudget?: number; defaultModel?: string } | null;
     if (budgets?.monthlyBudget) monthlyBudget = budgets.monthlyBudget;
 
-    // Only allow custom provider keys or custom models if global super admin
-    if (tenantId === 'global') {
-      openaiKey = decryptIfNeeded(settingsRow.openai_key);
-      anthropicKey = decryptIfNeeded(settingsRow.anthropic_key);
-      if (budgets?.defaultModel) defaultModel = budgets.defaultModel;
-    }
+    openaiKey = decryptIfNeeded(settingsRow.openai_key);
+    anthropicKey = decryptIfNeeded(settingsRow.anthropic_key);
+    if (budgets?.defaultModel) defaultModel = budgets.defaultModel;
   }
 
   // Read custom provider config from settings if global

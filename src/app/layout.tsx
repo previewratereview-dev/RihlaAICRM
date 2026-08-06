@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Inter, Plus_Jakarta_Sans, JetBrains_Mono, DM_Sans } from "next/font/google";
 import { AuthBridge } from "@/components/auth-bridge";
+import { RealtimeBridge } from "@/components/realtime-bridge";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { AI } from "@/lib/ai/rihla-copilot/actions";
 import "./globals.css";
@@ -61,6 +62,7 @@ export default function RootLayout({
         </a>
         <ErrorBoundary>
           <AuthBridge />
+          <RealtimeBridge />
         </ErrorBoundary>
         <ErrorBoundary>
           <AI>{children}</AI>

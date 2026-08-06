@@ -272,6 +272,7 @@ export function mapDbConversation(dbC: Record<string, unknown>): Conversation {
 }
 
 export function mapConversationToDb(conv: Conversation, tenantId: string): Record<string, unknown> {
+  const isDemoUser = typeof conv.assignedTo === 'string' && !conv.assignedTo.includes('-');
   return {
     id: conv.id,
     tenant_id: tenantId,
@@ -280,7 +281,7 @@ export function mapConversationToDb(conv: Conversation, tenantId: string): Recor
     lead_company: conv.leadCompany,
     lead_email: conv.leadEmail || null,
     channel: conv.channel,
-    assigned_to: conv.assignedTo || null,
+    assigned_to: isDemoUser ? null : (conv.assignedTo || null),
     assigned_name: conv.assignedName,
     status: conv.status,
     last_message: conv.lastMessage,

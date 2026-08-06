@@ -10,12 +10,62 @@ export function createConversationsSlice(set: SetState, get: GetState) {
     conversations: [] as Conversation[],
     messages: {} as Record<string, Message[]>,
 
+    startConversation: async (leadId: string, channel: 'whatsapp' | 'sms' | 'email' = 'email') => {
+      const currentUser = get().currentUser;
+      if (!currentUser) throw new Error('User not authenticated');
+
+      const lead = get().leads.find((l) => l.id === leadId);
+      if (!lead) throw new Error('Lead not found');
+
+      // Check if conversation already exists for this lead on this channel
+      const existing = get().conversations.find((c) => c.leadId === leadId && c.channel === channel);
+      if (existing) {
+        set({ activeTab: 'conversations' });
+        return existing.id;
+      }
+
+      const now = new Date().toISOString();
+      const convId = `conv-${generateId()}`;
+      
+      const newConv: Conversation = {
+        id: convId,
+        leadId,
+        leadName: lead.fullName,
+        leadAvatar: '',
+        leadCompany: lead.businessName || '',
+        leadEmail: lead.email,
+        phone: lead.phone,
+        channel,
+        assignedTo: currentUser.id,
+        assignedName: currentUser.fullName,
+        status: 'open',
+        lastMessage: 'Conversation started',
+        lastMessageAt: now,
+        unreadCount: 0,
+        tenantId: lead.tenantId,
+        isOnline: false,
+      };
+
+      await CRMDatabaseService.upsertConversation(newConv, newConv.tenantId, currentUser.role, currentUser);
+
+      set((state) => ({
+        conversations: [newConv, ...state.conversations],
+        activeTab: 'conversations'
+      }));
+
+      return convId;
+    },
+
     sendMessage: async (conversationId: string, content: string, senderType: 'user' | 'contact' | 'system', senderId: string, senderName: string) => {
       const now = new Date().toISOString();
       const messageId = `msg-${generateId()}`;
 
       const currentUser = get().currentUser;
       if (!currentUser) throw new Error('User not authenticated');
+
+      const conv = get().conversations.find((c) => c.id === conversationId);
+      if (!conv) throw new Error('Conversation not found');
+      const tenantId = conv.tenantId;
 
       const newMessage: Message = {
         id: messageId,
@@ -29,10 +79,9 @@ export function createConversationsSlice(set: SetState, get: GetState) {
         createdAt: now,
       };
 
-      await CRMDatabaseService.insertMessage(newMessage, '', currentUser.role, currentUser);
+      await CRMDatabaseService.insertMessage(newMessage, tenantId, currentUser.role, currentUser);
 
-      const conv = get().conversations.find((c) => c.id === conversationId);
-      const lead = conv ? get().leads.find((l) => l.id === conv.leadId) : undefined;
+      const lead = get().leads.find((l) => l.id === conv.leadId);
 
       if (conv) {
         const updatedConv: Conversation = {
@@ -84,104 +133,7 @@ export function createConversationsSlice(set: SetState, get: GetState) {
         return;
       }
 
-      if (senderType === 'user') {
-        const conversation = get().conversations.find(c => c.id === conversationId);
-        if (!conversation || !lead) return;
 
-        setTimeout(() => {
-          set((state) => ({
-            typingState: { ...state.typingState, [conversationId]: true }
-          }));
-        }, 400);
-
-        setTimeout(async () => {
-          const recentMsgs = get().messages[conversationId] || [];
-          const leadActivities = get().activities[lead.id] || [];
-          const leadContext = buildLeadContextBlock(lead, leadActivities, recentMsgs);
-
-          let reply = '';
-          try {
-            const res = await fetch('/api/ai/lead-action', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ action: 'contact_reply', leadContext, extra: content }),
-            });
-            const data = await res.json();
-            reply = data.content || '';
-          } catch {
-            reply = '';
-          }
-
-          if (!reply) {
-            reply = `Thanks for reaching out! We're reviewing your ${ lead.destination || 'trip' } request and will follow up shortly.`;
-          }
-
-          const replyId = `msg-${generateId()}`;
-          const replyMsg: Message = {
-            id: replyId,
-            conversationId,
-            senderType: 'contact',
-            senderId: lead.id,
-            senderName: lead.fullName,
-            content: reply,
-            messageType: 'text',
-            isRead: get().activeTab === 'conversations',
-            createdAt: new Date().toISOString()
-          };
-
-          await CRMDatabaseService.insertMessage(replyMsg, '', currentUser.role, currentUser);
-
-          const updatedConv: Conversation = {
-            ...conversation,
-            lastMessage: reply,
-            lastMessageAt: replyMsg.createdAt,
-            unreadCount: get().activeTab === 'conversations' ? 0 : conversation.unreadCount + 1
-          };
-          await CRMDatabaseService.upsertConversation(updatedConv, updatedConv.tenantId, currentUser.role, currentUser);
-
-          set((state) => {
-            const currentMsgs = state.messages[conversationId] || [];
-            const updatedConvs = state.conversations.map((c) => {
-              if (c.id === conversationId) {
-                return {
-                  ...c,
-                  lastMessage: reply,
-                  lastMessageAt: replyMsg.createdAt,
-                  unreadCount: state.activeTab === 'conversations' ? 0 : c.unreadCount + 1
-                };
-              }
-              return c;
-            });
-
-            const updatedTyping = { ...state.typingState };
-            delete updatedTyping[conversationId];
-
-            return {
-              messages: {
-                ...state.messages,
-                [conversationId]: [...currentMsgs, replyMsg]
-              },
-              conversations: updatedConvs,
-              typingState: updatedTyping
-            };
-          });
-
-          const { sentiment, intent } = analyzeMessageSentiment(reply);
-          const activity: LeadActivity = {
-            id: `act-${generateId()}`,
-            leadId: lead.id,
-            userId: lead.id,
-            userName: lead.fullName,
-            type: 'message',
-            title: `Inbound Message (${sentiment})`,
-            description: `AI-simulated reply · Intent: ${intent} — "${reply.substring(0, 60)}..."`,
-            createdAt: new Date().toISOString(),
-            tenantId: lead.tenantId,
-          };
-          await CRMDatabaseService.insertActivity(activity, activity.tenantId, currentUser.role, currentUser);
-
-        }, 2000);
-      }
     },
 
     clearUnreadCount: async (conversationId: string) => {

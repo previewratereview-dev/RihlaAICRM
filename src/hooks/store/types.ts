@@ -19,6 +19,8 @@ export interface Settings {
   aiApiKey?: string;
   aiModel?: string;
   aiUseAnthropicFormat?: boolean;
+  openAiKey?: string;
+  anthropicKey?: string;
 }
 
 export interface CRMStore {
@@ -90,6 +92,7 @@ export interface CRMStore {
   addMeeting: (meeting: Omit<Task, 'id' | 'createdAt' | 'updatedAt' | 'type' | 'status' | 'assignedName'>) => Promise<void>;
 
   // Messaging actions
+  startConversation: (leadId: string, channel?: 'whatsapp' | 'sms' | 'email') => Promise<string>;
   sendMessage: (conversationId: string, content: string, senderType: 'user' | 'contact' | 'system', senderId: string, senderName: string) => Promise<void>;
   editMessage: (conversationId: string, messageId: string, newContent: string) => Promise<void>;
   deleteMessage: (conversationId: string, messageId: string) => Promise<void>;

@@ -55,11 +55,27 @@ export function LeadDetailDrawer({
   const [sendingEmail, setSendingEmail] = useState(false);
   const [emailSent, setEmailSent] = useState(false);
 
+  const startConversation = useCRMStore((s) => s.startConversation);
+
   const handleAddNote = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newNoteText.trim()) return;
     onAddNote(lead.id, currentUser?.id || 'user-1', currentUser?.fullName || 'System', newNoteText.trim());
     setNewNoteText('');
+  };
+
+  const handleStartConversation = async () => {
+    if (!lead.email && !lead.phone) {
+      alert('This lead has no contact information to start a conversation.');
+      return;
+    }
+    const channel = lead.email ? 'email' : 'whatsapp';
+    try {
+      await startConversation(lead.id, channel);
+    } catch (err) {
+      console.error('startConversation Error:', err, JSON.stringify(err));
+      alert(`Failed to start conversation: ${JSON.stringify(err)}`);
+    }
   };
 
   const handleSendEmail = async () => {
@@ -112,17 +128,20 @@ export function LeadDetailDrawer({
           {lead.email && (
             <button
               onClick={handleSendEmail}
-              disabled={sendingEmail || emailSent}
-              className={`p-2 rounded-xl border transition-all cursor-pointer ${
-                emailSent
-                  ? 'border-green-200 bg-green-50 text-green-600'
-                  : 'border-border bg-background text-muted-foreground hover:text-primary hover:border-primary/40'
-              } disabled:opacity-60`}
-              title={emailSent ? 'Email sent' : 'Send follow-up email'}
+              disabled={sendingEmail}
+              className="p-2 rounded-xl border border-border bg-background text-muted-foreground hover:text-blue-500 hover:border-blue-500/40 transition-all cursor-pointer disabled:opacity-50"
+              title="Send Quick Email"
             >
-              <Send className="h-4 w-4" />
+              {sendingEmail ? <span className="animate-spin text-[10px]">...</span> : <Send className="h-4 w-4" />}
             </button>
           )}
+          <button
+            onClick={handleStartConversation}
+            className="p-2 rounded-xl border border-border bg-background text-muted-foreground hover:text-green-500 hover:border-green-500/40 transition-all cursor-pointer"
+            title="Open Chat in CRM"
+          >
+            <Mail className="h-4 w-4" />
+          </button>
           <button
             onClick={() => onEdit(lead)}
             className="p-2 rounded-xl border border-border bg-background text-muted-foreground hover:text-primary hover:border-primary/40 transition-all cursor-pointer"

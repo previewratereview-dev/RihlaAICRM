@@ -467,6 +467,41 @@ export function SettingsView() {
                 className="mt-1 w-full rounded-xl border border-input p-3 text-sm resize-none"
               />
             </div>
+            
+            <div className="pt-4 border-t border-border/40">
+              <div className="space-y-4">
+                <div>
+                  <h3 className="text-sm font-bold text-foreground">Bring Your Own Key (BYOK)</h3>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Optionally provide your own API keys to bypass platform AI usage limits. Your keys are securely encrypted at rest.
+                  </p>
+                </div>
+                
+                <div className="space-y-3">
+                  <div>
+                    <label className="text-xs font-mono uppercase text-muted-foreground">OpenAI API Key</label>
+                    <input
+                      type="password"
+                      value={form.openAiKey || ''}
+                      onChange={(e) => setForm({ ...form, openAiKey: e.target.value })}
+                      placeholder="sk-..."
+                      className="mt-1 w-full h-10 rounded-xl border border-input px-3 text-sm font-mono focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-mono uppercase text-muted-foreground">Anthropic API Key</label>
+                    <input
+                      type="password"
+                      value={form.anthropicKey || ''}
+                      onChange={(e) => setForm({ ...form, anthropicKey: e.target.value })}
+                      placeholder="sk-ant-..."
+                      className="mt-1 w-full h-10 rounded-xl border border-input px-3 text-sm font-mono focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+            
             <button onClick={handleSaveAgency} disabled={saving} className="h-10 px-5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold">
               Save AI Config
             </button>
@@ -476,15 +511,44 @@ export function SettingsView() {
         {tab === 'integrations' && can(role, 'settings:integrations:write') && (
           <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-4 max-w-xl">
             <div>
-              <label className="text-xs font-mono uppercase text-muted-foreground">Make.com Webhook URL</label>
+              <label className="text-xs font-mono uppercase text-muted-foreground">Make.com Webhook URL (Outbound)</label>
               <input
                 value={form.makeWebhookUrl}
                 onChange={(e) => setForm({ ...form, makeWebhookUrl: e.target.value })}
-                className="mt-1 w-full h-10 rounded-xl border border-input px-3 text-sm font-mono"
+                className="mt-1 w-full h-10 rounded-xl border border-input px-3 text-sm font-mono focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
+                placeholder="https://hook.make.com/..."
               />
+              <p className="text-[10px] text-muted-foreground mt-1">
+                Fired when rules are triggered (e.g. Lead created, Status changed).
+              </p>
             </div>
-            <p className="text-xs text-muted-foreground">
-              Stripe, Resend, and Twilio keys are configured via environment variables. See .env.local.example for setup.
+            
+            <div className="pt-4 border-t border-border/40">
+              <label className="text-xs font-mono uppercase text-muted-foreground">Inbound Webhook URL</label>
+              <div className="mt-1 flex gap-2">
+                <input
+                  readOnly
+                  value={currentUser?.tenantId ? `${window.location.origin}/api/webhooks/inbound/${currentUser.tenantId}` : 'Loading...'}
+                  className="w-full h-10 rounded-xl border border-input px-3 text-sm font-mono bg-muted text-muted-foreground cursor-not-allowed"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(`${window.location.origin}/api/webhooks/inbound/${currentUser?.tenantId}`);
+                    toast.success('Webhook URL copied to clipboard');
+                  }}
+                  className="h-10 px-4 rounded-xl border border-input bg-card hover:bg-muted text-sm font-semibold transition-colors shrink-0"
+                >
+                  Copy
+                </button>
+              </div>
+              <p className="text-[10px] text-muted-foreground mt-1">
+                Send POST requests to this URL to create leads. Payload: {'{'} fullName, email, phone, destination, leadSource {'}'}
+              </p>
+            </div>
+
+            <p className="text-xs text-muted-foreground border-l-2 border-primary/50 pl-3 py-1 bg-primary/5 rounded-r-lg">
+              Stripe, Resend, and Twilio keys are configured via platform integrations or tenant credentials (credential service).
             </p>
             <WorkflowRulesPanel />
             <button onClick={handleSaveAgency} disabled={saving} className="h-10 px-5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold">
