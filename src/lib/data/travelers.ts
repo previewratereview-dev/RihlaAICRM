@@ -204,8 +204,10 @@ export async function getTenantTravelers(tenantId: string): Promise<TravelerDire
       latestDest = inqsWithDest[0].destination || null;
     }
 
-    // Customer Value: Sum totalAmount ONLY where financialDataComplete === true
-    const finCompleteBks = travBks.filter((b) => b.financialDataComplete && b.totalAmount !== null && b.totalAmount !== undefined);
+    // Customer Value: Sum totalAmount ONLY where financialDataComplete === true AND bookingStatus !== 'cancelled'
+    const finCompleteBks = travBks.filter(
+      (b) => b.financialDataComplete && b.bookingStatus !== 'cancelled' && b.totalAmount !== null && b.totalAmount !== undefined
+    );
     let customerValue: number | null = null;
     if (finCompleteBks.length > 0) {
       customerValue = finCompleteBks.reduce((sum, b) => sum + (b.totalAmount || 0), 0);
@@ -233,32 +235,52 @@ export async function getTenantTravelers(tenantId: string): Promise<TravelerDire
 }
 
 export async function getTenantTravelerKPIs(tenantId: string): Promise<TravelerKPIs> {
-  const directory = await getTenantTravelers(tenantId);
-
   const db = requireClient();
 
-  // 1. Total Travelers = count of tenant-scoped TravelerProfiles
-  const totalTravelers = directory.length;
+  // 1. Fetch tenant-scoped TravelerProfiles
+  const { data: profiles } = await db
+    .from('traveler_profiles')
+    .select('id')
+    .eq('tenant_id', tenantId);
 
-  // 2. Repeat Travelers = Travelers with >= 2 non-archived Bookings
-  const repeatTravelers = directory.filter((d) => d.bookingsCount >= 2).length;
+  const travelerIds = ((profiles || []) as DbTravelerProfileRow[]).map((p) => p.id);
+  const totalTravelers = travelerIds.length;
+
+  if (totalTravelers === 0) {
+    return { totalTravelers: 0, repeatTravelers: 0, activeCustomers: 0 };
+  }
+
+  // 2. Fetch non-archived Bookings excluding cancelled status for Repeat Travelers KPI
+  const { data: validBookings } = await db
+    .from('bookings')
+    .select('traveler_id')
+    .eq('tenant_id', tenantId)
+    .in('traveler_id', travelerIds)
+    .is('archived_at', null)
+    .neq('booking_status', 'cancelled');
+
+  const bkCountMap = new Map<string, number>();
+  ((validBookings || []) as { traveler_id: string }[]).forEach((b) => {
+    bkCountMap.set(b.traveler_id, (bkCountMap.get(b.traveler_id) || 0) + 1);
+  });
+
+  let repeatTravelers = 0;
+  bkCountMap.forEach((count) => {
+    if (count >= 2) repeatTravelers++;
+  });
 
   // 3. Active Customers = Travelers with >= 1 non-archived Inquiry that is not booking_lost or booking_confirmed
-  const travelerIds = directory.map((d) => d.id);
   let activeCustomers = 0;
+  const { data: activeInqs } = await db
+    .from('inquiries')
+    .select('traveler_id, pipeline_stage')
+    .eq('tenant_id', tenantId)
+    .in('traveler_id', travelerIds)
+    .is('archived_at', null)
+    .not('pipeline_stage', 'in', '("booking_lost","booking_confirmed")');
 
-  if (travelerIds.length > 0) {
-    const { data: activeInqs } = await db
-      .from('inquiries')
-      .select('traveler_id, pipeline_stage')
-      .eq('tenant_id', tenantId)
-      .in('traveler_id', travelerIds)
-      .is('archived_at', null)
-      .not('pipeline_stage', 'in', '("booking_lost","booking_confirmed")');
-
-    const activeSet = new Set(((activeInqs || []) as DbInquiryRow[]).map((i) => i.traveler_id));
-    activeCustomers = activeSet.size;
-  }
+  const activeSet = new Set(((activeInqs || []) as DbInquiryRow[]).map((i) => i.traveler_id));
+  activeCustomers = activeSet.size;
 
   return {
     totalTravelers,

@@ -191,7 +191,7 @@ export function TravelersView({ useNewReadOverride }: TravelersViewProps = {}) {
         whatsapp: traveler.phone || '',
         leadSource: 'referral',
         tripType: 'Custom Itinerary',
-        destination: traveler.latestDestination || '',
+        destination: '',
         country: '',
         city: '',
         numberOfTravelers: '1',
