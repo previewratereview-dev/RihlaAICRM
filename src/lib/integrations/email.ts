@@ -7,6 +7,16 @@ import { logger } from '@/lib/logger';
 import { fetchWithTimeout } from '@/lib/http';
 import { resolveOutbound, IntegrationConfigurationError } from './credential-service';
 import { ensureIntegrationRuntime } from './runtime';
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+import { CRMDatabaseService } from '@/lib/data/service';
+import { createClient } from '@supabase/supabase-js';
+import { open, SealedSecret } from '@/lib/secrets/store';
+import { marked } from 'marked';
+
+const supabaseAdmin = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+);
 
 function escapeHtml(str: string): string {
   return str
@@ -31,23 +41,58 @@ export async function sendEmail(options: {
 
   if (options.tenantId) {
     ensureIntegrationRuntime();
+    let resolvedFromSettings = false;
+    
+    // First try the new settings approach
     try {
-      const cred = await resolveOutbound(options.tenantId, 'email');
-      if (cred && cred.values.apiKey) {
-        apiKey = cred.values.apiKey;
-        if (cred.sendingIdentifiers.length > 0) {
-          from = options.fromName 
-            ? `${options.fromName} <${cred.sendingIdentifiers[0]}>` 
-            : cred.sendingIdentifiers[0];
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { data: settingsRow, error } = await supabaseAdmin
+        .from('settings')
+        .select('resend_api_key, resend_from_email')
+        .eq('tenant_id', options.tenantId)
+        .maybeSingle();
+
+      if (settingsRow?.resend_api_key) {
+        try {
+          const parsed = JSON.parse(settingsRow.resend_api_key);
+          if (parsed.ciphertext && parsed.iv) {
+            apiKey = open(parsed as SealedSecret);
+          } else {
+            apiKey = settingsRow.resend_api_key;
+          }
+          resolvedFromSettings = true;
+          
+          if (settingsRow.resend_from_email) {
+            from = options.fromName
+              ? `${options.fromName} <${settingsRow.resend_from_email}>`
+              : settingsRow.resend_from_email;
+          }
+        } catch (decErr) {
+          logger.error('[Email] Failed to parse or decrypt resendApiKey', decErr);
         }
       }
-    } catch (err) {
-      if (err instanceof IntegrationConfigurationError) {
-        // Fall back to platform email if tenant hasn't configured one, or fail?
-        // We will fall back to platform email so features still work if platform allows it.
-        logger.warn(`[Email] Tenant ${options.tenantId} email not configured, using platform fallback.`);
-      } else {
-        logger.error('[Email] Failed to resolve tenant email credentials', err);
+    } catch (e) {
+      logger.error('[Email] Failed to check settings for resend configuration', e);
+    }
+
+    // Fallback to integration credentials if not found in settings
+    if (!resolvedFromSettings) {
+      try {
+        const cred = await resolveOutbound(options.tenantId, 'email');
+        if (cred && cred.values.apiKey) {
+          apiKey = cred.values.apiKey;
+          if (cred.sendingIdentifiers.length > 0) {
+            from = options.fromName 
+              ? `${options.fromName} <${cred.sendingIdentifiers[0]}>` 
+              : cred.sendingIdentifiers[0];
+          }
+        }
+      } catch (err) {
+        if (err instanceof IntegrationConfigurationError) {
+          logger.warn(`[Email] Tenant ${options.tenantId} email not configured, using platform fallback.`);
+        } else {
+          logger.error('[Email] Failed to resolve tenant email credentials', err);
+        }
       }
     }
   }
@@ -93,11 +138,27 @@ export async function sendLeadFollowUpEmail(lead: {
   template?: string;
 }): Promise<{ ok: boolean; error?: string }> {
   let html: string;
+  let subject = `Your travel inquiry${lead.destination ? ` — ${lead.destination}` : ''}`;
+
   if (lead.template) {
-    html = lead.template
+    let rawTemplate = lead.template;
+    
+    // Attempt to extract **Subject:** line
+    const match = rawTemplate.match(/\*\*Subject:\*\*\s*(.+?)(?:\n|$)/i) || rawTemplate.match(/Subject:\s*(.+?)(?:\n|$)/i);
+    if (match) {
+      subject = match[1].trim();
+      rawTemplate = rawTemplate.replace(match[0], '').trim();
+    }
+    
+    // Also remove any leading '---' which the AI sometimes puts after the subject
+    rawTemplate = rawTemplate.replace(/^---\n?/, '').trim();
+
+    rawTemplate = rawTemplate
       .replace(/\{\{name\}\}/g, escapeHtml(lead.fullName))
-      .replace(/\{\{destination\}\}/g, escapeHtml(lead.destination || ''))
-      .replace(/\n/g, '<br>');
+      .replace(/\{\{destination\}\}/g, escapeHtml(lead.destination || ''));
+      
+    // Parse Markdown to HTML
+    html = await Promise.resolve(marked.parse(rawTemplate));
   } else {
     html = `<p>Hi ${escapeHtml(lead.fullName)},</p><p>Thank you for your interest${lead.destination ? ` in travel to ${escapeHtml(lead.destination)}` : ''}. A travel specialist will be in touch shortly.</p>`;
   }
@@ -105,7 +166,7 @@ export async function sendLeadFollowUpEmail(lead: {
   return sendEmail({
     tenantId: lead.tenantId,
     to: lead.email,
-    subject: `Your travel inquiry${lead.destination ? ` — ${lead.destination}` : ''}`,
+    subject,
     html,
     fromName: lead.fromName,
     replyTo: lead.replyTo,

@@ -5,7 +5,7 @@ import { generateId } from '@/lib/utils';
 import { enrichLeadWithAIScore } from '@/lib/ai/score-integration';
 import { calculateLeadScore } from '@/lib/ai/lead-scoring';
 import { fetchLLMSummaryForLead } from '@/lib/ai/score-integration';
-import { runLeadCreatedAutomations, runLeadStatusAutomations } from '@/lib/automation/triggers';
+import { runLeadCreatedAutomationsAction, runLeadStatusAutomationsAction } from '@/app/actions/automations';
 
 export function createLeadsSlice(set: SetState, get: GetState) {
   return {
@@ -87,15 +87,15 @@ export function createLeadsSlice(set: SetState, get: GetState) {
       }
 
       try {
-        await runLeadCreatedAutomations(newLead, {
+        await runLeadCreatedAutomationsAction(newLead, {
           makeWebhookUrl: get().settings.makeWebhookUrl,
           emailAutomation: get().settings.emailAutomation,
           emailFromName: get().settings.emailFromName,
           emailReplyTo: get().settings.emailReplyTo,
           emailFollowUpTemplate: get().settings.emailFollowUpTemplate,
         });
-      } catch {
-        // automations are optional when integrations are not configured
+      } catch (err) {
+        console.error('Failed to run lead created automations:', err);
       }
 
       const hasConversations = get().conversations.some(c => c.leadId === id);
@@ -239,7 +239,7 @@ export function createLeadsSlice(set: SetState, get: GetState) {
         await get().logAuditEvent('update_status', `Updated status of lead "${currentLead.fullName}" to ${updates.status}.`);
 
         try {
-          await runLeadStatusAutomations(updatedLead, currentLead.status, {
+          await runLeadStatusAutomationsAction(updatedLead, currentLead.status, {
             makeWebhookUrl: get().settings.makeWebhookUrl,
             emailAutomation: get().settings.emailAutomation,
             emailStatusAutomation: get().settings.emailStatusAutomation,
@@ -247,8 +247,8 @@ export function createLeadsSlice(set: SetState, get: GetState) {
             emailReplyTo: get().settings.emailReplyTo,
             emailFollowUpTemplate: get().settings.emailFollowUpTemplate,
           });
-        } catch {
-          // optional integrations
+        } catch (err) {
+          console.error('Failed to run lead status automations:', err);
         }
       }
 

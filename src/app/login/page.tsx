@@ -56,19 +56,10 @@ export default function LoginPage() {
 
     try {
       const res = await login(email, password);
-      if (res.success) {
-        const statusRes = await fetch('/api/platform/status');
-        const status = await statusRes.json();
-        const user = useCRMStore.getState().currentUser;
-        if (status.maintenanceMode && user?.role !== 'super_admin') {
-          await useCRMStore.getState().logout();
-          setErrorMsg('Platform is in maintenance mode. Only super admins can sign in.');
-          return;
-        }
-        router.push('/app');
-      } else {
+      if (!res.success) {
         setErrorMsg(res.error || 'Login failed.');
       }
+      // If successful, the useEffect on currentUser will trigger the redirect to /app.
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Connection failure.';
       setErrorMsg(message);

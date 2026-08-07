@@ -19,6 +19,7 @@ export interface AICallOptions {
   tenantAISettings?: import('@/lib/tenant/config').TenantSettings['ai'];
   currentSpend?: { daily: number; monthly: number };
   prompt: string;
+  timeoutMs?: number;
 }
 
 export async function callAI(options: AICallOptions): Promise<AIResponse> {
@@ -29,6 +30,7 @@ export async function callAI(options: AICallOptions): Promise<AIResponse> {
     tenantAISettings,
     currentSpend,
     prompt,
+    timeoutMs,
   } = options;
 
   const resolvedModel = model || tenantAISettings?.defaultModel || 'gpt-4o-mini';
@@ -67,9 +69,9 @@ export async function callAI(options: AICallOptions): Promise<AIResponse> {
 
   let result;
   if (useAnthropicFormat) {
-    result = await callAnthropic({ apiKey, model: resolvedModel, prompt, maxTokens });
+    result = await callAnthropic({ apiKey, model: resolvedModel, prompt, maxTokens, timeoutMs });
   } else {
-    result = await callOpenAI({ apiKey, model: resolvedModel, prompt, maxTokens, baseUrl });
+    result = await callOpenAI({ apiKey, model: resolvedModel, prompt, maxTokens, baseUrl, timeoutMs });
   }
 
   const costEstimate = estimateCost(result.model, result.tokensIn, result.tokensOut);

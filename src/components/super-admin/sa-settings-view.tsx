@@ -655,7 +655,7 @@ export function SuperAdminSettingsView() {
             </div>
           </section>
 
-          <button onClick={handleSave} disabled={saving} className="inline-flex items-center gap-2 h-10 px-5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold shadow-sm hover:opacity-90 transition-opacity">
+          <button onClick={handleSave} disabled={saving} className="inline-flex items-center gap-2 h-10 px-5 rounded-xl border border-primary/40 text-primary text-sm font-semibold shadow-sm hover:bg-primary/5 transition-colors disabled:opacity-50">
             <Save className="h-4 w-4" />
             Save Platform Settings
           </button>

@@ -59,12 +59,22 @@ export function getInitials(name: string): string {
 
 export function getStatusColor(status: string): string {
   const colors: Record<string, string> = {
+    // Travel CRM stages
+    inquiry_received: '#6366F1',
+    initial_contact: '#8B5CF6',
+    options_shared: '#3B82F6',
+    consultation_booked: '#06B6D4',
+    itinerary_sent: '#F59E0B',
+    follow_up: '#F97316',
+    customizing_package: '#EC4899',
+    booking_confirmed: '#22C55E',
+    booking_lost: '#EF4444',
+    // Backward-compatible SaaS aliases
     new: '#6366F1',
     contacted: '#8B5CF6',
     interested: '#3B82F6',
     demo_scheduled: '#06B6D4',
     proposal_sent: '#F59E0B',
-    follow_up: '#F97316',
     negotiation: '#EC4899',
     closed_won: '#22C55E',
     closed_lost: '#EF4444',
@@ -74,15 +84,25 @@ export function getStatusColor(status: string): string {
 
 export function getStatusLabel(status: string): string {
   const labels: Record<string, string> = {
-    new: 'New Lead',
-    contacted: 'Contacted',
-    interested: 'Interested',
-    demo_scheduled: 'Demo Scheduled',
-    proposal_sent: 'Proposal Sent',
+    // Travel CRM stages
+    inquiry_received: 'Inquiry Received',
+    initial_contact: 'Initial Contact',
+    options_shared: 'Options Shared',
+    consultation_booked: 'Consultation Booked',
+    itinerary_sent: 'Itinerary Sent',
     follow_up: 'Follow-Up',
-    negotiation: 'Negotiation',
-    closed_won: 'Closed Won',
-    closed_lost: 'Closed Lost',
+    customizing_package: 'Customizing Package',
+    booking_confirmed: 'Booking Confirmed',
+    booking_lost: 'Booking Lost',
+    // Backward-compatible SaaS aliases
+    new: 'Inquiry Received',
+    contacted: 'Initial Contact',
+    interested: 'Options Shared',
+    demo_scheduled: 'Consultation Booked',
+    proposal_sent: 'Itinerary Sent',
+    negotiation: 'Customizing Package',
+    closed_won: 'Booking Confirmed',
+    closed_lost: 'Booking Lost',
   };
   return labels[status] || status;
 }

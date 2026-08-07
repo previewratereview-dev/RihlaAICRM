@@ -15,6 +15,7 @@ import {
 } from 'recharts';
 import { useCRMStore } from '@/hooks/use-crm-store';
 import { formatCurrency } from '@/lib/utils';
+import { calculateCRMMetrics } from '@/lib/metrics';
 import { Skeleton } from '@/components/ui/skeleton';
 
 const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -35,17 +36,12 @@ export function AnalyticsView() {
     });
   }, [leads, dateFrom, dateTo]);
 
-  const metrics = useMemo(() => {
-    const closedWonLeads = filteredLeads.filter((l) => l.status === 'closed_won' || l.status === 'booking_confirmed');
-    const closedLostLeads = filteredLeads.filter((l) => l.status === 'closed_lost' || l.status === 'booking_lost');
-    const totalRevenue = closedWonLeads.reduce((acc, l) => acc + (l.dealValue || 0), 0);
-    const activeBookings = filteredLeads.filter(
-      (l) => !['closed_won', 'closed_lost', 'booking_lost', 'booking_confirmed'].includes(l.status)
-    ).length;
-    const totalClosed = closedWonLeads.length + closedLostLeads.length;
-    const conversionRate = totalClosed > 0 ? Math.round((closedWonLeads.length / totalClosed) * 100) : 0;
-    const avgDealSize = closedWonLeads.length > 0 ? Math.round(totalRevenue / closedWonLeads.length) : 0;
+  const crmMetrics = useMemo(() => calculateCRMMetrics(filteredLeads), [filteredLeads]);
 
+  const revenueByMonth = useMemo(() => {
+    const closedWonLeads = filteredLeads.filter(
+      (l) => l.status === 'closed_won' || l.status === 'booking_confirmed'
+    );
     const now = new Date();
     const months: { key: string; label: string; revenue: number }[] = [];
     for (let i = 5; i >= 0; i--) {
@@ -61,16 +57,10 @@ export function AnalyticsView() {
       const created = new Date(lead.createdAt);
       const key = `${created.getFullYear()}-${created.getMonth()}`;
       const bucket = months.find((m) => m.key === key);
-      if (bucket) bucket.revenue += lead.dealValue || 0;
+      if (bucket) bucket.revenue += typeof lead.dealValue === 'number' ? lead.dealValue : 0;
     });
 
-    return {
-      totalRevenue,
-      activeBookings,
-      conversionRate,
-      avgDealSize,
-      revenueByMonth: months.map(({ label, revenue }) => ({ month: label, revenue })),
-    };
+    return months.map(({ label, revenue }) => ({ month: label, revenue }));
   }, [filteredLeads]);
 
   const exportCsv = () => {
@@ -89,10 +79,10 @@ export function AnalyticsView() {
   };
 
   const statCards = [
-    { label: 'Total Revenue', value: formatCurrency(metrics.totalRevenue), icon: DollarSign },
-    { label: 'Active Bookings', value: String(metrics.activeBookings), icon: Users },
-    { label: 'Conversion Rate', value: `${metrics.conversionRate}%`, icon: TrendingUp },
-    { label: 'Avg. Deal Size', value: formatCurrency(metrics.avgDealSize), icon: BarChart3 },
+    { label: 'Recognized Revenue', value: formatCurrency(crmMetrics.recognizedRevenue), icon: DollarSign },
+    { label: 'Confirmed Bookings', value: String(crmMetrics.confirmedBookings), icon: Users },
+    { label: 'Conversion Rate', value: `${crmMetrics.conversionRate}%`, icon: TrendingUp },
+    { label: 'Avg. Deal Size', value: formatCurrency(crmMetrics.avgDealSize), icon: BarChart3 },
   ];
 
   if (dataLoading && leads.length === 0) {
@@ -132,7 +122,7 @@ export function AnalyticsView() {
             <button
               type="button"
               onClick={exportCsv}
-              className="inline-flex items-center gap-2 h-9 px-4 rounded-lg bg-primary text-primary-foreground text-sm font-medium cursor-pointer"
+              className="inline-flex items-center gap-2 h-9 px-4 rounded-lg border border-primary/40 text-primary text-sm font-medium cursor-pointer hover:bg-primary/5 transition-colors"
               aria-label="Export analytics data as CSV"
             >
               <Download className="h-4 w-4" /> Export CSV
@@ -166,9 +156,9 @@ export function AnalyticsView() {
             <p className="text-xs text-muted-foreground font-medium mt-1">Closed-won revenue by month (last 6 months).</p>
           </div>
           <div className="h-64 w-full min-w-0">
-            {metrics.revenueByMonth.some((m) => m.revenue > 0) ? (
+            {revenueByMonth.some((m) => m.revenue > 0) ? (
               <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
-                <BarChart data={metrics.revenueByMonth} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
+                <BarChart data={revenueByMonth} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
                   <XAxis dataKey="month" stroke="var(--muted-foreground)" fontSize={10} fontFamily="monospace" tickLine={false} />
                   <YAxis
@@ -177,7 +167,7 @@ export function AnalyticsView() {
                     fontFamily="monospace"
                     tickLine={false}
                     axisLine={false}
-                    tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
+                    tickFormatter={(v) => v >= 1000 ? `₹${(v / 1000).toFixed(0)}k` : `₹${v}`}
                   />
                   <Tooltip
                     contentStyle={{
@@ -193,7 +183,7 @@ export function AnalyticsView() {
                     labelStyle={{ fontWeight: 'bold' }}
                   />
                   <Bar dataKey="revenue" radius={[6, 6, 0, 0]} barSize={32}>
-                    {metrics.revenueByMonth.map((entry, index) => (
+                    {revenueByMonth.map((entry, index) => (
                       <Cell key={`cell-${entry.month}`} fill={BAR_COLORS[index % BAR_COLORS.length]} />
                     ))}
                   </Bar>

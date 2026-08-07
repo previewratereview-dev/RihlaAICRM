@@ -2,7 +2,13 @@
 
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Send, Paperclip, Search, Phone, Video, Bot, Sparkles, FileText, Pencil, Trash2, Check, X } from 'lucide-react';
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+import { Search, Send, FileText, Check, CheckCircle2, Copy, Bot, Pencil, Trash2, X, Info, Phone, Video, Paperclip, Sparkles } from 'lucide-react';
+import { EmptyState } from '@/components/ui/empty-state';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { useCRMStore } from '@/hooks/use-crm-store';
 import { useChatbot } from '@/hooks/use-chatbot';
 import { getInitials, formatRelativeTime } from '@/lib/utils';
@@ -246,9 +252,13 @@ export function ConversationsView() {
         </div>
         <div className="flex-1 overflow-y-auto p-3 space-y-2">
           {filteredConversations.length === 0 ? (
-            <p className="text-xs text-muted-foreground text-center py-8">
-              {searchQuery ? 'No conversations match your search.' : 'No conversations yet.'}
-            </p>
+            <div className="py-8">
+              <EmptyState
+                title={searchQuery ? 'No Results' : 'No Conversations'}
+                description={searchQuery ? 'No conversations match your search.' : 'No conversations yet.'}
+                icon="inbox"
+              />
+            </div>
           ) : (
             filteredConversations.map((conv) => (
               <button
@@ -367,21 +377,6 @@ export function ConversationsView() {
               </div>
             )}
 
-            {suggestedReplies.length > 0 && (
-              <div className="mx-6 mt-3 flex flex-wrap gap-2">
-                {suggestedReplies.map((reply) => (
-                  <button
-                    key={reply}
-                    type="button"
-                    onClick={() => setMessageInput(reply)}
-                    className="text-xs px-3 py-1.5 rounded-full bg-secondary hover:bg-secondary/80 transition-colors"
-                  >
-                    {reply}
-                  </button>
-                ))}
-              </div>
-            )}
-
             <div className="flex-1 overflow-y-auto p-6 space-y-4">
               {threadMessages.map((msg, i) => {
                 const isOutgoing = msg.senderType === 'user';
@@ -438,7 +433,11 @@ export function ConversationsView() {
                             </button>
                           </div>
                         ) : (
-                          <p className="text-sm leading-relaxed">{msg.content}</p>
+                          <div className={`text-sm leading-relaxed prose prose-sm max-w-none ${isOutgoing ? 'prose-invert prose-p:text-primary-foreground prose-headings:text-primary-foreground prose-strong:text-primary-foreground prose-a:text-primary-foreground' : 'dark:prose-invert'}`}>
+                            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                              {msg.content}
+                            </ReactMarkdown>
+                          </div>
                         )}
                         <span
                           className={`text-[10px] mt-2 block ${
@@ -482,6 +481,29 @@ export function ConversationsView() {
               )}
               <div ref={messagesEndRef} />
             </div>
+
+            {/* AI Context-Aware Quick Replies */}
+            {suggestedReplies.length > 0 && (
+              <div className="px-4 pb-2">
+                <p className="text-[10px] uppercase font-bold text-muted-foreground mb-2 flex items-center gap-1">
+                  <Sparkles className="h-3 w-3 text-primary" /> AI Suggestions
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {suggestedReplies.map((reply, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => {
+                        setMessageInput(reply);
+                        setSuggestedReplies([]);
+                      }}
+                      className="text-xs px-3 py-1.5 rounded-full border border-primary/30 bg-primary/5 text-foreground hover:bg-primary/20 transition-colors text-left"
+                    >
+                      {reply}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <form
               onSubmit={handleSendMessage}

@@ -76,7 +76,7 @@ export function FaqAdminPanel() {
           <button onClick={addFaq} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border text-sm">
             <Plus className="h-4 w-4" /> Add
           </button>
-          <button onClick={saveAll} disabled={saving} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-primary text-white text-sm font-semibold">
+          <button onClick={saveAll} disabled={saving} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-primary/40 text-primary hover:bg-primary/5 transition-colors disabled:opacity-50 text-sm font-semibold">
             <Save className="h-4 w-4" /> {saving ? 'Saving...' : 'Save All'}
           </button>
         </div>

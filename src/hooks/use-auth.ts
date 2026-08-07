@@ -267,13 +267,23 @@ export function useAuth() {
       }
 
       // Derive the tenant strictly from the persisted profile. (1.9)
-      if (!resolveTenantId(profile)) {
+      // Exception: super_admin users are platform-level and don't belong to any tenant.
+      const profileRole = normaliseRole(((profile.role as string) || 'viewer'));
+      if (profileRole !== 'super_admin' && !resolveTenantId(profile)) {
         setState({ user: null, loading: false, error: NO_TENANT_ERROR });
         return;
       }
       profileData = profile;
 
-      setState({ user: mapSupabaseUser({ ...session.user, user_metadata: profileData } as Record<string, unknown>), loading: false, error: null });
+      setState({ 
+        user: mapSupabaseUser({ 
+          ...session.user, 
+          user_metadata: profileData,
+          role: profile.role
+        } as Record<string, unknown>), 
+        loading: false, 
+        error: null 
+      });
     });
 
     return () => {

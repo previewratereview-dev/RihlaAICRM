@@ -1,246 +1,426 @@
-'use client';
-
 import React, { useMemo, useState, useCallback, useRef, useEffect } from 'react';
 import { useCRMStore } from '@/hooks/use-crm-store';
 import { Lead, LeadStatus } from '@/types';
-import { PIPELINE_STAGES } from '@/types/pipeline';
+import { PIPELINE_STAGES, PipelineInquiryViewModel } from '@/types/pipeline';
+import { mapLeadToPipelineInquiry } from '@/lib/pipeline-utils';
 import { normalizeLeadStatus, isClosedStatus } from '@/lib/pipeline-status';
-import { getPriorityColor, formatCurrency } from '@/lib/utils';
-import { cn } from '@/lib/utils';
+import { cn, formatCurrency, getInitials } from '@/lib/utils';
 import { motion } from 'framer-motion';
 import {
-  Sparkles,
   TrendingUp,
-  Layers,
+  Table as TableIcon,
+  LayoutGrid,
+  MapPin,
+  Clock,
+  MoreHorizontal,
+  ChevronRight,
+  User,
+  AlertCircle
 } from 'lucide-react';
+import { PageContainer } from '@/components/ui/page-container';
+import { Button } from '@/components/ui/button';
+import { PipelineTable } from '@/components/leads/pipeline-table';
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
+
+// We map stages from PIPELINE_STAGES
+// And implement Grouping of Empty Stages
+
+type EmptyStageGroupState = "collapsed" | "manually-expanded" | "temporarily-expanded-during-drag";
 
 export function PipelineView() {
   const leads = useCRMStore((state) => state.leads);
+  const team = useCRMStore((state) => state.team);
   const updateLead = useCRMStore((state) => state.updateLead);
-  const [focusedCard, setFocusedCard] = useState<{ stageIdx: number; cardIdx: number } | null>(null);
-  const boardRef = useRef<HTMLDivElement>(null);
+  
+  const [viewMode, setViewMode] = useState<'board'|'table'>('board');
+  const [emptyGroupState, setEmptyGroupState] = useState<Record<string, EmptyStageGroupState>>({});
+  const [draggedItem, setDraggedItem] = useState<string | null>(null);
 
-  const leadsByStage = useMemo(() => {
-    const grouped: Record<string, Lead[]> = {};
+  // Read URL if needed (using search params in next/navigation normally, but window.location here for simplicity/sync)
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const urlParams = new URLSearchParams(window.location.search);
+      // eslint-disable-next-line
+      if (urlParams.get('view') === 'table') setViewMode('table');
+    }
+  }, []);
+
+  const handleSetViewMode = (mode: 'board'|'table') => {
+    setViewMode(mode);
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      url.searchParams.set('view', mode);
+      window.history.replaceState({}, '', url);
+    }
+  };
+
+  const inquiries = useMemo(() => {
+    return leads.map(l => mapLeadToPipelineInquiry(l, team));
+  }, [leads, team]);
+
+  const inquiriesByStage = useMemo(() => {
+    const grouped: Record<string, PipelineInquiryViewModel[]> = {};
     PIPELINE_STAGES.forEach((stage) => { grouped[stage.id] = []; });
-    leads.forEach((lead) => {
-      const stage = normalizeLeadStatus(lead.status);
-      if (grouped[stage]) grouped[stage].push({ ...lead, status: stage });
+    inquiries.forEach((iq) => {
+      const stageId = normalizeLeadStatus(iq.stageId);
+      if (grouped[stageId]) grouped[stageId].push(iq);
     });
     return grouped;
-  }, [leads]);
+  }, [inquiries]);
 
-  const columnSummaries = useMemo(() => {
-    return PIPELINE_STAGES.map((stage) => {
-      const stageLeads = leadsByStage[stage.id] || [];
-      return { ...stage, count: stageLeads.length, totalValue: stageLeads.reduce((sum, l) => sum + l.dealValue, 0) };
+  // Grouping logic for empty stages
+  const stageColumns = useMemo(() => {
+    type StageGroup = { stage: typeof PIPELINE_STAGES[0]; inquiries: PipelineInquiryViewModel[]; idx: number };
+    type StageColumn = 
+      | { isGroup: true; id: string; stages: StageGroup[] }
+      | { isGroup: false; id: string; stage: typeof PIPELINE_STAGES[0]; inquiries: PipelineInquiryViewModel[]; idx: number };
+
+    const columns: StageColumn[] = [];
+    let currentEmptyGroup: StageGroup[] = [];
+
+    PIPELINE_STAGES.forEach((stage, idx) => {
+      const stageInquiries = inquiriesByStage[stage.id] || [];
+      const isEmpty = stageInquiries.length === 0;
+
+      if (isEmpty) {
+        currentEmptyGroup.push({ stage, inquiries: stageInquiries, idx });
+      } else {
+        if (currentEmptyGroup.length > 0) {
+          // Push empty group
+          columns.push({ isGroup: true, id: `group-${currentEmptyGroup[0].stage.id}`, stages: currentEmptyGroup });
+          currentEmptyGroup = [];
+        }
+        columns.push({ isGroup: false, id: stage.id, stage, inquiries: stageInquiries, idx });
+      }
     });
-  }, [leadsByStage]);
 
-  const stageArrays = useMemo(() => {
-    return PIPELINE_STAGES.map((stage) => ({
-      stage,
-      leads: leadsByStage[stage.id] || [],
-    }));
-  }, [leadsByStage]);
-
-  const handleKeyNavigation = useCallback((e: React.KeyboardEvent) => {
-    if (!focusedCard) return;
-    const { stageIdx, cardIdx } = focusedCard;
-    const currentStage = stageArrays[stageIdx];
-    if (!currentStage) return;
-
-    let newStageIdx = stageIdx;
-    let newCardIdx = cardIdx;
-
-    switch (e.key) {
-      case 'ArrowDown':
-        e.preventDefault();
-        if (cardIdx < currentStage.leads.length - 1) newCardIdx = cardIdx + 1;
-        break;
-      case 'ArrowUp':
-        e.preventDefault();
-        if (cardIdx > 0) newCardIdx = cardIdx - 1;
-        break;
-      case 'ArrowRight':
-        e.preventDefault();
-        if (stageIdx < stageArrays.length - 1) {
-          newStageIdx = stageIdx + 1;
-          const nextStageLeads = stageArrays[newStageIdx].leads;
-          newCardIdx = Math.min(cardIdx, nextStageLeads.length - 1);
-        }
-        break;
-      case 'ArrowLeft':
-        e.preventDefault();
-        if (stageIdx > 0) {
-          newStageIdx = stageIdx - 1;
-          const prevStageLeads = stageArrays[newStageIdx].leads;
-          newCardIdx = Math.min(cardIdx, prevStageLeads.length - 1);
-        }
-        break;
-      case 'Enter':
-      case ' ':
-        e.preventDefault();
-        if (stageArrays[stageIdx].leads[cardIdx]) {
-          const lead = stageArrays[stageIdx].leads[cardIdx];
-          const currIdx = PIPELINE_STAGES.findIndex((s) => s.id === lead.status);
-          if (e.key === 'Enter' && currIdx < PIPELINE_STAGES.length - 1) {
-            updateLead(lead.id, { status: PIPELINE_STAGES[currIdx + 1].id });
-            const newStageLeads = stageArrays[stageIdx].leads;
-            if (newCardIdx >= newStageLeads.length - 1) newCardIdx = Math.max(0, newStageLeads.length - 2);
-          }
-        }
-        break;
-      default:
-        return;
+    if (currentEmptyGroup.length > 0) {
+      columns.push({ isGroup: true, id: `group-${currentEmptyGroup[0].stage.id}`, stages: currentEmptyGroup });
     }
 
-    if (newStageIdx !== stageIdx || newCardIdx !== cardIdx) {
-      setFocusedCard({ stageIdx: newStageIdx, cardIdx: newCardIdx });
-    }
-  }, [focusedCard, stageArrays, updateLead]);
+    return columns;
+  }, [inquiriesByStage]);
 
-  useEffect(() => {
-    const board = boardRef.current;
-    if (!board) return;
-    board.addEventListener('keydown', handleKeyNavigation as unknown as EventListener);
-    return () => board.removeEventListener('keydown', handleKeyNavigation as unknown as EventListener);
-  }, [handleKeyNavigation]);
-
-  const handleDragStart = (e: React.DragEvent, leadId: string) => {
-    e.dataTransfer.setData('text/plain', leadId);
+  const handleDragStart = (e: React.DragEvent, inquiryId: string) => {
+    setDraggedItem(inquiryId);
+    e.dataTransfer.setData('text/plain', inquiryId);
     e.dataTransfer.effectAllowed = 'move';
+    
+    // Temporarily expand all groups during drag
+    const newGroupState = { ...emptyGroupState };
+    stageColumns.forEach(col => {
+      if (col.isGroup && newGroupState[col.id] !== 'manually-expanded') {
+        newGroupState[col.id] = 'temporarily-expanded-during-drag';
+      }
+    });
+    setEmptyGroupState(newGroupState);
   };
 
-  const handleDragOver = (e: React.DragEvent) => { e.preventDefault(); };
+  const handleDragEnd = () => {
+    setDraggedItem(null);
+    // Revert temporarily expanded groups
+    const newGroupState = { ...emptyGroupState };
+    Object.keys(newGroupState).forEach(key => {
+      if (newGroupState[key] === 'temporarily-expanded-during-drag') {
+        newGroupState[key] = 'collapsed';
+      }
+    });
+    setEmptyGroupState(newGroupState);
+  };
 
-  const handleDrop = (e: React.DragEvent, stageId: LeadStatus) => {
+  const handleDrop = (e: React.DragEvent, stageId: string) => {
     e.preventDefault();
-    const leadId = e.dataTransfer.getData('text/plain');
-    if (leadId) updateLead(leadId, { status: stageId });
+    const inquiryId = e.dataTransfer.getData('text/plain');
+    if (inquiryId) {
+      updateLead(inquiryId, { status: stageId as LeadStatus });
+    }
+    handleDragEnd();
   };
 
-  const totalPipelineValue = leads.reduce((sum, l) => sum + l.dealValue, 0);
-  const activePipelineValue = leads.filter((l) => !isClosedStatus(l.status)).reduce((sum, l) => sum + l.dealValue, 0);
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  };
+
+  const toggleGroup = (groupId: string) => {
+    setEmptyGroupState(prev => ({
+      ...prev,
+      [groupId]: prev[groupId] === 'manually-expanded' ? 'collapsed' : 'manually-expanded'
+    }));
+  };
+
+  // Summary strip calculations
+  const totalOpenInquiries = inquiries.filter(iq => !isClosedStatus(iq.stageId)).length;
+  const totalExpectedValue = inquiries
+    .filter(iq => !isClosedStatus(iq.stageId) && iq.expectedValue !== null)
+    .reduce((sum, iq) => sum + (iq.expectedValue || 0), 0);
+  const totalOverdue = inquiries.filter(iq => iq.nextFollowUpAt && new Date(iq.nextFollowUpAt) < new Date()).length;
 
   return (
-    <div className="flex flex-col h-full w-full p-6 lg:p-8 overflow-hidden">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6 shrink-0 select-none">
+    <PageContainer variant="board" className="h-full flex flex-col">
+      <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-[var(--section-gap)]">
         <div>
-          <h2 className="text-2xl font-bold text-foreground tracking-tight font-heading">Booking Pipeline</h2>
-          <p className="text-sm text-muted-foreground font-medium mt-1">
-            Drag and drop or use keyboard arrows to navigate.{' '}
-            <span className="text-muted-foreground/70">← → ↑ ↓ move · Enter advance · Tab focus columns</span>
+          <h1 className="text-[var(--text-page-title)] font-bold tracking-tight text-foreground">Booking Pipeline</h1>
+          <p className="text-[var(--text-body)] text-muted-foreground mt-1">
+            {viewMode === 'board' 
+              ? 'Move leads between stages using drag and drop or keyboard controls.'
+              : 'Review, filter and update pipeline opportunities.'}
           </p>
         </div>
-        <div className="flex items-center gap-5 text-sm text-muted-foreground bg-card/80 border border-border/60 rounded-2xl px-5 py-3 shadow-sm">
-          <div className="flex items-center gap-2">
-            <TrendingUp className="h-4 w-4 text-primary" />
-            <span className="font-medium">Active bookings:</span>
-            <span className="text-foreground font-bold font-mono">{formatCurrency(activePipelineValue)}</span>
-          </div>
-          <div className="h-4 w-px bg-border/60" />
-          <div className="flex items-center gap-2">
-            <Layers className="h-4 w-4 text-muted-foreground" />
-            <span className="font-medium">Total pipeline:</span>
-            <span className="text-foreground font-bold font-mono">{formatCurrency(totalPipelineValue)}</span>
+        <div className="flex items-center gap-3">
+          <div className="flex p-1 bg-secondary rounded-[var(--radius-surface)] border border-border/50">
+            <Button
+              variant={viewMode === 'board' ? 'secondary' : 'ghost'}
+              size="sm"
+              className={cn("h-8 px-3 rounded-md shadow-none", viewMode === 'board' && "bg-background shadow-sm")}
+              onClick={() => handleSetViewMode('board')}
+            >
+              <LayoutGrid className="w-4 h-4 mr-2" />
+              Board
+            </Button>
+            <Button
+              variant={viewMode === 'table' ? 'secondary' : 'ghost'}
+              size="sm"
+              className={cn("h-8 px-3 rounded-md shadow-none", viewMode === 'table' && "bg-background shadow-sm")}
+              onClick={() => handleSetViewMode('table')}
+            >
+              <TableIcon className="w-4 h-4 mr-2" />
+              Table
+            </Button>
           </div>
         </div>
       </div>
 
-      <div
-        ref={boardRef}
-        tabIndex={0}
-        className="flex-1 flex gap-4 overflow-x-auto pb-4 scrollbar-thin select-none outline-none"
-        role="grid"
-        aria-label="Pipeline board. Use arrow keys to navigate between cards."
-      >
-        {stageArrays.map((col, stageIdx) => (
-          <div
-            key={col.stage.id}
-            onDragOver={handleDragOver}
-            onDrop={(e) => handleDrop(e, col.stage.id)}
-            className={cn(
-              'w-72 shrink-0 flex flex-col rounded-2xl bg-secondary/30 border border-border/60 p-4',
-              'hover:bg-secondary/50 hover:shadow-sm transition-all duration-200'
-            )}
-          >
-            <div className="flex justify-between items-center mb-4 text-sm">
-              <div className="flex items-center gap-2 min-w-0">
-                <div className="h-2.5 w-2.5 rounded-full shrink-0" style={{ backgroundColor: col.stage.color }} />
-                <span className="font-bold text-foreground truncate max-w-[130px]">{col.stage.label}</span>
-                <span className="px-2 py-0.5 text-[10px] font-mono rounded-full bg-secondary text-muted-foreground font-bold shrink-0">{col.leads.length}</span>
-              </div>
-              <span className="font-mono text-muted-foreground font-bold shrink-0 text-xs">{formatCurrency(col.leads.reduce((s, l) => s + l.dealValue, 0))}</span>
+      {viewMode === 'table' ? (
+        <PipelineTable 
+          inquiries={inquiries} 
+          onMoveToStage={(id, stageId) => updateLead(id, { status: stageId as LeadStatus })} 
+          team={team} 
+        />
+      ) : (
+        <div className="flex-1 flex flex-col min-h-0 h-full bg-card rounded-[var(--radius-surface)] border border-border/60 shadow-sm">
+          {/* Summary Strip */}
+          <div className="px-4 py-2 border-b border-border/60 bg-secondary/30 flex items-center gap-4 text-sm whitespace-nowrap overflow-x-auto scrollbar-none">
+            <div className="flex items-center text-foreground font-medium pr-4 border-r border-border/60">
+              <TrendingUp className="w-4 h-4 mr-2 text-primary" />
+              {totalOpenInquiries} open inquiries · {totalExpectedValue > 0 ? formatCurrency(totalExpectedValue) : 'Value not estimated'} · {totalOverdue} follow-ups due
             </div>
-
-            <div className="flex-1 space-y-3 overflow-y-auto pr-1 scrollbar-thin min-h-[250px]">
-              {col.leads.map((lead, cardIdx) => {
-                const isFocused = focusedCard?.stageIdx === stageIdx && focusedCard?.cardIdx === cardIdx;
+            
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              {PIPELINE_STAGES.map((stage, i) => {
+                const count = inquiriesByStage[stage.id]?.length || 0;
                 return (
-                  <motion.div
-                    key={lead.id}
-                    layoutId={`deal-${lead.id}`}
-                    draggable
-                    onDragStart={(e) => handleDragStart(e as unknown as React.DragEvent, lead.id)}
-                    tabIndex={0}
-                    role="gridcell"
-                    aria-label={`${lead.businessName}, ${lead.fullName}, ${formatCurrency(lead.dealValue)}, ${lead.status}`}
-                    onFocus={() => setFocusedCard({ stageIdx, cardIdx })}
-                    onClick={() => setFocusedCard({ stageIdx, cardIdx })}
-                    className={cn(
-                      'p-4 rounded-2xl bg-card/80 border cursor-grab active:cursor-grabbing',
-                      'hover:border-primary/40 hover:shadow-md hover:shadow-primary/5 transition-all duration-200 group',
-                      isFocused
-                        ? 'border-primary ring-2 ring-primary/20 shadow-md shadow-primary/10'
-                        : 'border-border/60'
-                    )}
-                  >
-                    <div className="flex justify-between items-start">
-                      <span className="font-bold text-foreground text-sm group-hover:text-primary transition-colors truncate max-w-[170px]">
-                        {lead.businessName}
-                      </span>
-                      <span style={{ color: getPriorityColor(lead.priority) }} className="text-[10px] font-mono capitalize tracking-wider font-bold">
-                        {lead.priority}
-                      </span>
+                  <React.Fragment key={stage.id}>
+                    <div className={cn("flex items-center", count > 0 && "text-foreground font-medium")}>
+                      {stage.label} ({count})
                     </div>
-                    <p className="text-xs text-muted-foreground font-medium truncate mt-1">{lead.fullName}</p>
-                    <div className="mt-3 pt-3 border-t border-border/40 flex justify-between items-center text-xs font-mono">
-                      <span className="text-foreground font-bold text-sm">{formatCurrency(lead.dealValue)}</span>
-                      <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-secondary/50 border border-border/60 text-xs text-foreground">
-                        <Sparkles className="h-3 w-3 text-amber-500 fill-amber-500" />
-                        <span className="font-semibold">{lead.aiScore}%</span>
-                      </div>
-                    </div>
-                    <div className="hidden group-hover:flex items-center justify-between border-t border-border/60 mt-3 pt-2 text-[10px] text-muted-foreground select-none">
-                      <span>Quick move:</span>
-                      <div className="flex gap-1.5">
-                        {PIPELINE_STAGES.findIndex((s) => s.id === lead.status) > 0 && (
-                          <button
-                            onClick={(e) => { e.stopPropagation(); const ci = PIPELINE_STAGES.findIndex((s) => s.id === lead.status); updateLead(lead.id, { status: PIPELINE_STAGES[ci - 1].id }); }}
-                            className="px-2 py-1 rounded-lg bg-secondary hover:bg-secondary/80 text-foreground border border-border/60 cursor-pointer"
-                          >Prev</button>
-                        )}
-                        {PIPELINE_STAGES.findIndex((s) => s.id === lead.status) < PIPELINE_STAGES.length - 1 && (
-                          <button
-                            onClick={(e) => { e.stopPropagation(); const ci = PIPELINE_STAGES.findIndex((s) => s.id === lead.status); updateLead(lead.id, { status: PIPELINE_STAGES[ci + 1].id }); }}
-                            className="px-2 py-1 rounded-lg bg-secondary hover:bg-secondary/80 text-foreground border border-border/60 cursor-pointer"
-                          >Next</button>
-                        )}
-                      </div>
-                    </div>
-                  </motion.div>
+                    {i < PIPELINE_STAGES.length - 1 && <ChevronRight className="w-3 h-3 opacity-50" />}
+                  </React.Fragment>
                 );
               })}
-              {col.leads.length === 0 && (
-                <div className="h-full flex items-center justify-center border border-dashed border-border/60 rounded-2xl p-6 py-12 text-center text-xs font-mono text-muted-foreground">
-                  Drop deals here
-                </div>
-              )}
             </div>
           </div>
+
+          {/* Board Area */}
+          <div className="flex-1 overflow-x-auto overflow-y-hidden p-4 min-h-0">
+            <div className="flex h-full gap-4 min-h-0">
+              {stageColumns.map((col) => {
+                if (col.isGroup) {
+                  const state = emptyGroupState[col.id] || 'collapsed';
+                  const isExpanded = state !== 'collapsed';
+
+                  if (!isExpanded) {
+                    return (
+                      <div 
+                        key={col.id} 
+                        className="w-[56px] shrink-0 h-full flex flex-col items-center justify-center border border-dashed border-border/60 rounded-xl bg-secondary/20 hover:bg-secondary/40 cursor-pointer transition-colors"
+                        onClick={() => toggleGroup(col.id)}
+                        onDragOver={(e) => {
+                          e.preventDefault();
+                          // Auto-expand on drag hover handled by handleDragStart, but could be handled here for specific drop interactions
+                        }}
+                      >
+                        <div className="flex items-center gap-2 -rotate-90 text-muted-foreground whitespace-nowrap font-medium text-sm">
+                          {col.stages.length} empty stages <ChevronRight className="w-4 h-4 rotate-90" />
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  // If expanded, render the columns inside
+                  return col.stages.map((stageItem: { stage: typeof PIPELINE_STAGES[0]; inquiries: PipelineInquiryViewModel[]; idx: number }) => (
+                    <PipelineColumn 
+                      key={stageItem.stage.id} 
+                      stage={stageItem.stage} 
+                      inquiries={stageItem.inquiries} 
+                      handleDragStart={handleDragStart}
+                      handleDrop={handleDrop}
+                      handleDragOver={handleDragOver}
+                      draggedItem={draggedItem}
+                      onMoveToStage={(id, stageId) => updateLead(id, { status: stageId as LeadStatus })}
+                    />
+                  ));
+                }
+
+                return (
+                  <PipelineColumn 
+                    key={col.stage.id} 
+                    stage={col.stage} 
+                    inquiries={col.inquiries} 
+                    handleDragStart={handleDragStart}
+                    handleDrop={handleDrop}
+                    handleDragOver={handleDragOver}
+                    draggedItem={draggedItem}
+                    onMoveToStage={(id, stageId) => updateLead(id, { status: stageId as LeadStatus })}
+                  />
+                );
+              })}
+              
+              {/* Right edge indicator */}
+              <div className="w-8 shrink-0 flex items-center justify-center h-full opacity-50 pointer-events-none">
+                <ChevronRight className="w-6 h-6 text-muted-foreground" />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </PageContainer>
+  );
+}
+
+interface PipelineColumnProps {
+  stage: typeof PIPELINE_STAGES[0];
+  inquiries: PipelineInquiryViewModel[];
+  handleDragStart: (e: React.DragEvent, inquiryId: string) => void;
+  handleDrop: (e: React.DragEvent, stageId: string) => void;
+  handleDragOver: (e: React.DragEvent) => void;
+  draggedItem: string | null;
+  onMoveToStage: (id: string, stageId: string) => void;
+}
+
+function PipelineColumn({ stage, inquiries, handleDragStart, handleDrop, handleDragOver, draggedItem, onMoveToStage }: PipelineColumnProps) {
+  const stageValue = inquiries.reduce((sum: number, iq: PipelineInquiryViewModel) => sum + (iq.expectedValue || 0), 0);
+  
+  return (
+    <div 
+      className="w-[240px] shrink-0 flex flex-col h-full min-h-0 rounded-xl bg-secondary/20 border border-border/40"
+      onDragOver={handleDragOver}
+      onDrop={(e) => handleDrop(e, stage.id)}
+    >
+      <div className="p-3 border-b border-border/40 flex items-center justify-between sticky top-0 bg-background/50 backdrop-blur-sm z-10 rounded-t-xl">
+        <div>
+          <h3 className="font-semibold text-foreground flex items-center gap-2 text-sm">
+            <div className="w-2 h-2 rounded-full" style={{ backgroundColor: stage.color }} />
+            {stage.label}
+          </h3>
+          <p className="text-xs text-muted-foreground mt-0.5 font-medium">
+            {inquiries.length} {inquiries.length === 1 ? 'inquiry' : 'inquiries'} 
+            {stageValue > 0 && ` · ${formatCurrency(stageValue)}`}
+          </p>
+        </div>
+      </div>
+      
+      <div className="flex-1 min-h-0 overflow-y-auto p-2 space-y-2 scrollbar-thin">
+        {inquiries.map((iq: PipelineInquiryViewModel) => (
+          <PipelineCard 
+            key={iq.id} 
+            inquiry={iq} 
+            onDragStart={(e) => handleDragStart(e, iq.id)} 
+            isDragging={draggedItem === iq.id}
+            onMoveToStage={onMoveToStage}
+          />
         ))}
       </div>
     </div>
   );
 }
+
+interface PipelineCardProps {
+  inquiry: PipelineInquiryViewModel;
+  onDragStart: (e: React.DragEvent) => void;
+  isDragging: boolean;
+  onMoveToStage: (id: string, stageId: string) => void;
+}
+
+const PipelineCard = React.memo(function PipelineCard({ inquiry, onDragStart, isDragging, onMoveToStage }: PipelineCardProps) {
+  const isOverdue = inquiry.nextFollowUpAt && new Date(inquiry.nextFollowUpAt) < new Date();
+  
+  return (
+    <div
+      draggable
+      onDragStart={onDragStart}
+      className={cn(
+        "group relative bg-card border border-border/60 rounded-xl p-3 shadow-sm hover:shadow-md hover:border-border transition-all cursor-grab active:cursor-grabbing",
+        isDragging && "opacity-50 scale-95"
+      )}
+    >
+      {/* Header: Name and Priority */}
+      <div className="flex items-start justify-between gap-2">
+        <h4 className="font-semibold text-[14px] text-foreground truncate flex-1">
+          {inquiry.displayName}
+        </h4>
+        <div className={cn(
+          "h-2 w-2 rounded-full shrink-0 mt-1.5",
+          inquiry.priority === 'urgent' ? 'bg-red-500' :
+          inquiry.priority === 'high' ? 'bg-orange-500' :
+          inquiry.priority === 'medium' ? 'bg-blue-400' : 'bg-muted-foreground'
+        )} title={`Priority: ${inquiry.priority}`} />
+      </div>
+
+      {/* Destination */}
+      <div className="text-[12px] text-muted-foreground mt-0.5 truncate">
+        {inquiry.destination ? inquiry.destination : 'Destination not set'}
+      </div>
+
+      {/* Bottom Row / Overdue Override */}
+      <div className="mt-3 flex items-center justify-between text-[12px] pt-2 border-t border-border/40">
+        {isOverdue ? (
+          <div className="flex items-center gap-1.5 text-red-500 font-medium truncate">
+            <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+            <span className="truncate">Follow-up overdue</span>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 text-muted-foreground font-medium truncate">
+            <span className="truncate">{inquiry.expectedValue !== null ? formatCurrency(inquiry.expectedValue) : 'Value not estimated'}</span>
+            <span className="opacity-50">·</span>
+            <span>{inquiry.timeInStageLabel}</span>
+          </div>
+        )}
+        
+        {/* Assignee / Action */}
+        <div className="flex items-center gap-1 shrink-0 ml-2">
+          {inquiry.assignedAgent ? (
+            <div className="h-5 w-5 rounded-full bg-primary/10 text-primary flex items-center justify-center font-medium text-[10px]" title={inquiry.assignedAgent.name}>
+              {getInitials(inquiry.assignedAgent.name)}
+            </div>
+          ) : (
+            <div className="h-5 w-5 rounded-full bg-muted flex items-center justify-center" title="Unassigned">
+              <User className="w-3 h-3 text-muted-foreground" />
+            </div>
+          )}
+
+          <DropdownMenu>
+            <DropdownMenuTrigger className="h-6 w-6 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity flex items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground cursor-pointer outline-none border-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1">
+              <MoreHorizontal className="h-3.5 w-3.5 text-muted-foreground" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-48">
+              <DropdownMenuItem>Open details</DropdownMenuItem>
+              <DropdownMenuItem>Schedule follow-up</DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem>Assign agent...</DropdownMenuItem>
+              <DropdownMenuItem>Set priority...</DropdownMenuItem>
+              <DropdownMenuSeparator />
+              {PIPELINE_STAGES.map((s) => (
+                <DropdownMenuItem key={s.id} onClick={() => onMoveToStage(inquiry.id, s.id)}>
+                  Move to {s.label}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </div>
+    </div>
+  );
+}, (prev, next) => {
+  return prev.inquiry === next.inquiry && prev.isDragging === next.isDragging;
+});

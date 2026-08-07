@@ -21,11 +21,24 @@ export interface Settings {
   aiUseAnthropicFormat?: boolean;
   openAiKey?: string;
   anthropicKey?: string;
+  usePlatformAi?: boolean;
+  
+  // Integrations
+  metaSettings?: Record<string, unknown>;
+  twilioSettings?: Record<string, unknown>;
+  smtpSettings?: Record<string, unknown>;
+  resendApiKey?: string;
+  resendFromEmail?: string;
+  
+  // Admin Notification
+  adminNotificationPhone?: string;
+  adminNotificationEmail?: string;
 }
 
 export interface CRMStore {
   activeTab: string;
   sidebarExpanded: boolean;
+  density: 'comfortable' | 'compact';
   currentUser: User | null;
   sessionLoading: boolean;
   dataLoading: boolean;
@@ -69,6 +82,7 @@ export interface CRMStore {
   // Navigation actions
   setActiveTab: (tab: string) => void;
   toggleSidebar: () => void;
+  setDensity: (density: 'comfortable' | 'compact') => void;
   setGlobalSearchQuery: (query: string) => void;
   setImpersonateTenant: (tenantId: string | null, tenantName?: string) => void;
 
@@ -100,7 +114,7 @@ export interface CRMStore {
   clearUnreadCount: (conversationId: string) => Promise<void>;
 
   // Settings actions
-  updateSettings: (settings: Partial<Settings>) => Promise<void>;
+  updateSettings: (settings: Partial<Settings>, password?: string) => Promise<void>;
 
   // Team actions
   fetchTeam: () => Promise<void>;

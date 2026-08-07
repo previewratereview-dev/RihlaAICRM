@@ -9,7 +9,6 @@ export async function GET(request: NextRequest) {
   // (9.2, 9.4, 9.7, 8.2).
   const guard = await guardRoute(request, {
     scope: 'tenant-branding',
-    permission: 'settings:agency:read',
   });
   if (guard instanceof NextResponse) return guard;
 

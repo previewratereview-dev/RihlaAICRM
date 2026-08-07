@@ -19,3 +19,25 @@ export const PIPELINE_STAGES: PipelineStage[] = [
   { id: 'booking_confirmed', label: 'Booking Confirmed', color: '#22C55E', count: 0, totalValue: 0 },
   { id: 'booking_lost', label: 'Booking Lost', color: '#EF4444', count: 0, totalValue: 0 },
 ];
+
+export type InquiryPriority = 'urgent' | 'high' | 'medium' | 'low';
+
+export type PipelineInquiryViewModel = {
+  id: string;
+  displayName: string;
+  destination: string | null;
+  stageId: string;
+  stageName: string;
+  priority: InquiryPriority;
+  expectedValue: number | null;
+  currency: string;
+  enteredStageAt: string | null;
+  timeInStageLabel: string;
+  assignedAgent: {
+    id: string;
+    name: string;
+    avatarUrl?: string;
+  } | null;
+  nextFollowUpAt: string | null;
+  lastActivityAt: string | null;
+};

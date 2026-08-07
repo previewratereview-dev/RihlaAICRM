@@ -12,6 +12,7 @@ interface LogContext {
   [key: string]: unknown;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function redact(val: unknown): unknown {
   if (typeof val !== 'string') return val;
   if (val.includes('@') && val.includes('.')) return '[REDACTED_EMAIL]';

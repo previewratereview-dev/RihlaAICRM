@@ -9,6 +9,7 @@ export function createUiSlice(set: SetState, get: GetState) {
   return {
     activeTab: 'dashboard' as string,
     sidebarExpanded: true,
+    density: 'comfortable' as 'comfortable' | 'compact',
     dataLoading: false,
     typingState: {} as Record<string, boolean>,
     globalSearchQuery: '',
@@ -38,6 +39,12 @@ export function createUiSlice(set: SetState, get: GetState) {
 
     setActiveTab: (tab: string) => set({ activeTab: tab }),
     toggleSidebar: () => set((state) => ({ sidebarExpanded: !state.sidebarExpanded })),
+    setDensity: (density: 'comfortable' | 'compact') => {
+      set({ density });
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('crm-density', density);
+      }
+    },
     setGlobalSearchQuery: (query: string) => set({ globalSearchQuery: query }),
     setImpersonateTenant: (tenantId: string | null, tenantName?: string) => {
       if (impersonationTimer) {

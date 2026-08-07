@@ -3,6 +3,7 @@
 import React, { useMemo, useState } from 'react';
 import { useCRMStore } from '@/hooks/use-crm-store';
 import { ScrollText, Search, Download } from 'lucide-react';
+import { EmptyState } from '@/components/ui/empty-state';
 
 export function SuperAdminAuditView() {
   const auditLogs = useCRMStore((s) => s.auditLogs);
@@ -119,7 +120,11 @@ export function SuperAdminAuditView() {
               </div>
             ))}
             {filtered.length === 0 && (
-              <p className="p-8 text-center text-muted-foreground">No audit events match your filters.</p>
+              <EmptyState
+                title="No Audit Events"
+                description="No audit events match your current filters."
+                icon="search"
+              />
             )}
           </div>
         </div>

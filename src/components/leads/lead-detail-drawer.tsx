@@ -53,6 +53,7 @@ export function LeadDetailDrawer({
   const settings = useCRMStore((s) => s.settings);
   const [newNoteText, setNewNoteText] = useState('');
   const [sendingEmail, setSendingEmail] = useState(false);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [emailSent, setEmailSent] = useState(false);
 
   const startConversation = useCRMStore((s) => s.startConversation);
@@ -445,7 +446,7 @@ export function LeadDetailDrawer({
                           onDeleteNote(lead.id, note.id);
                         }
                       }}
-                      className="text-muted-foreground hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+                      className="text-muted-foreground hover:text-red-600 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity cursor-pointer focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:outline-none rounded-sm"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>

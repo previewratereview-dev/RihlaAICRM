@@ -378,22 +378,24 @@ export function TasksView() {
                           {!isCompleted && (task.priority === 'high' || task.priority === 'urgent') && (
                             <AlertCircle className="h-4 w-4 text-red-500 animate-pulse" />
                           )}
-                          <button
-                            type="button"
-                            onClick={() => openEditTaskModal(task)}
-                            className="p-1.5 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 opacity-0 group-hover:opacity-100 transition-all"
-                            aria-label="Edit task"
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleDelete(task.id, task.title)}
-                            className="p-1.5 rounded-lg text-muted-foreground hover:text-red-600 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-all"
-                            aria-label="Delete task"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
+                          <div className="flex items-center gap-1 opacity-100 md:opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                            <button
+                              type="button"
+                              onClick={() => openEditTaskModal(task)}
+                              className="p-1.5 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
+                              aria-label="Edit task"
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDelete(task.id, task.title)}
+                              className="p-1.5 rounded-lg text-muted-foreground hover:text-red-600 hover:bg-red-50 transition-all focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:outline-none"
+                              aria-label="Delete task"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </div>
                         </div>
                       </div>
                     </div>

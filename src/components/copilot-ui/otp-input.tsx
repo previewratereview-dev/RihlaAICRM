@@ -15,6 +15,7 @@ export function OtpInput({
   email,
   password,
   token,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   agencyName,
 }: {
   email: string;

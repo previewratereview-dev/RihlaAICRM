@@ -157,6 +157,63 @@ export function PerformanceView() {
             </div>
           )}
         </div>
+        <div className="rounded-2xl bg-card/80 border border-border/60 shadow-sm overflow-hidden mt-6 min-w-0">
+          <div className="p-6 border-b border-border/40">
+            <h3 className="text-base font-bold text-foreground font-heading">Audit Log</h3>
+            <p className="text-xs text-muted-foreground mt-1">
+              Recent security and system events.
+            </p>
+          </div>
+          <div className="overflow-x-auto w-full">
+            <table className="w-full text-sm text-left">
+              <thead className="bg-muted/50 text-muted-foreground font-semibold border-b border-border/50">
+                <tr>
+                  <th className="px-6 py-3 font-medium">Date</th>
+                  <th className="px-6 py-3 font-medium">User</th>
+                  <th className="px-6 py-3 font-medium">Action</th>
+                  <th className="px-6 py-3 font-medium">IP Address</th>
+                  <th className="px-6 py-3 font-medium">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/50">
+                {auditLogs.length > 0 ? (
+                  auditLogs.slice(0, 100).map((log) => (
+                    <tr key={log.id} className="hover:bg-muted/20">
+                      <td className="px-6 py-3 whitespace-nowrap">
+                        {new Date(log.createdAt).toLocaleString()}
+                      </td>
+                      <td className="px-6 py-3">
+                        <div className="font-medium text-foreground">{log.userName}</div>
+                        <div className="text-[10px] text-muted-foreground uppercase">{log.userRole.replace('_', ' ')}</div>
+                      </td>
+                      <td className="px-6 py-3">
+                        <div className="font-medium">{log.action.replace(/_/g, ' ')}</div>
+                        <div className="text-xs text-muted-foreground truncate max-w-[300px]" title={log.details}>
+                          {log.details}
+                        </div>
+                      </td>
+                      <td className="px-6 py-3 font-mono text-xs text-muted-foreground whitespace-nowrap">
+                        —
+                      </td>
+                      <td className="px-6 py-3 pr-8">
+                        <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2 py-1 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+                          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
+                          Success
+                        </span>
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={5} className="p-8 text-center text-sm text-muted-foreground">
+                      No activity recorded in the current timeframe.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
     </div>
   );

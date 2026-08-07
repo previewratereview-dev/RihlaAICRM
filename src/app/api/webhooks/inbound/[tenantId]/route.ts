@@ -11,7 +11,6 @@ export async function POST(
     const { tenantId } = await params;
     const body = await request.json();
 
-    // Use admin client to insert the lead since webhooks don't have user session
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
     const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
     
@@ -21,7 +20,6 @@ export async function POST(
 
     const adminDb = createClient(supabaseUrl, supabaseServiceKey);
     
-    // Ensure tenant exists (optional but good practice)
     const { data: tenant } = await adminDb
       .from('tenants')
       .select('id')
@@ -32,30 +30,44 @@ export async function POST(
       return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
     }
 
-    // Map payload to Lead structure
+    // Check Server-Side Runtime Write Freeze Status
+    const { data: freezeActive } = await adminDb.rpc('is_write_freeze_active');
+    if (freezeActive) {
+      // Durable Event Queue: Persist inbound event for processing post-freeze
+      await adminDb.from('inbound_event_queue').insert({
+        tenant_id: tenantId,
+        event_type: 'form_webhook',
+        payload: body,
+        status: 'pending',
+      });
+      // Return HTTP 202 Accepted to provider with queue confirmation
+      return NextResponse.json({ success: true, queued: true, message: 'Inbound event accepted and queued during database maintenance' }, { status: 202 });
+    }
+
     const now = new Date().toISOString();
     const leadId = `lead-${generateId()}`;
     
-    const leadData = {
-      id: leadId,
-      tenant_id: tenantId,
+    const payload = {
       full_name: body.fullName || body.name || 'Unknown Lead',
       email: body.email || null,
       phone: body.phone || (body.whatsapp ? body.whatsapp : null),
-      business_name: body.businessName || body.company || null,
       destination: body.destination || null,
       lead_source: body.leadSource || body.source || 'inbound_webhook',
       status: 'new',
-      created_at: now,
-      updated_at: now,
-      ai_score: 0,
+      external_source: 'webhook:form',
+      external_event_id: body.submissionId || body.eventId || `evt-${Date.now()}`,
     };
 
-    const { error } = await adminDb.from('leads').insert(leadData);
+    // Invoke Stage C0 Dual-Write RPC
+    const { error } = await adminDb.rpc('sync_lead_service_role', {
+      p_tenant_id: tenantId,
+      p_lead_id: leadId,
+      p_payload: payload,
+    });
 
     if (error) {
-      console.error('[Inbound Webhook] Database error', error);
-      return NextResponse.json({ error: 'Failed to create lead' }, { status: 500 });
+      console.error('[Inbound Webhook] RPC error', error);
+      return NextResponse.json({ error: 'Failed to process lead dual-write' }, { status: 500 });
     }
 
     // Trigger Autonomous AI Workflow

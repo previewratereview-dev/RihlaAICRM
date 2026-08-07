@@ -179,7 +179,21 @@ create table if not exists public.messages (
   created_at timestamptz not null default now()
 );
 
--- 1.6 Activities
+-- 1.6A Quotes & Itineraries (RAG drafts)
+create table if not exists public.quotes_itineraries (
+  id text primary key,
+  lead_id text references public.leads(id) on delete cascade,
+  title text not null,
+  type text not null default 'quote', -- 'quote', 'itinerary'
+  content jsonb not null default '{}'::jsonb,
+  status text not null default 'draft', -- 'draft', 'pending_admin', 'approved', 'sent'
+  created_by uuid references public.profiles(id) on delete set null,
+  tenant_id text not null default 'global' references public.tenants(id) on delete restrict,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+-- 1.7 Activities
 create table if not exists public.activities (
   id text primary key,
   lead_id text references public.leads(id) on delete cascade,
@@ -221,6 +235,17 @@ create table if not exists public.settings (
   sms_automation boolean not null default false,
   ai_budgets jsonb not null default '{}'::jsonb,
   daily_target_score integer default 50,
+  
+  -- Integrations (BYOP)
+  meta_settings jsonb,
+  twilio_settings jsonb,
+  smtp_settings jsonb,
+  resend_api_key text,
+  
+  -- Admin Escalation Preferences
+  admin_notification_phone text,
+  admin_notification_email text,
+  
   updated_at timestamptz not null default now()
 );
 
@@ -501,6 +526,8 @@ create trigger update_settings_updated_at before update on public.settings
   for each row execute function public.update_updated_at_column();
 create trigger update_knowledge_documents_updated_at before update on public.knowledge_documents
   for each row execute function public.update_updated_at_column();
+create trigger update_quotes_itineraries_updated_at before update on public.quotes_itineraries
+  for each row execute function public.update_updated_at_column();
 
 -- ====================================================================
 -- 4. Row Level Security (RLS)
@@ -522,6 +549,7 @@ alter table public.platform_settings enable row level security;
 alter table public.faq_entries enable row level security;
 alter table public.knowledge_documents enable row level security;
 alter table public.subscriptions enable row level security;
+alter table public.quotes_itineraries enable row level security;
 
 -- --- Tenants ---
 drop policy if exists "Allow authenticated users to read tenants" on public.tenants;
@@ -606,6 +634,11 @@ create policy "Tenant isolation on activities" on public.activities
 -- --- Notes ---
 drop policy if exists "Tenant isolation on notes" on public.notes;
 create policy "Tenant isolation on notes" on public.notes
+  for all using (tenant_id = public.get_user_tenant_id());
+
+-- --- Quotes & Itineraries ---
+drop policy if exists "Tenant isolation on quotes_itineraries" on public.quotes_itineraries;
+create policy "Tenant isolation on quotes_itineraries" on public.quotes_itineraries
   for all using (tenant_id = public.get_user_tenant_id());
 
 -- --- Settings ---

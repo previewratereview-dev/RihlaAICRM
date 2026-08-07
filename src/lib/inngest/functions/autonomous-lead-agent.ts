@@ -35,8 +35,8 @@ export const processNewLead = inngest.createFunction(
 
       const leadContext = `Lead: ${lead.full_name}, Destination: ${lead.destination || 'Unknown'}, Source: ${lead.lead_source}`;
       
-      // Generate AI reply/itinerary using the multi-provider BYOK logic built into executeAIRequest
-      const prompt = `Write a personalized welcome email and a brief 3-day sample itinerary for this travel lead. Make it highly engaging and professional.\n\n${leadContext}`;
+      // Generate AI reply using the multi-provider BYOK logic built into executeAIRequest
+      const prompt = `Write a personalized welcome email for this travel lead. Acknowledge their destination and let them know a travel specialist will be in touch shortly to help plan their trip. Make it highly engaging, warm, and professional. Keep it concise. Do NOT include an itinerary. Sign off as "The Travel Specialist Team". Do not include any placeholder brackets like [Your Name].\nInclude a simple, non-promotional Subject line at the top (e.g., "Subject: Following up on your trip to ${lead.destination || 'your destination'}"). Avoid all marketing buzzwords in the subject.\n\n${leadContext}`;
       
       const { content, blocked, blockReason } = await executeAIRequest({
         supabase: adminDb,

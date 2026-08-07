@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { faqHome } from "@/lib/marketing/content";
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { Button } from "@/components/marketing/ui/button";
 import { Reveal } from "@/components/marketing/sections/reveal";
 import { cn } from "@/lib/utils";

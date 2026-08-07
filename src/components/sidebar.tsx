@@ -4,6 +4,7 @@ import React from 'react';
 import { useCRMStore } from '@/hooks/use-crm-store';
 import { cn, getInitials } from '@/lib/utils';
 import { motion } from 'framer-motion';
+import { useRouter } from 'next/navigation';
 import {
   LayoutDashboard,
   Users2,
@@ -22,40 +23,42 @@ import {
   Award,
   ScrollText,
   Cpu,
-  Globe,
+  ChevronDown,
 } from 'lucide-react';
 
 interface SidebarItem {
   id: string;
   label: string;
   icon: React.ComponentType<{ className?: string }>;
+  section?: 'Sales' | 'Operations' | 'Communication' | 'Administration' | 'Platform';
 }
 
 const sidebarItems: SidebarItem[] = [
-  { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { id: 'leads', label: 'Travelers & Bookings', icon: Users2 },
-  { id: 'pipeline', label: 'Booking Pipeline', icon: Columns4 },
-  { id: 'clients', label: 'Past Travelers', icon: Building2 },
-  { id: 'conversations', label: 'Conversations', icon: MessageSquareCode },
-  { id: 'calendar', label: 'Calendar & Meets', icon: CalendarDays },
-  { id: 'tasks', label: 'Tasks & Reminders', icon: ListTodo },
-  { id: 'team', label: 'Team Management', icon: Users },
-  { id: 'performance', label: 'Team Performance', icon: Award },
-  { id: 'analytics', label: 'Reports & Analytics', icon: TrendingUp },
-  { id: 'settings', label: 'System Settings', icon: Settings },
+  { id: 'dashboard', label: 'Overview', icon: LayoutDashboard },
+  { id: 'inquiries', label: 'Inquiries', icon: Users2, section: 'Sales' },
+  { id: 'pipeline', label: 'Booking Pipeline', icon: Columns4, section: 'Sales' },
+  { id: 'bookings', label: 'Bookings', icon: Building2, section: 'Sales' },
+  { id: 'travelers', label: 'Travelers', icon: Users, section: 'Sales' },
+  { id: 'conversations', label: 'Conversations', icon: MessageSquareCode, section: 'Communication' },
+  { id: 'calendar', label: 'Calendar & Meets', icon: CalendarDays, section: 'Operations' },
+  { id: 'tasks', label: 'Tasks & Reminders', icon: ListTodo, section: 'Operations' },
+  { id: 'performance', label: 'Team Performance', icon: Award, section: 'Administration' },
+  { id: 'analytics', label: 'Reports & Analytics', icon: TrendingUp, section: 'Administration' },
+  { id: 'settings', label: 'System Settings', icon: Settings, section: 'Administration' },
 ];
 
 const superAdminItems: SidebarItem[] = [
   { id: 'sa_dashboard', label: 'Platform Overview', icon: LayoutDashboard },
-  { id: 'sa_tenants', label: 'Agency Management', icon: Building2 },
-  { id: 'sa_users', label: 'Global Users', icon: Users },
-  { id: 'sa_analytics', label: 'Global Analytics', icon: TrendingUp },
-  { id: 'sa_ai', label: 'AI Governance', icon: Cpu },
-  { id: 'sa_audit', label: 'Audit Log', icon: ScrollText },
-  { id: 'sa_settings', label: 'Platform Settings', icon: Settings },
+  { id: 'sa_tenants', label: 'Agency Management', icon: Building2, section: 'Platform' },
+  { id: 'sa_users', label: 'Global Users', icon: Users, section: 'Platform' },
+  { id: 'sa_analytics', label: 'Global Analytics', icon: TrendingUp, section: 'Platform' },
+  { id: 'sa_ai', label: 'AI Governance', icon: Cpu, section: 'Platform' },
+  { id: 'sa_audit', label: 'Audit Log', icon: ScrollText, section: 'Platform' },
+  { id: 'sa_settings', label: 'Platform Settings', icon: Settings, section: 'Platform' },
 ];
 
 export function Sidebar() {
+  const router = useRouter();
   const activeTab = useCRMStore((state) => state.activeTab);
   const setActiveTab = useCRMStore((state) => state.setActiveTab);
   const sidebarExpanded = useCRMStore((state) => state.sidebarExpanded);
@@ -67,6 +70,12 @@ export function Sidebar() {
   const dbMode = useCRMStore((state) => state.dbMode);
   const tenantFeatures = useCRMStore((state) => state.tenantFeatures);
   const tenantBranding = useCRMStore((state) => state.tenantBranding);
+
+  const [collapsedSections, setCollapsedSections] = React.useState<Record<string, boolean>>({});
+
+  const toggleSection = (section: string) => {
+    setCollapsedSections(prev => ({ ...prev, [section]: !prev[section] }));
+  };
 
   const totalUnreadMessages = conversations.reduce((acc, c) => acc + c.unreadCount, 0);
   const pendingTasksCount = tasks.filter((t) => t.status === 'pending').length;
@@ -104,6 +113,13 @@ export function Sidebar() {
         return true;
       });
 
+  // Group items by section
+  const itemsBySection = filteredSidebarItems.reduce((acc, item) => {
+    const section = item.section || 'default';
+    if (!acc[section]) acc[section] = [];
+    acc[section].push(item);
+    return acc;
+  }, {} as Record<string, SidebarItem[]>);
 
   const getRoleLabel = (role: string) => {
     if (role === 'super_admin') return 'Super Admin';
@@ -116,13 +132,74 @@ export function Sidebar() {
     return 'User';
   };
 
+  const renderSidebarItem = (item: SidebarItem) => {
+    const Icon = item.icon;
+    const isActive = activeTab === item.id;
+
+    let badgeCount = 0;
+    if (item.id === 'conversations') badgeCount = totalUnreadMessages;
+    if (item.id === 'tasks') badgeCount = pendingTasksCount;
+
+    return (
+      <button
+        key={item.id}
+        onClick={() => {
+          setActiveTab(item.id);
+          router.push(`/app/${item.id}`);
+        }}
+        aria-label={item.label}
+        aria-current={isActive ? 'page' : undefined}
+        className={cn(
+          "w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm transition-all duration-200 group relative cursor-pointer",
+          isActive
+            ? "bg-sidebar-accent text-foreground font-semibold"
+            : "text-muted-foreground hover:text-foreground hover:bg-sidebar-accent/50"
+        )}
+      >
+        <div className="flex items-center gap-3 min-w-0">
+          <Icon className={cn(
+            "h-4 w-4 shrink-0 transition-all duration-200",
+            isActive ? "text-primary" : "text-muted-foreground group-hover:text-foreground"
+          )} />
+          {sidebarExpanded && (
+            <span className="truncate text-left">
+              {item.label}
+            </span>
+          )}
+        </div>
+
+        {/* Notification Badges */}
+        {badgeCount > 0 && (
+          <div className={cn(
+            "flex items-center justify-center text-[10px] font-bold rounded-full font-mono",
+            isActive
+              ? "bg-primary text-primary-foreground shrink-0 px-1.5 py-0.5 min-w-[18px] h-4 shadow-sm"
+              : "bg-primary/20 text-primary shrink-0 px-1.5 py-0.5 min-w-[18px] h-4",
+            !sidebarExpanded && "absolute top-1 right-1 border border-sidebar"
+          )}>
+            {badgeCount}
+          </div>
+        )}
+
+        {/* Subtle Active Indicator instead of full pill */}
+        {isActive && (
+          <motion.div
+            layoutId="activeSidebarIndicator"
+            className="absolute left-0 w-[3px] h-[60%] bg-primary rounded-r-md top-[20%]"
+            transition={{ type: "spring", stiffness: 380, damping: 32 }}
+          />
+        )}
+      </button>
+    );
+  };
+
   return (
     <motion.aside
       animate={{ width: sidebarExpanded ? 260 : 76 }}
       transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
       className={cn(
-        "relative flex flex-col h-screen shrink-0 bg-gradient-to-b from-sidebar to-sidebar/95 border-r border-sidebar-border/60",
-        "z-20 select-none backdrop-blur-sm"
+        "relative flex flex-col h-screen shrink-0 bg-sidebar border-r border-sidebar-border/60",
+        "z-20 select-none"
       )}
     >
       {/* Brand Header */}
@@ -148,66 +225,35 @@ export function Sidebar() {
       </div>
 
       {/* Navigation Items */}
-      <nav className="flex-1 space-y-1.5 px-3 py-4 overflow-y-auto scrollbar-thin" aria-label="Main navigation">
-        {filteredSidebarItems.map((item) => {
-          const Icon = item.icon;
-          const isActive = activeTab === item.id;
+      <nav className="flex-1 space-y-4 px-3 py-4 overflow-y-auto scrollbar-thin" aria-label="Main navigation">
+        {/* Default / Unsectioned Items */}
+        {itemsBySection['default'] && (
+          <div className="space-y-1">
+            {itemsBySection['default'].map(renderSidebarItem)}
+          </div>
+        )}
 
-          let badgeCount = 0;
-          if (item.id === 'conversations') badgeCount = totalUnreadMessages;
-          if (item.id === 'tasks') badgeCount = pendingTasksCount;
-
+        {/* Render Grouped Sections */}
+        {Object.entries(itemsBySection).map(([section, items]) => {
+          if (section === 'default') return null;
+          const isCollapsed = collapsedSections[section];
           return (
-            <button
-              key={item.id}
-              onClick={() => setActiveTab(item.id)}
-              aria-label={item.label}
-              aria-current={isActive ? 'page' : undefined}
-              className={cn(
-                "w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm transition-all duration-200 group relative cursor-pointer",
-                isActive
-                  ? "bg-primary text-primary-foreground shadow-md shadow-primary/20 font-semibold"
-                  : "text-muted-foreground hover:text-foreground hover:bg-sidebar-accent/50"
+            <div key={section} className="flex flex-col gap-1">
+              {sidebarExpanded && (
+                <button 
+                  onClick={() => toggleSection(section)}
+                  className="flex items-center justify-between px-3 py-1.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider hover:text-foreground transition-colors group cursor-pointer"
+                >
+                  <span>{section}</span>
+                  <ChevronDown className={cn("h-3 w-3 transition-transform", isCollapsed && "-rotate-90")} />
+                </button>
               )}
-            >
-              <div className="flex items-center gap-3 min-w-0">
-                <Icon className={cn(
-                  "h-4 w-4 shrink-0 transition-all duration-200",
-                  isActive ? "text-primary-foreground" : "text-muted-foreground group-hover:text-foreground"
-                )} />
-                {sidebarExpanded && (
-                  <motion.span
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    className="truncate text-left"
-                  >
-                    {item.label}
-                  </motion.span>
-                )}
-              </div>
-
-              {/* Notification Badges */}
-              {badgeCount > 0 && (
-                <div className={cn(
-                  "flex items-center justify-center text-[9px] font-bold rounded-full font-mono",
-                  isActive
-                    ? "bg-primary-foreground text-primary shrink-0 px-1.5 py-0.5 min-w-[18px] h-4 shadow-sm"
-                    : "bg-primary/20 text-primary shrink-0 px-1.5 py-0.5 min-w-[18px] h-4",
-                  !sidebarExpanded && "absolute top-1 right-1 border-2 border-sidebar"
-                )}>
-                  {badgeCount}
+              {(!isCollapsed || !sidebarExpanded) && (
+                <div className="space-y-1">
+                  {items.map(renderSidebarItem)}
                 </div>
               )}
-
-              {/* Active Tab Indicator */}
-              {isActive && (
-                <motion.div
-                  layoutId="activeGlowBar"
-                  className="absolute left-0 w-[3px] h-[60%] bg-primary-foreground rounded-r-md top-[20%] shadow-lg"
-                  transition={{ type: "spring", stiffness: 380, damping: 32 }}
-                />
-              )}
-            </button>
+            </div>
           );
         })}
       </nav>

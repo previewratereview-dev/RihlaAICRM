@@ -51,6 +51,19 @@ export function createAuthSlice(set: SetState, get: GetState) {
       const result = await adapter.login(email, password);
       const user = (result as { user?: User }).user || adapter.user;
       if (result.success && user) {
+        try {
+          const statusRes = await fetch('/api/platform/status');
+          if (statusRes.ok) {
+            const status = await statusRes.json();
+            if (status.maintenanceMode && user.role !== 'super_admin') {
+              await adapter.logout();
+              return { success: false, error: 'Platform is in maintenance mode. Only super admins can sign in.' };
+            }
+          }
+        } catch (e) {
+          logger.warn('Failed to check maintenance mode during login', { error: String(e) });
+        }
+
         const defaultTab = user.role === 'super_admin' ? 'sa_dashboard' : 'dashboard';
         set({ currentUser: user, tenantId: user.tenantId, activeTab: defaultTab });
         await get().syncData();
@@ -190,10 +203,11 @@ export function createAuthSlice(set: SetState, get: GetState) {
         details,
         createdAt: now
       };
+      const currentLogs = get().auditLogs;
+      set({ auditLogs: [newLog, ...currentLogs] });
+
       try {
         await CRMDatabaseService.insertAuditLog(newLog);
-        const currentLogs = get().auditLogs;
-        set({ auditLogs: [newLog, ...currentLogs] });
       } catch (e) {
         logger.warn('Failed to insert audit log', { error: String(e) });
       }

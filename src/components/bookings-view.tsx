@@ -41,7 +41,7 @@ const CSV_FIELD_MAP = {
   sourceOfDiscovery: ['discovery', 'sourceofdiscovery', 'how_found', 'referral'],
 };
 
-export function LeadsView() {
+export function BookingsView() {
   const currentUser = useCRMStore((s) => s.currentUser);
   const leads = useCRMStore((s) => s.leads);
   const notes = useCRMStore((s) => s.notes);
@@ -94,6 +94,9 @@ export function LeadsView() {
 
   const filteredLeads = useMemo(() => {
     return leads.filter((l) => {
+      const isBooking = ['booking_confirmed', 'closed_won', 'booking_lost', 'closed_lost'].includes(l.status);
+      if (!isBooking) return false;
+
       const matchesSearch =
         l.fullName.toLowerCase().includes(searchTerm.toLowerCase()) ||
         (l.businessName || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -410,6 +413,7 @@ export function LeadsView() {
           onPageChange={setCurrentPage}
           onPageSizeChange={handlePageSizeChange}
           bulkStatusLoading={bulkStatusLoading}
+          viewType="bookings"
         />
       </div>
 
@@ -512,7 +516,7 @@ export function LeadsView() {
                 <button
                   onClick={handleConfirmCsvImport}
                   disabled={!!importProgress}
-                  className="px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="px-4 py-2 rounded-lg border border-primary/40 text-primary text-sm font-semibold hover:bg-primary/5 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {importProgress ? `Importing ${importProgress.current}/${importProgress.total}...` : `Import ${csvPreview.rows.length}+ leads`}
                 </button>

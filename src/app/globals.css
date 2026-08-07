@@ -1,6 +1,7 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
+@plugin "@tailwindcss/typography";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -55,7 +56,7 @@
   --card-foreground: oklch(0.15 0 0);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.15 0 0);
-  --primary: oklch(0.62 0.19 25);
+  --primary: oklch(0.55 0.12 255);
   --primary-foreground: oklch(1 0 0);
   --secondary: oklch(0.96 0 0);
   --secondary-foreground: oklch(0.2 0 0);
@@ -67,7 +68,7 @@
   --border: oklch(0.9 0 0);
   --input: oklch(0.9 0 0);
   --ring: oklch(0.7 0 0);
-  --chart-1: oklch(0.65 0.19 25);
+  --chart-1: oklch(0.65 0.12 255);
   --chart-2: oklch(0.55 0.15 220);
   --chart-3: oklch(0.45 0.12 180);
   --chart-4: oklch(0.35 0.1 150);
@@ -75,12 +76,36 @@
   --radius: 0.75rem;
   --sidebar: oklch(0.99 0 0);
   --sidebar-foreground: oklch(0.15 0 0);
-  --sidebar-primary: oklch(0.62 0.19 25);
+  --sidebar-primary: oklch(0.55 0.12 255);
   --sidebar-primary-foreground: oklch(1 0 0);
   --sidebar-accent: oklch(0.96 0 0);
   --sidebar-accent-foreground: oklch(0.2 0 0);
   --sidebar-border: oklch(0.9 0 0);
   --sidebar-ring: oklch(0.7 0 0);
+
+  /* Density & Layout Tokens */
+  --page-padding-x: 24px;
+  --page-padding-y: 20px;
+  --page-header-gap: 16px;
+  --section-gap: 24px;
+  --content-gap: 16px;
+  --dense-gap: 8px;
+  --surface-padding: 16px;
+  --surface-padding-compact: 12px;
+  --control-height: 38px;
+  --control-height-compact: 34px;
+  --table-row-height: 44px;
+  --table-row-height-compact: 38px;
+  --settings-row-height: 50px;
+  --radius-surface: 12px;
+  --radius-control: 8px;
+
+  /* Typography Tokens */
+  --text-page-title: 24px;
+  --text-section-title: 16px;
+  --text-group-title: 14px;
+  --text-body: 13px;
+  --text-metadata: 12px;
 }
 
 .dark {
@@ -90,7 +115,7 @@
   --card-foreground: oklch(0.98 0 0);
   --popover: oklch(0.17 0 0);
   --popover-foreground: oklch(0.98 0 0);
-  --primary: oklch(0.65 0.19 25);
+  --primary: oklch(0.65 0.12 255);
   --primary-foreground: oklch(0.98 0 0);
   --secondary: oklch(0.22 0 0);
   --secondary-foreground: oklch(0.98 0 0);
@@ -102,14 +127,14 @@
   --border: oklch(1 0 0 / 12%);
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.5 0 0);
-  --chart-1: oklch(0.65 0.19 25);
+  --chart-1: oklch(0.65 0.12 255);
   --chart-2: oklch(0.55 0.15 220);
   --chart-3: oklch(0.45 0.12 180);
   --chart-4: oklch(0.35 0.1 150);
   --chart-5: oklch(0.25 0.08 120);
   --sidebar: oklch(0.17 0 0);
   --sidebar-foreground: oklch(0.98 0 0);
-  --sidebar-primary: oklch(0.65 0.19 25);
+  --sidebar-primary: oklch(0.65 0.12 255);
   --sidebar-primary-foreground: oklch(0.98 0 0);
   --sidebar-accent: oklch(0.22 0 0);
   --sidebar-accent-foreground: oklch(0.98 0 0);
@@ -125,7 +150,7 @@
   --card-foreground: oklch(0.15 0 0);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.15 0 0);
-  --primary: oklch(0.62 0.19 25);
+  --primary: oklch(0.55 0.12 255);
   --primary-foreground: oklch(1 0 0);
   --secondary: oklch(0.96 0 0);
   --secondary-foreground: oklch(0.2 0 0);
@@ -137,14 +162,14 @@
   --border: oklch(0.9 0 0);
   --input: oklch(0.9 0 0);
   --ring: oklch(0.7 0 0);
-  --chart-1: oklch(0.65 0.19 25);
+  --chart-1: oklch(0.65 0.12 255);
   --chart-2: oklch(0.55 0.15 220);
   --chart-3: oklch(0.45 0.12 180);
   --chart-4: oklch(0.35 0.1 150);
   --chart-5: oklch(0.25 0.08 120);
   --sidebar: oklch(0.99 0 0);
   --sidebar-foreground: oklch(0.15 0 0);
-  --sidebar-primary: oklch(0.62 0.19 25);
+  --sidebar-primary: oklch(0.55 0.12 255);
   --sidebar-primary-foreground: oklch(1 0 0);
   --sidebar-accent: oklch(0.96 0 0);
   --sidebar-accent-foreground: oklch(0.2 0 0);
@@ -426,4 +451,20 @@
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+[data-density="compact"] {
+  --page-padding-x: 16px;
+  --page-padding-y: 12px;
+  --page-header-gap: 12px;
+  --section-gap: 16px;
+  --content-gap: 12px;
+  --dense-gap: 6px;
+  --surface-padding: 12px;
+  --surface-padding-compact: 8px;
+  --control-height: 32px;
+  --control-height-compact: 28px;
+  --table-row-height: 38px;
+  --table-row-height-compact: 32px;
+  --settings-row-height: 42px;
 }

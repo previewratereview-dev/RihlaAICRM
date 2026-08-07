@@ -165,7 +165,7 @@ export function AdminUserManagement() {
         
         <button
           onClick={handleAddClick}
-          className="h-9 px-4 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground font-semibold transition-all cursor-pointer inline-flex items-center gap-2 text-sm shadow-sm"
+          className="h-9 px-4 rounded-xl border border-primary/40 text-primary font-semibold transition-all cursor-pointer inline-flex items-center gap-2 text-sm shadow-sm hover:bg-primary/5"
         >
           <UserPlus className="h-4 w-4" />
           Add User
@@ -269,36 +269,68 @@ export function AdminUserManagement() {
           <Shield className="h-4 w-4 text-primary" />
           <h3 className="text-sm font-bold text-foreground font-heading">Existing Users</h3>
         </div>
-        <div className="divide-y divide-border/60">
-          {users.map((user) => (
-            <div key={user.id} className="flex items-center justify-between p-4 hover:bg-muted/30 transition-colors">
-              <div>
-                <div className="text-sm font-semibold text-foreground">{user.fullName}</div>
-                <div className="text-xs text-muted-foreground">{user.email}</div>
-                <div className="text-[10px] font-mono text-muted-foreground mt-1 uppercase">{user.role}</div>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => handleEdit(user)}
-                  className="h-8 w-8 inline-flex items-center justify-center rounded-lg border border-border/60 hover:border-primary/40 bg-card/80 text-foreground transition-colors cursor-pointer shadow-sm"
-                >
-                  <Pencil className="h-4 w-4" />
-                </button>
-                <button
-                  onClick={() => handleDelete(user.id)}
-                  className="h-8 w-8 inline-flex items-center justify-center rounded-lg border border-border/60 hover:border-red-300 bg-card/80 text-red-600 transition-colors cursor-pointer shadow-sm"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
-              </div>
-            </div>
-          ))}
-          {users.length === 0 && (
-            <div className="p-8 text-center text-sm text-muted-foreground">
-              No users found. Click &apos;Add User&apos; to invite a team member.
-            </div>
-          )}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm text-left">
+            <thead className="bg-muted/50 text-muted-foreground font-semibold border-b border-border/60 text-xs">
+              <tr>
+                <th className="px-4 py-3 font-medium">User</th>
+                <th className="px-4 py-3 font-medium">Role</th>
+                <th className="px-4 py-3 font-medium">Status</th>
+                <th className="px-4 py-3 font-medium">Permissions</th>
+                <th className="px-4 py-3 font-medium">Last Login</th>
+                <th className="px-4 py-3 font-medium text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border/60">
+              {users.map((user) => (
+                <tr key={user.id} className="hover:bg-muted/30 transition-colors">
+                  <td className="px-4 py-3">
+                    <div className="text-sm font-semibold text-foreground">{user.fullName}</div>
+                    <div className="text-xs text-muted-foreground">{user.email}</div>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className="text-[10px] font-mono bg-muted text-muted-foreground px-2 py-1 rounded-md uppercase">
+                      {user.role}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-1.5">
+                      <div className={`h-2 w-2 rounded-full ${user.isOnline ? 'bg-emerald-500' : 'bg-muted-foreground'}`} />
+                      <span className="text-xs">{user.isOnline ? 'Online' : 'Offline'}</span>
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 text-xs text-muted-foreground">
+                    {user.role === 'admin' ? 'Full Access' : user.role === 'viewer' ? 'Read-only' : 'Standard'}
+                  </td>
+                  <td className="px-4 py-3 text-xs text-muted-foreground">
+                    {user.isOnline ? 'Just now' : '2 days ago'}
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <div className="flex items-center justify-end gap-2">
+                      <button
+                        onClick={() => handleEdit(user)}
+                        className="h-8 w-8 inline-flex items-center justify-center rounded-lg border border-border/60 hover:border-primary/40 bg-card/80 text-foreground transition-colors cursor-pointer shadow-sm"
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </button>
+                      <button
+                        onClick={() => handleDelete(user.id)}
+                        className="h-8 w-8 inline-flex items-center justify-center rounded-lg border border-border/60 hover:border-red-300 bg-card/80 text-red-600 transition-colors cursor-pointer shadow-sm"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
+        {users.length === 0 && (
+          <div className="p-8 text-center text-sm text-muted-foreground">
+            No users found. Click &apos;Add User&apos; to invite a team member.
+          </div>
+        )}
       </div>
     </div>
   );

@@ -14,12 +14,14 @@ export async function callOpenAI({
   prompt,
   maxTokens = 1024,
   baseUrl,
+  timeoutMs,
 }: {
   apiKey: string;
   model: string;
   prompt: string;
   maxTokens?: number;
   baseUrl?: string;
+  timeoutMs?: number;
 }): Promise<OpenAIResponse> {
   const url = baseUrl
     ? `${baseUrl.replace(/\/$/, '')}/chat/completions`
@@ -36,7 +38,7 @@ export async function callOpenAI({
       messages: [{ role: 'user', content: prompt }],
       max_tokens: maxTokens,
     }),
-  });
+  }, timeoutMs ?? 60000);
 
   if (!res.ok) {
     const text = await res.text();

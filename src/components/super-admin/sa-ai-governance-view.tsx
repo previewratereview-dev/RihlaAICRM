@@ -96,7 +96,7 @@ export function SuperAdminAIGovernanceView() {
           <div className="rounded-2xl bg-card/80 border border-border/60 p-6">
             <h3 className="font-bold mb-4">Spend by Agency</h3>
             <div className="h-56">
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
                 <BarChart data={byTenant}>
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
                   <XAxis dataKey="name" tick={{ fontSize: 10 }} />
@@ -110,7 +110,7 @@ export function SuperAdminAIGovernanceView() {
           <div className="rounded-2xl bg-card/80 border border-border/60 p-6">
             <h3 className="font-bold mb-4">Spend by Feature</h3>
             <div className="h-56">
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
                 <BarChart data={byFeature}>
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
                   <XAxis dataKey="feature" tick={{ fontSize: 10 }} />

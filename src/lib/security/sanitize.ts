@@ -8,10 +8,12 @@ const ENTITY_MAP: Record<string, string> = {
   '`': '&#96;',
 };
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const REVERSE_ENTITY_MAP: Record<string, string> = Object.fromEntries(
   Object.entries(ENTITY_MAP).map(([k, v]) => [v, k])
 );
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const ENTITY_REGEX = /(&amp;|&lt;|&gt;|&quot;|&#x27;|&#x2F;|&#96;|<[^>]*>)/g;
 
 /**

@@ -2,7 +2,7 @@
 
 import React, { useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Users, Mail, Shield, Search, Settings2 } from 'lucide-react';
+import { Users, Mail, Search, Settings2 } from 'lucide-react';
 import { useCRMStore } from '@/hooks/use-crm-store';
 import { AdminUserManagement } from '@/components/admin-user-management';
 import { getInitials } from '@/lib/utils';

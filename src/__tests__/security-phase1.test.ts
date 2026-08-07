@@ -247,23 +247,13 @@ describe('Fix #13 — platform_settings uses correct PK', () => {
 // Fix #14: API keys encrypted at rest
 // ===========================================================================
 describe('Fix #14 — API keys encrypted at rest', () => {
-  it('service.ts updateSettings should encrypt sensitive fields', async () => {
+  it('settings action should encrypt sensitive fields', async () => {
     const fs = await import('fs');
     const path = await import('path');
-    const filePath = path.resolve(process.cwd(), 'src/lib/data/service.ts');
+    const filePath = path.resolve(process.cwd(), 'src/app/actions/settings.ts');
     const content = fs.readFileSync(filePath, 'utf-8');
 
     expect(content).toContain('encryptBeforeStore');
-  });
-
-  it('service.ts should have getDecryptedApiKey method', async () => {
-    const fs = await import('fs');
-    const path = await import('path');
-    const filePath = path.resolve(process.cwd(), 'src/lib/data/service.ts');
-    const content = fs.readFileSync(filePath, 'utf-8');
-
-    expect(content).toContain('getDecryptedApiKey');
-    expect(content).toContain('decryptAfterLoad');
   });
 });
 

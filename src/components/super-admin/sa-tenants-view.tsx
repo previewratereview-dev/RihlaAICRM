@@ -3,6 +3,7 @@
 import React, { useMemo, useState } from 'react';
 import { useCRMStore } from '@/hooks/use-crm-store';
 import { Building2, Power, PowerOff, Plus, Search, Pencil, Users, TrendingUp, Cpu, MessageSquare, Eye, Trash2, Crown } from 'lucide-react';
+import { EmptyState } from '@/components/ui/empty-state';
 import { logger } from '@/lib/logger';
 import { CRMDatabaseService } from '@/lib/db-service';
 import type { TenantFeatureFlags } from '@/types';
@@ -114,7 +115,7 @@ function TenantModal({ title, onSave, onClose, name, setName, slug, setSlug, dom
         )}
         <div className="flex gap-2 pt-2">
           <button onClick={onClose} className="flex-1 h-10 rounded-xl border text-sm">Cancel</button>
-          <button onClick={onSave} disabled={saving} className="flex-1 h-10 rounded-xl bg-primary text-white text-sm font-semibold">
+          <button onClick={onSave} disabled={saving} className="flex-1 h-10 rounded-xl border border-primary/40 text-primary text-sm font-semibold hover:bg-primary/5 transition-colors disabled:opacity-50">
             {saving ? 'Saving...' : 'Save'}
           </button>
         </div>
@@ -307,7 +308,7 @@ export function SuperAdminTenantsView() {
           </div>
           <button
             onClick={() => { setShowCreate(true); setName(''); setSlug(''); setDomain(''); setAiBudget(100); setPlan('free'); setAdminEmail(''); setAdminPassword(''); }}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-semibold"
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-primary/40 text-primary text-sm font-semibold hover:bg-primary/5 transition-colors"
           >
             <Plus className="h-4 w-4" />
             New Agency
@@ -476,9 +477,12 @@ export function SuperAdminTenantsView() {
             </div>
           ))}
           {filtered.length === 0 && (
-            <div className="col-span-full py-12 text-center border border-dashed border-border rounded-xl">
-              <Building2 className="w-12 h-12 text-muted-foreground/30 mx-auto mb-3" />
-              <p className="text-muted-foreground">No agencies match your search.</p>
+            <div className="col-span-full">
+              <EmptyState
+                title="No Agencies Found"
+                description="No agencies match your search."
+                icon="search"
+              />
             </div>
           )}
         </div>

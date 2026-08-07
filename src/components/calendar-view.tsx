@@ -14,7 +14,10 @@ import {
   LayoutGrid,
   Rows3,
   Square,
+  MapPin,
+  List,
 } from 'lucide-react';
+import { EmptyState } from '@/components/ui/empty-state';
 import { useCRMStore } from '@/hooks/use-crm-store';
 import { formatDate } from '@/lib/utils';
 import type { Task } from '@/types';
@@ -310,7 +313,7 @@ export function CalendarView() {
             <button
               type="button"
               onClick={() => openNewEventModal()}
-              className="inline-flex items-center gap-2 h-9 px-4 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors shadow-md shadow-primary/20"
+              className="inline-flex items-center gap-2 h-9 px-4 rounded-xl border border-primary/40 text-primary text-sm font-semibold hover:bg-primary/5 transition-colors shadow-md shadow-primary/20"
             >
               <Plus className="h-4 w-4" />
               <span>New Event</span>
@@ -396,9 +399,12 @@ export function CalendarView() {
         </div>
 
         {meetings.length === 0 && (
-          <div className="p-8 rounded-2xl bg-card/80 border border-border/60 shadow-sm text-center shrink-0">
-            <CalendarDays className="h-10 w-10 text-muted-foreground/40 mx-auto mb-3" />
-            <p className="text-sm font-medium text-muted-foreground">No meetings scheduled yet.</p>
+          <div className="shrink-0 rounded-2xl border border-border/60 bg-card/80 shadow-sm overflow-hidden">
+            <EmptyState
+              title="No Meetings"
+              description="No meetings scheduled yet."
+              icon="inbox"
+            />
           </div>
         )}
       </div>
@@ -486,7 +492,7 @@ export function CalendarView() {
                       setSelectedMeeting(null);
                       setIsModalOpen(true);
                     }}
-                    className="h-10 px-4 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors shadow-md shadow-primary/20"
+                    className="h-10 px-4 rounded-xl border border-primary/40 text-primary text-sm font-semibold hover:bg-primary/5 transition-colors shadow-md shadow-primary/20"
                   >
                     Edit
                   </button>

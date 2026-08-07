@@ -62,7 +62,7 @@ export async function resolveTenantAIContext(
 
   const { data: settingsRow } = await adminDb
     .from('settings')
-    .select('openai_key, anthropic_key, ai_budgets, system_prompt, ai_base_url, ai_api_key, ai_model, ai_use_anthropic_format')
+    .select('openai_key, anthropic_key, ai_budgets, system_prompt, ai_base_url, ai_api_key, ai_model, ai_use_anthropic_format, meta_settings')
     .eq('tenant_id', tenantId)
     .maybeSingle();
 
@@ -74,6 +74,14 @@ export async function resolveTenantAIContext(
     openaiKey = decryptIfNeeded(settingsRow.openai_key);
     anthropicKey = decryptIfNeeded(settingsRow.anthropic_key);
     if (budgets?.defaultModel) defaultModel = budgets.defaultModel;
+
+    const metaSettings = (settingsRow.meta_settings as Record<string, unknown>) || {};
+    const usePlatformAi = metaSettings.usePlatformAi !== false; // defaults to true
+    
+    if (usePlatformAi && tenantId !== 'global') {
+      openaiKey = undefined;
+      anthropicKey = undefined;
+    }
   }
 
   // Read custom provider config from settings if global
@@ -317,6 +325,7 @@ export async function executeAIRequest({
       prompt: fullPrompt,
       tenantAISettings: aiSettings,
       currentSpend: { daily: 0, monthly: ctx.currentMonthlySpend },
+      timeoutMs: 120000,
     });
 
     // 4. Record usage in the durable shared store: one call + its cost

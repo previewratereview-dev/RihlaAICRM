@@ -47,23 +47,48 @@ export function AISpendDashboard() {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="p-5 rounded-2xl bg-white/80 border border-border/60 shadow-sm">
           <Wallet className="h-5 w-5 text-primary mb-3" />
-          <h3 className="text-2xl font-bold">${totalSpend.toFixed(2)}</h3>
-          <p className="text-sm text-muted-foreground mt-1">Estimated spend</p>
+          <div className="flex items-end justify-between">
+            <div>
+              <h3 className="text-2xl font-bold">${totalSpend.toFixed(2)}</h3>
+              <p className="text-sm text-muted-foreground mt-1">Estimated spend</p>
+            </div>
+            <div className="flex items-center text-xs font-medium text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded">
+              ▲ 12%
+            </div>
+          </div>
         </motion.div>
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className="p-5 rounded-2xl bg-white/80 border border-border/60 shadow-sm">
           <TrendingUp className="h-5 w-5 text-primary mb-3" />
-          <h3 className="text-2xl font-bold">{entries.length}</h3>
-          <p className="text-sm text-muted-foreground mt-1">Total AI calls</p>
+          <div className="flex items-end justify-between">
+            <div>
+              <h3 className="text-2xl font-bold">{entries.length}</h3>
+              <p className="text-sm text-muted-foreground mt-1">Total AI calls</p>
+            </div>
+            <div className="flex items-center text-xs font-medium text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded">
+              ▲ 8%
+            </div>
+          </div>
         </motion.div>
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className="p-5 rounded-2xl bg-white/80 border border-border/60 shadow-sm">
           <ShieldCheck className="h-5 w-5 text-emerald-600 mb-3" />
-          <h3 className="text-2xl font-bold">{entries.length - blockedCount}</h3>
-          <p className="text-sm text-muted-foreground mt-1">Allowed requests</p>
+          <div className="flex items-end justify-between">
+            <div>
+              <h3 className="text-2xl font-bold">{entries.length - blockedCount}</h3>
+              <p className="text-sm text-muted-foreground mt-1">Allowed requests</p>
+            </div>
+            <div className="flex items-center text-xs font-medium text-red-600 bg-red-50 px-1.5 py-0.5 rounded">
+              ▼ 2%
+            </div>
+          </div>
         </motion.div>
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }} className="p-5 rounded-2xl bg-white/80 border border-border/60 shadow-sm">
           <ShieldAlert className="h-5 w-5 text-red-600 mb-3" />
-          <h3 className="text-2xl font-bold">{blockedCount}</h3>
-          <p className="text-sm text-muted-foreground mt-1">Blocked by budget</p>
+          <div className="flex items-end justify-between">
+            <div>
+              <h3 className="text-2xl font-bold">{blockedCount}</h3>
+              <p className="text-sm text-muted-foreground mt-1">Blocked by budget</p>
+            </div>
+          </div>
         </motion.div>
       </div>
 

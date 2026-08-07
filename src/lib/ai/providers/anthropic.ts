@@ -13,11 +13,13 @@ export async function callAnthropic({
   model,
   prompt,
   maxTokens = 1024,
+  timeoutMs = 60000,
 }: {
   apiKey: string;
   model: string;
   prompt: string;
   maxTokens?: number;
+  timeoutMs?: number;
 }): Promise<AnthropicResponse> {
   const res = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -31,7 +33,7 @@ export async function callAnthropic({
       max_tokens: maxTokens,
       messages: [{ role: 'user', content: prompt }],
     }),
-  });
+  }, timeoutMs);
 
   if (!res.ok) {
     const text = await res.text();

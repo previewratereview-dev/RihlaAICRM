@@ -5,6 +5,7 @@ import { useCRMStore } from '@/hooks/use-crm-store';
 import { CRMDatabaseService } from '@/lib/db-service';
 import { getInitials } from '@/lib/utils';
 import { Search, Users, Shield, Mail, Plus, Trash2, KeyRound } from 'lucide-react';
+import { EmptyState } from '@/components/ui/empty-state';
 import { logger } from '@/lib/logger';
 
 export function SuperAdminUsersView() {
@@ -135,7 +136,7 @@ export function SuperAdminUsersView() {
           </div>
           <button
             onClick={() => { setShowCreate(true); setCreateName(''); setCreateEmail(''); setCreateRole('admin'); setCreateTenantId(tenants[0]?.id || ''); }}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-semibold"
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-primary/40 text-primary text-sm font-semibold hover:bg-primary/5 transition-colors"
           >
             <Plus className="h-4 w-4" />
             New User
@@ -255,7 +256,11 @@ export function SuperAdminUsersView() {
             </table>
           </div>
           {filtered.length === 0 && (
-            <p className="p-8 text-center text-muted-foreground">No users match your filters.</p>
+            <EmptyState
+              title="No Users Found"
+              description="No users match your filters."
+              icon="search"
+            />
           )}
         </div>
 
@@ -298,7 +303,7 @@ export function SuperAdminUsersView() {
             </div>
             <div className="flex gap-2 pt-2">
               <button onClick={() => setShowCreate(false)} className="flex-1 h-10 rounded-xl border text-sm">Cancel</button>
-              <button onClick={handleCreate} disabled={saving || !createEmail.trim() || !createName.trim() || !createTenantId} className="flex-1 h-10 rounded-xl bg-primary text-white text-sm font-semibold">
+              <button onClick={handleCreate} disabled={saving || !createEmail.trim() || !createName.trim() || !createTenantId} className="flex-1 h-10 rounded-xl border border-primary/40 text-primary text-sm font-semibold hover:bg-primary/5 transition-colors disabled:opacity-50">
                 {saving ? 'Creating...' : 'Create User'}
               </button>
             </div>

@@ -504,16 +504,22 @@ describe('Integration Test 4.2: Super Admin Platform Operations', () => {
     
     // Verify audit entry exists in Super Admin's tenant
     const platformCrossTenantEntry = platformAuditLogs.find(
-      log => log.action === 'cross_tenant_access' && 
-             log.details.target_tenant_id === TENANT_AGENCY_A
+      log => {
+        if (log.action !== 'cross_tenant_access') return false;
+        const details = typeof log.details === 'string' ? JSON.parse(log.details) : log.details;
+        return details.target_tenant_id === TENANT_AGENCY_A;
+      }
     );
     expect(platformCrossTenantEntry).toBeDefined();
     console.log('✓ Audit entry found in Super Admin\'s home tenant (platform-admin)');
     
     // Verify audit entry exists in target tenant
     const agencyCrossTenantEntry = agencyAAuditLogs.find(
-      log => log.action === 'cross_tenant_access' &&
-             log.details.source_tenant_id === TENANT_PLATFORM
+      log => {
+        if (log.action !== 'cross_tenant_access') return false;
+        const details = typeof log.details === 'string' ? JSON.parse(log.details) : log.details;
+        return details.source_tenant_id === TENANT_PLATFORM;
+      }
     );
     expect(agencyCrossTenantEntry).toBeDefined();
     console.log('✓ Audit entry found in target tenant (agency-a)');

@@ -1,7 +1,10 @@
 import React, { useRef, useEffect } from 'react';
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { Check, Minus, Trash2, ArrowUpDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { getStatusColor, getStatusLabel, getPriorityColor, formatCurrency, getInitials } from '@/lib/utils';
+import { getStatusColor, getStatusLabel, getPriorityColor, formatCurrency, getInitials, formatDate } from '@/lib/utils';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { Lead, User, LeadStatus } from '@/types';
 
@@ -26,6 +29,7 @@ interface LeadTableProps {
   onPageChange: (page: number) => void;
   onPageSizeChange: (size: number) => void;
   bulkStatusLoading: boolean;
+  viewType?: 'inquiries' | 'bookings';
 }
 
 export function LeadTable({
@@ -47,6 +51,7 @@ export function LeadTable({
   onPageChange,
   onPageSizeChange,
   bulkStatusLoading,
+  viewType,
 }: LeadTableProps) {
   const selectAllRef = useRef<HTMLInputElement>(null);
   const allSelected = paginatedLeads.length > 0 && paginatedLeads.every((l) => selectedIds.has(l.id));
@@ -97,7 +102,12 @@ export function LeadTable({
                 <th className="py-3.5 px-5 font-bold" scope="col">Stage</th>
                 <th className="py-3.5 px-5 font-bold" scope="col">Priority</th>
                 <th className="py-3.5 px-5 font-bold text-right" scope="col">Value</th>
-                <th className="py-3.5 px-5 font-bold text-center" scope="col">AI Score</th>
+                {viewType !== 'bookings' && (
+                  <th className="py-3.5 px-5 font-bold text-center" scope="col">AI Score</th>
+                )}
+                {viewType === 'bookings' && (
+                  <th className="py-3.5 px-5 font-bold" scope="col">Departure</th>
+                )}
                 <th className="py-3.5 px-6 font-bold" scope="col">Assigned To</th>
               </tr>
             </thead>
@@ -153,14 +163,21 @@ export function LeadTable({
                     </span>
                   </td>
                   <td className="py-3.5 px-5 font-mono font-bold text-foreground">{formatCurrency(lead.dealValue)}</td>
-                  <td className="py-3.5 px-5 text-center">
-                    <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-secondary/50 border border-border/60 text-xs font-mono text-foreground">
-                      <span className="font-semibold">{lead.aiScore}%</span>
-                    </div>
-                  </td>
+                  {viewType !== 'bookings' && (
+                    <td className="py-3.5 px-5 text-center">
+                      <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-secondary/50 border border-border/60 text-xs font-mono text-foreground">
+                        <span className="font-semibold">{lead.aiScore}%</span>
+                      </div>
+                    </td>
+                  )}
+                  {viewType === 'bookings' && (
+                    <td className="py-3.5 px-5 font-mono text-xs text-muted-foreground">
+                      {lead.departureDate ? formatDate(lead.departureDate) : 'TBD'}
+                    </td>
+                  )}
                   <td className="py-3.5 px-6">
                     <div className="flex items-center gap-2.5">
-                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-primary to-primary/80 text-white text-[10px] font-bold font-mono shadow-sm">
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border-[1.2px] border-primary/60 bg-transparent text-muted-foreground text-[10px] font-bold font-mono shadow-none">
                         {getInitials(team.find((t) => t.id === lead.assignedTo)?.fullName || 'Unassigned')}
                       </div>
                       <span className="text-foreground font-medium truncate">

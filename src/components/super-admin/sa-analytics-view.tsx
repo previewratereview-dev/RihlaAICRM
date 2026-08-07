@@ -64,7 +64,7 @@ export function SuperAdminAnalyticsView() {
           <div className="rounded-2xl bg-card/80 border border-border/60 p-6">
             <h3 className="font-bold mb-4">Leads by Agency</h3>
             <div className="h-64">
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
                 <BarChart data={stats.leadsByTenant}>
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
                   <XAxis dataKey="tenantName" tick={{ fontSize: 10 }} />
@@ -78,7 +78,7 @@ export function SuperAdminAnalyticsView() {
           <div className="rounded-2xl bg-card/80 border border-border/60 p-6">
             <h3 className="font-bold mb-4">AI Spend by Agency</h3>
             <div className="h-64">
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
                 <BarChart data={stats.leadsByTenant}>
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
                   <XAxis dataKey="tenantName" tick={{ fontSize: 10 }} />
@@ -95,7 +95,7 @@ export function SuperAdminAnalyticsView() {
           <div className="rounded-2xl bg-card/80 border border-border/60 p-6">
             <h3 className="font-bold mb-4">Agency Signups Over Time</h3>
             <div className="h-48">
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
                 <LineChart data={stats.tenantGrowth}>
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
                   <XAxis dataKey="month" tick={{ fontSize: 11 }} />

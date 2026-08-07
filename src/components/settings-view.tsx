@@ -1,760 +1,127 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
-import { motion } from 'framer-motion';
-import { toast } from 'sonner';
+import React, { useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import {
   Settings as SettingsIcon,
   User,
   Bell,
-  Shield,
   Palette,
   Database,
   Key,
   Users as UsersIcon,
   Cpu,
   ScrollText,
-  Save,
   CreditCard,
-  CheckCircle2,
-  Clock,
-  Crown,
-  AlertTriangle,
-  Mail,
-  Download,
+  MessageSquareText
 } from 'lucide-react';
 import { useCRMStore } from '@/hooks/use-crm-store';
 import { can } from '@/lib/permissions';
 import { AdminUserManagement } from '@/components/admin-user-management';
 import { AISpendDashboard } from '@/components/ai-spend-dashboard';
-
 import { FaqAdminPanel } from '@/components/faq-admin-panel';
-import { WorkflowRulesPanel } from '@/components/workflow-rules-panel';
-import {
-  MessageSquareText,
-} from 'lucide-react';
 
-type SettingsTab = 'profile' | 'agency' | 'email' | 'notifications' | 'billing' | 'ai' | 'integrations' | 'users' | 'audit' | 'ai_usage' | 'faq';
+import { AgencySettings } from './settings/agency-settings';
+import { ProfileSettings } from './settings/profile-settings';
+import { NotificationsSettings } from './settings/notifications-settings';
+import { AISettings } from './settings/ai-settings';
+import { IntegrationsSettings } from './settings/integrations-settings';
+import { BillingSettings } from './settings/billing-settings';
 
-interface SubscriptionData {
-  plan: string;
-  status: string;
-  trialActive: boolean;
-  trialDaysLeft: number;
-  trialEnd?: string;
-  currentPeriodEnd?: string;
-}
+type SettingsTab = 'agency' | 'profile' | 'notifications' | 'billing' | 'ai' | 'integrations' | 'users' | 'audit' | 'ai_usage' | 'faq';
 
 export function SettingsView() {
   const currentUser = useCRMStore((s) => s.currentUser);
-  const settings = useCRMStore((s) => s.settings);
-  const updateSettings = useCRMStore((s) => s.updateSettings);
   const auditLogs = useCRMStore((s) => s.auditLogs);
-  const updatePassword = useCRMStore((s) => s.updatePassword);
-
   const [tab, setTab] = useState<SettingsTab>('agency');
-  const [form, setForm] = useState(settings);
-  const [saving, setSaving] = useState(false);
-  const [exportingGdpr, setExportingGdpr] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
-  const [newPassword, setNewPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [auditSearch, setAuditSearch] = useState('');
-  const [auditDateFrom, setAuditDateFrom] = useState('');
-  const [auditDateTo, setAuditDateTo] = useState('');
-  const [subscriptionData, setSubscriptionData] = useState<SubscriptionData | null>(null);
-  const [subLoading, setSubLoading] = useState(false);
-  const isDirty = JSON.stringify(form) !== JSON.stringify(settings);
-  const initialFormRef = useRef(settings);
-
-  useEffect(() => {
-    if (!isDirty) return;
-    const handler = (e: BeforeUnloadEvent) => {
-      e.preventDefault();
-    };
-    window.addEventListener('beforeunload', handler);
-    return () => window.removeEventListener('beforeunload', handler);
-  }, [isDirty]);
-
-  // Keep form in sync with external settings changes without using setState in an effect
-  const settingsKey = JSON.stringify(settings);
-  const [lastSyncedKey, setLastSyncedKey] = useState(settingsKey);
-  if (settingsKey !== lastSyncedKey) {
-    setLastSyncedKey(settingsKey);
-    setForm(settings);
-  }
 
   const role = currentUser?.role ?? 'viewer';
 
-  // Fetch subscription data for the billing tab
-  useEffect(() => {
-    if (!currentUser) return;
-    const fetchSub = async () => {
-      setSubLoading(true);
-      try {
-        const { createClient } = await import('@/lib/supabase/client');
-        const supabase = createClient();
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session?.access_token) return;
-        const res = await fetch('/api/billing/subscription', {
-          headers: { Authorization: `Bearer ${session.access_token}` },
-        });
-        if (res.ok) {
-          const data = await res.json();
-          setSubscriptionData(data);
-        }
-      } catch {
-        // Silently fail — billing info is non-critical
-      } finally {
-        setSubLoading(false);
-      }
-    };
-    fetchSub();
-  }, [currentUser]);
-
-  const tabs: { id: SettingsTab; label: string; icon: React.ComponentType<{ className?: string }>; permission?: Parameters<typeof can>[1] }[] = [
-    { id: 'agency', label: 'Agency', icon: Palette },
-    { id: 'profile', label: 'Profile', icon: User },
-    { id: 'email', label: 'Email', icon: Mail },
-    { id: 'notifications', label: 'Notifications', icon: Bell },
-    { id: 'ai', label: 'AI Config', icon: Cpu, permission: 'settings:ai:write' },
-    { id: 'billing', label: 'Billing', icon: CreditCard },
-    { id: 'faq', label: 'FAQ Chatbot', icon: MessageSquareText, permission: 'settings:ai:write' },
-    { id: 'ai_usage', label: 'AI Usage', icon: Database, permission: 'settings:ai:write' },
-    { id: 'integrations', label: 'Integrations', icon: Key, permission: 'settings:integrations:write' },
-    { id: 'users', label: 'Users', icon: UsersIcon, permission: 'settings:users:write' },
-    { id: 'audit', label: 'Audit Log', icon: ScrollText, permission: 'settings:audit:read' },
+  const tabs: { id: SettingsTab; label: string; icon: React.ComponentType<{ className?: string }>; permission?: Parameters<typeof can>[1]; description: string }[] = [
+    { id: 'agency', label: 'General', icon: Palette, description: 'Brand and general settings' },
+    { id: 'profile', label: 'Profile', icon: User, description: 'Personal account details' },
+    { id: 'notifications', label: 'Notifications', icon: Bell, description: 'Alerts and AI escalations' },
+    { id: 'ai', label: 'AI', icon: Cpu, permission: 'settings:ai:write', description: 'System prompts and BYOK' },
+    { id: 'billing', label: 'Billing', icon: CreditCard, description: 'Subscription and plans' },
+    { id: 'faq', label: 'FAQ', icon: MessageSquareText, permission: 'settings:ai:write', description: 'Train the support AI' },
+    { id: 'ai_usage', label: 'Usage', icon: Database, permission: 'settings:ai:write', description: 'Tokens and spend tracking' },
+    { id: 'integrations', label: 'Integrations', icon: Key, permission: 'settings:integrations:write', description: 'Twilio, Meta, Resend' },
+    { id: 'users', label: 'Team', icon: UsersIcon, permission: 'settings:users:write', description: 'Manage workspace members' },
   ];
 
   const visibleTabs = tabs.filter((t) => !t.permission || can(role, t.permission));
 
-  const handleSaveAgency = async () => {
-    setSaving(true);
-    setMessage(null);
-    try {
-      await updateSettings(form);
-      if (form.accentColor?.startsWith('#')) {
-        document.documentElement.style.setProperty('--primary', form.accentColor);
-        useCRMStore.setState((s) => ({
-          tenantBranding: { ...s.tenantBranding, primaryColor: form.accentColor },
-        }));
-      }
-      initialFormRef.current = form;
-      toast.success('Settings saved successfully.');
-    } catch {
-      toast.error('Failed to save settings.');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleExportGdpr = async () => {
-    setExportingGdpr(true);
-    try {
-      const res = await fetch('/api/gdpr/export');
-      if (!res.ok) throw new Error('Export failed');
-      const data = await res.json();
-      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `gdpr_tenant_export_${new Date().toISOString().split('T')[0]}.json`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      toast.success('GDPR data archive exported successfully.');
-    } catch {
-      toast.error('Failed to export GDPR data archive.');
-    } finally {
-      setExportingGdpr(false);
-    }
-  };
-
-  const handlePasswordChange = async () => {
-    if (!currentUser || newPassword.length < 6) {
-      setMessage('Password must be at least 6 characters.');
-      return;
-    }
-    if (newPassword !== confirmPassword) {
-      setMessage('Passwords do not match.');
-      return;
-    }
-    setSaving(true);
-    try {
-      await updatePassword(currentUser.id, newPassword);
-      setNewPassword('');
-      setConfirmPassword('');
-      setMessage('Password updated.');
-    } catch {
-      setMessage('Password update failed.');
-    } finally {
-      setSaving(false);
-    }
-  };
-
   return (
-    <div className="h-full w-full overflow-y-auto p-6 lg:p-8 scrollbar-thin">
-      <div className="max-w-7xl mx-auto space-y-6">
-        <div>
-          <h2 className="text-2xl font-bold text-foreground tracking-tight font-heading flex items-center gap-2">
-            <SettingsIcon className="h-6 w-6 text-primary" />
-            System Settings
-          </h2>
-          <p className="text-sm text-muted-foreground font-medium mt-1">Configure your workspace and integrations.</p>
-        </div>
-
-        <div className="flex flex-wrap gap-2 border-b border-border/60 pb-4" role="tablist" aria-label="Settings sections">
-          {visibleTabs.map((t) => {
-            const Icon = t.icon;
-            return (
-              <button
-                key={t.id}
-                onClick={() => setTab(t.id)}
-                role="tab"
-                aria-selected={tab === t.id}
-                aria-controls={`panel-${t.id}`}
-                className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-all cursor-pointer ${
-                  tab === t.id
-                    ? 'bg-primary text-primary-foreground shadow-md'
-                    : 'bg-card/80 border border-border/60 text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                <Icon className="h-4 w-4" />
-                {t.label}
-              </button>
-            );
-          })}
-        </div>
-
-        {message && (
-          <div className="p-3 rounded-xl bg-primary/10 text-primary text-sm border border-primary/20">{message}</div>
-        )}
-
-        {tab === 'agency' && (
-          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-4 max-w-xl">
-            <div>
-              <label className="text-xs font-mono uppercase text-muted-foreground">Agency Name</label>
-              <input
-                value={form.agencyName}
-                onChange={(e) => setForm({ ...form, agencyName: e.target.value })}
-                className="mt-1 w-full h-10 rounded-xl border border-input px-3 text-sm"
-              />
-            </div>
-            <div>
-              <label className="text-xs font-mono uppercase text-muted-foreground">Logo Text</label>
-              <input
-                value={form.logoText}
-                onChange={(e) => setForm({ ...form, logoText: e.target.value })}
-                className="mt-1 w-full h-10 rounded-xl border border-input px-3 text-sm"
-              />
-            </div>
-            <div>
-              <label className="text-xs font-mono uppercase text-muted-foreground">Accent Color</label>
-              <input
-                type="color"
-                value={form.accentColor.startsWith('#') ? form.accentColor : '#FF6B35'}
-                onChange={(e) => setForm({ ...form, accentColor: e.target.value })}
-                className="mt-1 h-10 w-full rounded-xl border border-input"
-              />
-            </div>
-            <div>
-              <label className="text-xs font-mono uppercase text-muted-foreground">Daily Target Score</label>
-              <input
-                type="number"
-                value={form.dailyTargetScore}
-                onChange={(e) => setForm({ ...form, dailyTargetScore: Number(e.target.value) })}
-                className="mt-1 w-full h-10 rounded-xl border border-input px-3 text-sm"
-              />
-            </div>
-            <button
-              onClick={handleSaveAgency}
-              disabled={saving}
-              className="inline-flex items-center gap-2 h-10 px-5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold"
-            >
-              <Save className="h-4 w-4" />
-              Save Agency Settings
-            </button>
-
-            <div className="pt-6 border-t border-border/60">
-              <div className="p-5 rounded-2xl bg-card/80 border border-border/60 space-y-3">
-                <h4 className="text-sm font-semibold text-foreground flex items-center gap-2">
-                  <Database className="h-4 w-4 text-primary" />
-                  GDPR & Data Portability
-                </h4>
-                <p className="text-xs text-muted-foreground">
-                  Download a complete structured archive (JSON) of your workspace data including leads, notes, tasks, and communications.
-                </p>
-                <button
-                  onClick={handleExportGdpr}
-                  disabled={exportingGdpr}
-                  className="inline-flex items-center gap-2 h-9 px-4 rounded-xl border border-border/80 bg-background hover:bg-muted text-xs font-semibold text-foreground transition-all cursor-pointer"
-                >
-                  <Download className="h-3.5 w-3.5 text-primary" />
-                  {exportingGdpr ? 'Exporting Archive...' : 'Export Workspace Data (GDPR)'}
-                </button>
+    <div className="h-full w-full overflow-hidden bg-[#FDFDFD] dark:bg-background flex flex-col">
+      {/* Header */}
+      <div className="shrink-0 border-b border-border/40 bg-card/50 backdrop-blur-md px-8 py-6 sticky top-0 z-10">
+        <div className="max-w-6xl mx-auto flex items-center justify-between">
+          <div>
+            <h2 className="text-3xl font-bold text-foreground tracking-tight font-heading flex items-center gap-3">
+              <div className="p-2.5 rounded-xl bg-gradient-to-br from-primary/20 to-primary/5 border border-primary/10 shadow-inner">
+                <SettingsIcon className="h-6 w-6 text-primary" />
               </div>
-            </div>
-          </motion.div>
-        )}
-
-        {tab === 'profile' && (
-          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-4 max-w-xl">
-            <div className="p-5 rounded-2xl bg-card/80 border border-border/60">
-              <p className="text-sm font-semibold">{currentUser?.fullName}</p>
-              <p className="text-xs text-muted-foreground mt-1">{currentUser?.email}</p>
-              <p className="text-xs text-muted-foreground capitalize mt-0.5">Role: {currentUser?.role}</p>
-            </div>
-            <div>
-              <label className="text-xs font-mono uppercase text-muted-foreground">New Password</label>
-              <input
-                type="password"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                className="mt-1 w-full h-10 rounded-xl border border-input px-3 text-sm"
-              />
-            </div>
-            <div>
-              <label className="text-xs font-mono uppercase text-muted-foreground">Confirm Password</label>
-              <input
-                type="password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                className="mt-1 w-full h-10 rounded-xl border border-input px-3 text-sm"
-              />
-            </div>
-            <button
-              onClick={handlePasswordChange}
-              disabled={saving}
-              className="inline-flex items-center gap-2 h-10 px-5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold"
-            >
-              <Shield className="h-4 w-4" />
-              Update Password
-            </button>
-          </motion.div>
-        )}
-
-        {tab === 'email' && (
-          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-6 max-w-2xl">
-            {/* Auto-send Rules */}
-            <div className="space-y-3">
-              <div>
-                <h3 className="text-sm font-bold text-foreground">Auto-Send Rules</h3>
-                <p className="text-xs text-muted-foreground mt-1">Choose when emails are sent automatically. Manual send is always available from any booking.</p>
-              </div>
-              {[
-                { key: 'emailAutomation' as const, label: 'New booking follow-up', desc: 'Send a welcome email when a traveler submits a new booking inquiry', icon: '📩' },
-                { key: 'emailStatusAutomation' as const, label: 'Status change notification', desc: 'Notify the traveler when their booking status is updated (e.g. confirmed, in progress)', icon: '🔄' },
-              ].map((item) => (
-                <label key={item.key} className="flex items-center gap-4 p-4 rounded-xl bg-card/80 border border-border/60 cursor-pointer hover:border-primary/30 transition-colors">
-                  <span className="text-lg">{item.icon}</span>
-                  <div className="flex-1">
-                    <span className="text-sm font-semibold block">{item.label}</span>
-                    <span className="text-xs text-muted-foreground">{item.desc}</span>
-                  </div>
-                  <div className="relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0" style={{ backgroundColor: form[item.key] ? 'hsl(var(--primary))' : 'hsl(var(--input))' }}>
-                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform shadow-sm ${form[item.key] ? 'translate-x-6' : 'translate-x-1'}`} />
-                    <input type="checkbox" checked={form[item.key] ?? false} onChange={(e) => setForm({ ...form, [item.key]: e.target.checked })} className="sr-only" />
-                  </div>
-                </label>
-              ))}
-            </div>
-
-            {/* Email Identity */}
-            <div className="space-y-3">
-              <div>
-                <h3 className="text-sm font-bold text-foreground">Email Identity</h3>
-                <p className="text-xs text-muted-foreground mt-1">Customize how your emails appear to travelers.</p>
-              </div>
-              <div className="grid sm:grid-cols-2 gap-4">
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-mono uppercase text-muted-foreground font-semibold">From Name</label>
-                  <input
-                    value={form.emailFromName || ''}
-                    onChange={(e) => setForm({ ...form, emailFromName: e.target.value })}
-                    placeholder="e.g. Rihla Travel Team"
-                    className="h-10 rounded-xl bg-background border border-input px-3 text-sm focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
-                  />
-                  <p className="text-[10px] text-muted-foreground">Shown as the sender name in the traveler&apos;s inbox</p>
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-mono uppercase text-muted-foreground font-semibold">Reply-To Email</label>
-                  <input
-                    type="email"
-                    value={form.emailReplyTo || ''}
-                    onChange={(e) => setForm({ ...form, emailReplyTo: e.target.value })}
-                    placeholder="e.g. bookings@youragency.com"
-                    className="h-10 rounded-xl bg-background border border-input px-3 text-sm focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
-                  />
-                  <p className="text-[10px] text-muted-foreground">Replies from travelers go to this address</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Email Template */}
-            <div className="space-y-3">
-              <div>
-                <h3 className="text-sm font-bold text-foreground">Follow-Up Email Template</h3>
-                <p className="text-xs text-muted-foreground mt-1">Default template for new booking follow-ups. Use {'{{name}}'} for traveler name and {'{{destination}}'} for destination.</p>
-              </div>
-              <textarea
-                value={form.emailFollowUpTemplate || ''}
-                onChange={(e) => setForm({ ...form, emailFollowUpTemplate: e.target.value })}
-                placeholder={`Hi {{name}},\n\nThank you for your travel inquiry{{#destination}} for {{destination}}{{/destination}}. A specialist will be in touch shortly to discuss your trip details.\n\nBest regards,\nYour Travel Team`}
-                rows={8}
-                className="w-full rounded-xl bg-background border border-input px-3 py-2 text-sm font-mono focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 resize-none"
-              />
-            </div>
-
-            {/* Email Status */}
-            <div className="p-4 rounded-xl bg-muted/30 border border-border/40 flex items-start gap-3">
-              <CheckCircle2 className="h-5 w-5 text-primary shrink-0 mt-0.5" />
-              <div>
-                <p className="text-sm font-semibold">Email Service Status</p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Emails are sent via Resend. RESEND_API_KEY is {process.env.RESEND_API_KEY ? 'configured' : 'not configured'}.
-                  You can send emails manually from any booking detail view.
-                </p>
-              </div>
-            </div>
-
-            <button onClick={handleSaveAgency} disabled={saving} className="h-10 px-5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors shadow-md shadow-primary/20">
-              <Save className="h-4 w-4 inline mr-2" />
-              Save Email Settings
-            </button>
-          </motion.div>
-        )}
-
-        {tab === 'notifications' && (
-          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-3 max-w-xl">
-            {[
-              { key: 'whatsappAutomation' as const, label: 'WhatsApp automation' },
-              { key: 'smsAutomation' as const, label: 'SMS automation' },
-            ].map((item) => (
-              <label key={item.key} className="flex items-center justify-between p-4 rounded-xl bg-card/80 border border-border/60 cursor-pointer">
-                <span className="text-sm font-medium">{item.label}</span>
-                <input
-                  type="checkbox"
-                  checked={form[item.key]}
-                  onChange={(e) => setForm({ ...form, [item.key]: e.target.checked })}
-                  className="h-4 w-4 accent-primary"
-                />
-              </label>
-            ))}
-            <button onClick={handleSaveAgency} disabled={saving} className="h-10 px-5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold">
-              Save Notifications
-            </button>
-          </motion.div>
-        )}
-
-        {tab === 'ai' && can(role, 'settings:ai:write') && (
-          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-4 max-w-2xl">
-            <div className="p-4 rounded-xl bg-muted/30 border border-border/40 space-y-2">
-              <p className="text-sm font-semibold">Centralized AI Governance</p>
-              <p className="text-xs text-muted-foreground">
-                AI model selection and provider endpoints are centrally managed by your platform administrator to ensure optimal performance, reliability, and security across all agencies.
-              </p>
-            </div>
-            <div>
-              <label className="text-xs font-mono uppercase text-muted-foreground">Agency AI System Prompt</label>
-              <p className="text-xs text-muted-foreground mb-1">
-                Customize your agency assistant&apos;s personality, behavior, and specific rules below.
-              </p>
-              <textarea
-                value={form.systemPrompt}
-                onChange={(e) => setForm({ ...form, systemPrompt: e.target.value })}
-                rows={6}
-                className="mt-1 w-full rounded-xl border border-input p-3 text-sm resize-none"
-              />
-            </div>
-            
-            <div className="pt-4 border-t border-border/40">
-              <div className="space-y-4">
-                <div>
-                  <h3 className="text-sm font-bold text-foreground">Bring Your Own Key (BYOK)</h3>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Optionally provide your own API keys to bypass platform AI usage limits. Your keys are securely encrypted at rest.
-                  </p>
-                </div>
-                
-                <div className="space-y-3">
-                  <div>
-                    <label className="text-xs font-mono uppercase text-muted-foreground">OpenAI API Key</label>
-                    <input
-                      type="password"
-                      value={form.openAiKey || ''}
-                      onChange={(e) => setForm({ ...form, openAiKey: e.target.value })}
-                      placeholder="sk-..."
-                      className="mt-1 w-full h-10 rounded-xl border border-input px-3 text-sm font-mono focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs font-mono uppercase text-muted-foreground">Anthropic API Key</label>
-                    <input
-                      type="password"
-                      value={form.anthropicKey || ''}
-                      onChange={(e) => setForm({ ...form, anthropicKey: e.target.value })}
-                      placeholder="sk-ant-..."
-                      className="mt-1 w-full h-10 rounded-xl border border-input px-3 text-sm font-mono focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-            
-            <button onClick={handleSaveAgency} disabled={saving} className="h-10 px-5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold">
-              Save AI Config
-            </button>
-          </motion.div>
-        )}
-
-        {tab === 'integrations' && can(role, 'settings:integrations:write') && (
-          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-4 max-w-xl">
-            <div>
-              <label className="text-xs font-mono uppercase text-muted-foreground">Make.com Webhook URL (Outbound)</label>
-              <input
-                value={form.makeWebhookUrl}
-                onChange={(e) => setForm({ ...form, makeWebhookUrl: e.target.value })}
-                className="mt-1 w-full h-10 rounded-xl border border-input px-3 text-sm font-mono focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
-                placeholder="https://hook.make.com/..."
-              />
-              <p className="text-[10px] text-muted-foreground mt-1">
-                Fired when rules are triggered (e.g. Lead created, Status changed).
-              </p>
-            </div>
-            
-            <div className="pt-4 border-t border-border/40">
-              <label className="text-xs font-mono uppercase text-muted-foreground">Inbound Webhook URL</label>
-              <div className="mt-1 flex gap-2">
-                <input
-                  readOnly
-                  value={currentUser?.tenantId ? `${window.location.origin}/api/webhooks/inbound/${currentUser.tenantId}` : 'Loading...'}
-                  className="w-full h-10 rounded-xl border border-input px-3 text-sm font-mono bg-muted text-muted-foreground cursor-not-allowed"
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    navigator.clipboard.writeText(`${window.location.origin}/api/webhooks/inbound/${currentUser?.tenantId}`);
-                    toast.success('Webhook URL copied to clipboard');
-                  }}
-                  className="h-10 px-4 rounded-xl border border-input bg-card hover:bg-muted text-sm font-semibold transition-colors shrink-0"
-                >
-                  Copy
-                </button>
-              </div>
-              <p className="text-[10px] text-muted-foreground mt-1">
-                Send POST requests to this URL to create leads. Payload: {'{'} fullName, email, phone, destination, leadSource {'}'}
-              </p>
-            </div>
-
-            <p className="text-xs text-muted-foreground border-l-2 border-primary/50 pl-3 py-1 bg-primary/5 rounded-r-lg">
-              Stripe, Resend, and Twilio keys are configured via platform integrations or tenant credentials (credential service).
+              Settings
+            </h2>
+            <p className="text-sm text-muted-foreground mt-2 max-w-xl">
+              Manage your agency profile, billing, integrations, and AI configurations all in one place.
             </p>
-            <WorkflowRulesPanel />
-            <button onClick={handleSaveAgency} disabled={saving} className="h-10 px-5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold">
-              Save Integrations
-            </button>
-          </motion.div>
-        )}
+          </div>
+        </div>
+      </div>
 
-        {tab === 'users' && can(role, 'settings:users:write') && <AdminUserManagement />}
+      <div className="flex-1 overflow-hidden flex flex-col">
+        {/* Horizontal Tabs Area */}
+        <div className="shrink-0 border-b border-border/40 bg-card/30">
+          <div className="max-w-6xl mx-auto px-8 flex items-center gap-6 overflow-x-auto scrollbar-hide">
+            {visibleTabs.map((t) => {
+              const Icon = t.icon;
+              const isActive = tab === t.id;
+              return (
+                <button
+                  key={t.id}
+                  onClick={() => setTab(t.id)}
+                  className={`relative flex items-center gap-2 py-4 transition-all duration-200 cursor-pointer shrink-0 border-b-2 font-medium text-sm ${
+                    isActive 
+                      ? 'border-primary text-primary' 
+                      : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'
+                  }`}
+                >
+                  <Icon className="h-4 w-4" />
+                  <span>{t.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
 
-        {tab === 'audit' && can(role, 'settings:audit:read') && (
-          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="rounded-2xl bg-card/80 border border-border/60 overflow-hidden">
-            <div className="p-3 border-b border-border/40 flex flex-wrap gap-2">
-              <input
-                type="text"
-                placeholder="Search audit logs..."
-                value={auditSearch}
-                onChange={(e) => setAuditSearch(e.target.value)}
-                className="flex-1 min-w-[200px] h-9 rounded-lg border border-input bg-background px-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
-                aria-label="Search audit logs"
-              />
-              <input
-                type="date"
-                value={auditDateFrom}
-                onChange={(e) => setAuditDateFrom(e.target.value)}
-                className="h-9 rounded-lg border border-input bg-background px-3 text-sm font-mono focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
-                aria-label="Filter from date"
-              />
-              <input
-                type="date"
-                value={auditDateTo}
-                onChange={(e) => setAuditDateTo(e.target.value)}
-                className="h-9 rounded-lg border border-input bg-background px-3 text-sm font-mono focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
-                aria-label="Filter to date"
-              />
-              <button
-                onClick={() => {
-                  const filtered = auditLogs.filter((log) => {
-                    if (!auditSearch.trim()) return true;
-                    const q = auditSearch.toLowerCase();
-                    const matchSearch = log.action.toLowerCase().includes(q) || log.details.toLowerCase().includes(q) || log.userName.toLowerCase().includes(q);
-                    if (!matchSearch) return false;
-                    if (auditDateFrom && new Date(log.createdAt) < new Date(auditDateFrom)) return false;
-                    if (auditDateTo && new Date(log.createdAt) > new Date(auditDateTo + 'T23:59:59')) return false;
-                    return true;
-                  });
-                  const headers = ['Timestamp', 'Action', 'User', 'Role', 'Details'];
-                  const escape = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-                  const rows = filtered.map((l) => [
-                    escape(new Date(l.createdAt).toISOString()),
-                    escape(l.action),
-                    escape(l.userName),
-                    escape(l.userRole),
-                    escape(l.details),
-                  ].join(','));
-                  const csv = [headers.join(','), ...rows].join('\n');
-                  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement('a');
-                  a.href = url;
-                  a.download = `audit_log_export_${new Date().toISOString().split('T')[0]}.csv`;
-                  document.body.appendChild(a);
-                  a.click();
-                  document.body.removeChild(a);
-                }}
-                className="h-9 px-3 rounded-lg border border-border/60 bg-card text-xs font-semibold text-foreground hover:bg-secondary/80 transition-colors cursor-pointer"
-                aria-label="Export audit log as CSV"
-              >
-                Export CSV
-              </button>
-            </div>
-            <div className="divide-y divide-border/40 max-h-[500px] overflow-y-auto">
-              {auditLogs.length === 0 ? (
-                <p className="p-6 text-sm text-muted-foreground">No audit events recorded yet.</p>
-              ) : (
-                auditLogs
-                  .filter((log) => {
-                    if (auditSearch.trim()) {
-                      const q = auditSearch.toLowerCase();
-                      if (!(log.action.toLowerCase().includes(q) || log.details.toLowerCase().includes(q) || log.userName.toLowerCase().includes(q))) return false;
-                    }
-                    if (auditDateFrom && new Date(log.createdAt) < new Date(auditDateFrom)) return false;
-                    if (auditDateTo && new Date(log.createdAt) > new Date(auditDateTo + 'T23:59:59')) return false;
-                    return true;
-                  })
-                  .map((log) => (
-                    <div key={log.id} className="p-4 flex justify-between gap-4">
-                      <div>
-                        <p className="text-sm font-semibold">{log.action.replace(/_/g, ' ')}</p>
-                        <p className="text-xs text-muted-foreground mt-0.5">{log.details}</p>
-                        <p className="text-[10px] text-muted-foreground font-mono mt-1">
-                          {log.userName} · {log.userRole}
-                        </p>
-                      </div>
-                      <span className="text-[10px] text-muted-foreground font-mono shrink-0">
-                        {new Date(log.createdAt).toLocaleString()}
-                      </span>
-                    </div>
-                  ))
-              )}
-            </div>
-          </motion.div>
-        )}
-
-        {tab === 'ai_usage' && can(role, 'settings:ai:write') && <AISpendDashboard />}
-
-        {tab === 'billing' && (
-          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-6 max-w-2xl">
-            <div className="rounded-2xl bg-card/80 border border-border/60 overflow-hidden">
-              <div className="px-6 py-5 border-b border-border/40">
-                <h3 className="text-lg font-semibold text-foreground flex items-center gap-2">
-                  <Crown className="h-5 w-5 text-primary" />
-                  Subscription Plan
-                </h3>
-                <p className="text-sm text-muted-foreground mt-1">Manage your subscription and billing details.</p>
-              </div>
-
-              {subLoading ? (
-                <div className="p-6 space-y-3">
-                  <div className="h-5 w-32 rounded-lg bg-muted animate-pulse" />
-                  <div className="h-4 w-48 rounded-lg bg-muted animate-pulse" />
-                  <div className="h-4 w-40 rounded-lg bg-muted animate-pulse" />
-                </div>
-              ) : subscriptionData ? (
-                <div className="p-6 space-y-5">
-                  {/* Plan badge */}
-                  <div className="flex items-center gap-3">
-                    <span className="text-xs font-mono uppercase text-muted-foreground">Current Plan</span>
-                    <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider ${
-                      subscriptionData.plan === 'premium'
-                        ? 'bg-amber-500/15 text-amber-600 border border-amber-500/30'
-                        : subscriptionData.plan === 'pro'
-                        ? 'bg-primary/10 text-primary border border-primary/30'
-                        : 'bg-muted text-muted-foreground border border-border'
-                    }`}>
-                      <Crown className="h-3 w-3" />
-                      {subscriptionData.plan}
-                    </span>
-                  </div>
-
-                  {/* Status */}
-                  <div className="flex items-center gap-3">
-                    <span className="text-xs font-mono uppercase text-muted-foreground">Status</span>
-                    <span className={`inline-flex items-center gap-1.5 text-sm font-medium ${
-                      subscriptionData.status === 'active'
-                        ? 'text-emerald-600'
-                        : subscriptionData.status === 'trialing'
-                        ? 'text-blue-600'
-                        : 'text-red-500'
-                    }`}>
-                      {subscriptionData.status === 'active' ? (
-                        <CheckCircle2 className="h-4 w-4" />
-                      ) : subscriptionData.status === 'trialing' ? (
-                        <Clock className="h-4 w-4" />
-                      ) : (
-                        <AlertTriangle className="h-4 w-4" />
-                      )}
-                      {subscriptionData.status === 'active'
-                        ? 'Active'
-                        : subscriptionData.status === 'trialing'
-                        ? 'Trial'
-                        : subscriptionData.status.charAt(0).toUpperCase() + subscriptionData.status.slice(1)}
-                    </span>
-                  </div>
-
-                  {/* Trial info */}
-                  {subscriptionData.trialActive && subscriptionData.trialDaysLeft > 0 && (
-                    <div className="flex items-center gap-3">
-                      <span className="text-xs font-mono uppercase text-muted-foreground">Trial Days Left</span>
-                      <span className="text-sm font-semibold text-blue-600">
-                        {subscriptionData.trialDaysLeft} day{subscriptionData.trialDaysLeft !== 1 ? 's' : ''}
-                      </span>
-                    </div>
-                  )}
-
-                  {/* Period end */}
-                  {subscriptionData.currentPeriodEnd && (
-                    <div className="flex items-center gap-3">
-                      <span className="text-xs font-mono uppercase text-muted-foreground">
-                        {subscriptionData.status === 'trialing' ? 'Trial Ends' : 'Renews On'}
-                      </span>
-                      <span className="text-sm font-medium text-foreground">
-                        {new Date(subscriptionData.currentPeriodEnd).toLocaleDateString('en-US', {
-                          year: 'numeric',
-                          month: 'long',
-                          day: 'numeric',
-                        })}
-                      </span>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="p-6">
-                  <p className="text-sm text-muted-foreground">Unable to load subscription information.</p>
-                </div>
-              )}
-            </div>
-          </motion.div>
-        )}
-
-        {tab === 'faq' && can(role, 'settings:ai:write') && (
-          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
-            <FaqAdminPanel />
-          </motion.div>
-        )}
+        {/* Main Content Area */}
+        <div className="flex-1 overflow-y-auto scrollbar-thin p-8 relative">
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={tab}
+              initial={{ opacity: 0, y: 15, filter: 'blur(4px)' }}
+              animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+              exit={{ opacity: 0, y: -15, filter: 'blur(4px)' }}
+              transition={{ duration: 0.25, ease: 'easeOut' }}
+              className="max-w-3xl mx-auto pb-20"
+            >
+              {tab === 'agency' && <AgencySettings />}
+              {tab === 'profile' && <ProfileSettings />}
+              {tab === 'notifications' && <NotificationsSettings />}
+              {tab === 'ai' && can(role, 'settings:ai:write') && <AISettings />}
+              {tab === 'integrations' && can(role, 'settings:integrations:write') && <IntegrationsSettings />}
+              {tab === 'billing' && <BillingSettings />}
+              
+              {tab === 'faq' && can(role, 'settings:ai:write') && <FaqAdminPanel />}
+              {tab === 'ai_usage' && can(role, 'settings:ai:write') && <AISpendDashboard />}
+              {tab === 'users' && can(role, 'settings:users:write') && <AdminUserManagement />}
+            </motion.div>
+          </AnimatePresence>
+        </div>
       </div>
     </div>
   );
+
+
 }

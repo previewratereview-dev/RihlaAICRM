@@ -120,13 +120,25 @@ function CopilotInner() {
       <Button
         onClick={() => setOpen((v) => !v)}
         className={cn(
-          'fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-50 h-12 w-12 sm:h-14 sm:w-14 rounded-full shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-border/10',
-          open ? 'bg-muted text-foreground hover:bg-muted' : 'bg-primary text-primary-foreground hover:bg-primary/90'
+          'fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-50 h-12 sm:h-14 rounded-full shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-primary/20 group transition-all duration-300 ease-in-out flex items-center overflow-hidden p-0',
+          open 
+            ? 'w-12 sm:w-14 justify-center bg-muted text-foreground hover:bg-muted' 
+            : 'w-12 sm:w-14 hover:w-[155px] justify-start bg-primary text-primary-foreground hover:bg-primary/95 shadow-primary/20 hover:shadow-primary/30'
         )}
-        size="icon"
         aria-label="Toggle AI copilot"
       >
-        {open ? <X className="h-5 w-5" /> : <Bot className="h-5 w-5" />}
+        {open ? (
+          <X className="h-5 w-5 shrink-0 m-auto" />
+        ) : (
+          <div className="flex items-center w-full">
+            <div className="w-12 sm:w-14 flex items-center justify-center shrink-0">
+               <Sparkles className="h-5 w-5" />
+            </div>
+            <span className="font-semibold text-sm tracking-tight whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none -ml-2">
+              Rihla-Copilot
+            </span>
+          </div>
+        )}
       </Button>
 
       {open && (

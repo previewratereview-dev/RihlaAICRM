@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { features } from "@/lib/marketing/content";
 import { Card } from "@/components/marketing/ui/card";
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { Button } from "@/components/marketing/ui/button";
 import { Reveal } from "@/components/marketing/sections/reveal";
 

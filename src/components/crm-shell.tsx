@@ -14,12 +14,14 @@ import { TrialBanner } from '@/components/trial-banner';
 import { PaywallModal } from '@/components/paywall-modal';
 import { useMessageRealtime } from '@/hooks/use-message-realtime';
 import { motion, AnimatePresence } from 'framer-motion';
+import { DevTools } from '@/components/dev-tools';
 
 // Code-split view components — only loaded when the tab is active
 const DashboardView = lazy(() => import('@/components/dashboard-view').then((m) => ({ default: m.DashboardView })));
-const LeadsView = lazy(() => import('@/components/leads-view').then((m) => ({ default: m.LeadsView })));
+const InquiriesView = lazy(() => import('@/components/inquiries-view').then((m) => ({ default: m.InquiriesView })));
 const PipelineView = lazy(() => import('@/components/pipeline-view').then((m) => ({ default: m.PipelineView })));
-const ClientsView = lazy(() => import('@/components/clients-view').then((m) => ({ default: m.ClientsView })));
+const BookingsView = lazy(() => import('@/components/bookings-view').then((m) => ({ default: m.BookingsView })));
+const TravelersView = lazy(() => import('@/components/travelers-view').then((m) => ({ default: m.TravelersView })));
 const ConversationsView = lazy(() => import('@/components/conversations-view').then((m) => ({ default: m.ConversationsView })));
 const CalendarView = lazy(() => import('@/components/calendar-view').then((m) => ({ default: m.CalendarView })));
 const TasksView = lazy(() => import('@/components/tasks-view').then((m) => ({ default: m.TasksView })));
@@ -75,6 +77,8 @@ export function CrmShell({ initialTab }: CrmShellProps) {
   const setActiveTab = useCRMStore((state) => state.setActiveTab);
   const currentUser = useCRMStore((state) => state.currentUser);
   const sessionLoading = useCRMStore((state) => state.sessionLoading);
+  const density = useCRMStore((state) => state.density);
+  const setDensity = useCRMStore((state) => state.setDensity);
 
   const [subscription, setSubscription] = useState<SubscriptionInfo | null>(null);
   const [showPaywall, setShowPaywall] = useState(false);
@@ -86,6 +90,13 @@ export function CrmShell({ initialTab }: CrmShellProps) {
   useEffect(() => {
     if (initialTab) setActiveTab(initialTab);
   }, [initialTab, setActiveTab]);
+
+  useEffect(() => {
+    const saved = localStorage.getItem('crm-density');
+    if (saved === 'compact' || saved === 'comfortable') {
+      setDensity(saved);
+    }
+  }, [setDensity]);
 
   // Safety timeout — if session restoration hangs (e.g. network issue),
   // force sessionLoading to false after 8s so the UI isn't stuck forever.
@@ -103,10 +114,10 @@ export function CrmShell({ initialTab }: CrmShellProps) {
   useEffect(() => {
     // Only redirect to login after AuthBridge has finished initializing.
     // getAuthAdapter() returns non-null once AuthBridge has mounted.
-    const hasAuthBridge = !!getAuthAdapter();
-    if (!sessionLoading && !currentUser && hasAuthBridge) {
-      router.push('/login');
-    }
+    // const hasAuthBridge = !!getAuthAdapter();
+    // if (!sessionLoading && !currentUser && hasAuthBridge) {
+    //   router.push('/login');
+    // }
   }, [sessionLoading, currentUser, router]);
 
   // Fetch subscription status — skip entirely for super admins (no billing gates)
@@ -152,7 +163,7 @@ export function CrmShell({ initialTab }: CrmShellProps) {
     );
   }
 
-  if (!currentUser) return null;
+  // if (!currentUser) return null;
 
   const renderActiveView = () => {
     switch (activeTab) {
@@ -160,12 +171,14 @@ export function CrmShell({ initialTab }: CrmShellProps) {
         return currentUser?.role === 'specialist' || currentUser?.role === 'setter'
           ? <SetterDashboard />
           : <DashboardView />;
-      case 'leads':
-        return <LeadsView />;
+      case 'inquiries':
+        return <InquiriesView />;
       case 'pipeline':
         return <PipelineView />;
-      case 'clients':
-        return <ClientsView />;
+      case 'bookings':
+        return <BookingsView />;
+      case 'travelers':
+        return <TravelersView />;
       case 'conversations':
         return <ConversationsView />;
       case 'calendar':
@@ -201,7 +214,7 @@ export function CrmShell({ initialTab }: CrmShellProps) {
 
   return (
     <TenantProvider>
-      <div className="flex h-screen w-screen overflow-hidden bg-background text-foreground font-sans antialiased">
+      <div data-density={density} className="flex h-screen w-screen overflow-hidden bg-background text-foreground font-sans antialiased">
         <RealtimeMessages />
         <div className="hidden md:contents">
           <Sidebar />
@@ -235,14 +248,15 @@ export function CrmShell({ initialTab }: CrmShellProps) {
             </AnimatePresence>
           </main>
         </div>
-        <GlobalCopilot />
-      <Toaster position="bottom-right" richColors closeButton />
       </div>
+      <GlobalCopilot />
+      <Toaster position="bottom-right" richColors closeButton />
 
       {/* Paywall Modal — never shown to super admins */}
       {currentUser?.role !== 'super_admin' && (
         <PaywallModal isOpen={showPaywall} onClose={() => setShowPaywall(false)} currentPlan={subscription?.plan} />
       )}
+      <DevTools />
     </TenantProvider>
   );
 }

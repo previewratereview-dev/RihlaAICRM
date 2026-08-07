@@ -3,7 +3,6 @@ import type { Conversation, Message, LeadActivity } from '@/types';
 import { CRMDatabaseService } from '@/lib/db-service';
 import { generateId } from '@/lib/utils';
 import { analyzeMessageSentiment } from '@/lib/ai/sentiment';
-import { buildLeadContextBlock } from '@/lib/ai/lead-context';
 
 export function createConversationsSlice(set: SetState, get: GetState) {
   return {

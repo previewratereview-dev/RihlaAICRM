@@ -99,6 +99,13 @@ export interface Lead {
   followUpStatus?: string;
   aiScoreDetails?: ScoreBreakdown[];
   conversionProbability?: number;
+  travelerName?: string;
+  contact?: {
+    name?: string;
+    email?: string;
+    phone?: string;
+  };
+  lastContactDate?: string;
 }
 
 export interface LeadAssignmentHistory {
