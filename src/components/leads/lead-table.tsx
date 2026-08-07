@@ -1,7 +1,4 @@
 import React, { useRef, useEffect } from 'react';
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { Check, Minus, Trash2, ArrowUpDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { getStatusColor, getStatusLabel, getPriorityColor, formatCurrency, getInitials, formatDate } from '@/lib/utils';

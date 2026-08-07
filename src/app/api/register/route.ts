@@ -9,7 +9,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: validation.errors[0] }, { status: 400 });
     }
 
-    const { fullName, email, password, agencyName } = validation.data;
+    const { email, password, agencyName } = validation.data;
 
     const isLocalMode = !process.env.NEXT_PUBLIC_SUPABASE_URL;
 

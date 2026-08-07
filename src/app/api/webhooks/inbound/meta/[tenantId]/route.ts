@@ -4,9 +4,7 @@ import { inngest } from '@/lib/inngest/client';
 // Meta Webhook Verification
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
 ) {
-  const { tenantId } = await params;
   const searchParams = request.nextUrl.searchParams;
   
   const mode = searchParams.get('hub.mode');

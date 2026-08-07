@@ -46,7 +46,7 @@ export async function POST(request: NextRequest) {
     }
     
     // Attempt to find an existing lead by email across all tenants
-    let { data: lead } = await adminDb
+    const { data: lead } = await adminDb
       .from('leads')
       .select('*')
       .eq('email', fromEmail)
@@ -55,7 +55,7 @@ export async function POST(request: NextRequest) {
       .single();
       
     let leadId = lead?.id;
-    let tenantId = lead?.tenant_id || 'global';
+    const tenantId = lead?.tenant_id || 'global';
     const now = new Date().toISOString();
 
     if (!lead) {

@@ -2,15 +2,11 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { Resend } from 'resend';
 import { verificationEmailTemplate } from '@/lib/emails/verification';
-import { randomBytes, randomInt } from 'crypto';
+import { randomInt } from 'crypto';
 import { checkRateLimit, buildRateLimitKey } from '@/lib/rate-limit';
 
 function generateOTP(): string {
   return randomInt(100000, 999999).toString();
-}
-
-function generateToken(): string {
-  return randomBytes(32).toString('hex');
 }
 
 export async function POST(request: Request) {

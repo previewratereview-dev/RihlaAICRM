@@ -14,8 +14,6 @@ import {
   LayoutGrid,
   Rows3,
   Square,
-  MapPin,
-  List,
 } from 'lucide-react';
 import { EmptyState } from '@/components/ui/empty-state';
 import { useCRMStore } from '@/hooks/use-crm-store';
@@ -224,7 +222,7 @@ export function CalendarView() {
 
   const today = new Date();
 
-  const renderTimeGrid = (days: Date[], singleDay = false) => (
+  const renderTimeGrid = (days: Date[]) => (
     <div className="flex flex-col flex-1 overflow-auto">
       <div className="grid border-b border-border/60" style={{ gridTemplateColumns: `60px repeat(${days.length}, 1fr)` }}>
         <div className="p-2" />
@@ -395,7 +393,7 @@ export function CalendarView() {
           )}
 
           {viewMode === 'week' && renderTimeGrid(weekDays)}
-          {viewMode === 'day' && renderTimeGrid([viewDate], true)}
+          {viewMode === 'day' && renderTimeGrid([viewDate])}
         </div>
 
         {meetings.length === 0 && (

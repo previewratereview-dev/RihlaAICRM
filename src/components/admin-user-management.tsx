@@ -9,7 +9,6 @@ import { can } from '@/lib/permissions';
 import type { User } from '@/types';
 
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
-import { Button } from '@/components/ui/button';
 
 const emptyUser = (): Omit<User, 'id'> & { password?: string } => ({
   fullName: '',

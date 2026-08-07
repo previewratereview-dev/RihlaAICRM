@@ -44,7 +44,6 @@ export async function POST(
       return NextResponse.json({ success: true, queued: true, message: 'Inbound event accepted and queued during database maintenance' }, { status: 202 });
     }
 
-    const now = new Date().toISOString();
     const leadId = `lead-${generateId()}`;
     
     const payload = {

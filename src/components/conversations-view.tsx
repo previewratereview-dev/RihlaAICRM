@@ -2,9 +2,6 @@
 
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { motion } from 'framer-motion';
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { Search, Send, FileText, Check, CheckCircle2, Copy, Bot, Pencil, Trash2, X, Info, Phone, Video, Paperclip, Sparkles } from 'lucide-react';
 import { EmptyState } from '@/components/ui/empty-state';
 import ReactMarkdown from 'react-markdown';

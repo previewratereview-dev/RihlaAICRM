@@ -255,7 +255,7 @@ async function runStageB1StagingExecution() {
   });
   console.log('Post-migration Inquiry counts by pipeline_stage:', JSON.stringify(stageCounts, null, 2));
 
-  let totalInquiriesCount = Object.values(stageCounts).reduce((a, b) => a + b, 0);
+  const totalInquiriesCount = Object.values(stageCounts).reduce((a, b) => a + b, 0);
   console.log(`Total Inquiries: ${totalInquiriesCount} (Reconciles to 93 baseline leads)`);
 
   // ----------------------------------------------------------------------
