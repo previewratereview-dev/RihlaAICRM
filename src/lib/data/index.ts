@@ -10,3 +10,4 @@ export type { TenantClient } from './scoped';
 export { CRMDatabaseService } from './service';
 export { newRecordId, rejectClientId, ClientSuppliedIdError } from './ids';
 export { assertTenantId, validateTenantAccess, filterLeadsByAuthority, logCrossTenantAccess } from './access';
+export { getTenantTravelers, getTenantTravelerKPIs } from './travelers';

@@ -81,6 +81,10 @@ export interface TenantClient {
     list(): Promise<AuditLog[]>;
     create(data: AuditLog): Promise<AuditLog>;
   };
+  travelers: {
+    list(): Promise<import('@/types').TravelerDirectoryItem[]>;
+    getKPIs(): Promise<import('@/types').TravelerKPIs>;
+  };
 }
 
 /**
@@ -327,6 +331,17 @@ export function scoped(tenantId: string): TenantClient {
         const { data: row, error } = await db.from('audit_logs').insert(payload).select('*').single();
         if (error) throw error;
         return mapDbAuditLog(row);
+      },
+    },
+
+    travelers: {
+      async list() {
+        const { getTenantTravelers } = await import('./travelers');
+        return getTenantTravelers(tenantId);
+      },
+      async getKPIs() {
+        const { getTenantTravelerKPIs } = await import('./travelers');
+        return getTenantTravelerKPIs(tenantId);
       },
     },
   };
