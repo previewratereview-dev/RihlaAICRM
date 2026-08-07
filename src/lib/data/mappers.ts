@@ -173,6 +173,7 @@ export function mapLeadToDb(lead: Partial<Lead>): Record<string, unknown> {
   if (lead.demoDate !== undefined) dbObj.demo_date = lead.demoDate;
   if (lead.demoTime !== undefined) dbObj.demo_time = lead.demoTime;
   if (lead.googleMeetLink !== undefined) dbObj.google_meet_link = lead.googleMeetLink;
+  if (lead.selectedTravelerId !== undefined) dbObj.selected_traveler_id = lead.selectedTravelerId;
   if (lead.meetingStatus !== undefined) dbObj.meeting_status = lead.meetingStatus;
   if (lead.meetingNotes !== undefined) dbObj.meeting_notes = lead.meetingNotes;
   if (lead.followUpStatus !== undefined) dbObj.follow_up_status = lead.followUpStatus;

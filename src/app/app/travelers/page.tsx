@@ -1,7 +1,7 @@
-'use client';
-
 import { CrmShell } from '@/components/crm-shell';
+import { isNewTravelersReadEnabled } from '@/lib/feature-flags';
 
 export default function TravelersPage() {
-  return <CrmShell initialTab="travelers" />;
+  const useNewRead = isNewTravelersReadEnabled();
+  return <CrmShell initialTab="travelers" useNewTravelersRead={useNewRead} />;
 }

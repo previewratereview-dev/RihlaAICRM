@@ -69,9 +69,10 @@ interface SubscriptionInfo {
 
 interface CrmShellProps {
   initialTab?: string;
+  useNewTravelersRead?: boolean;
 }
 
-export function CrmShell({ initialTab }: CrmShellProps) {
+export function CrmShell({ initialTab, useNewTravelersRead }: CrmShellProps) {
   const router = useRouter();
   const activeTab = useCRMStore((state) => state.activeTab);
   const setActiveTab = useCRMStore((state) => state.setActiveTab);
@@ -178,7 +179,7 @@ export function CrmShell({ initialTab }: CrmShellProps) {
       case 'bookings':
         return <BookingsView />;
       case 'travelers':
-        return <TravelersView />;
+        return <TravelersView useNewReadOverride={useNewTravelersRead} />;
       case 'conversations':
         return <ConversationsView />;
       case 'calendar':

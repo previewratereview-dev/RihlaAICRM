@@ -106,6 +106,7 @@ export interface Lead {
     phone?: string;
   };
   lastContactDate?: string;
+  selectedTravelerId?: string;
 }
 
 export interface LeadAssignmentHistory {
