@@ -418,7 +418,7 @@ BEGIN
     v_status, NULLIF(trim(p_payload->>'destination'), ''), COALESCE(p_payload->>'lead_source', 'website'),
     COALESCE(p_payload->>'priority', 'medium'),
     CASE WHEN (p_payload->>'deal_value')::numeric >= 0 THEN (p_payload->>'deal_value')::numeric ELSE 0 END,
-    p_payload->>'assigned_to',
+    NULLIF(trim(p_payload->>'assigned_to'), '')::uuid,
     p_payload->>'last_contacted', p_payload->>'next_follow_up',
     CASE WHEN v_is_archived THEN now() ELSE NULL END,
     now(), now()
@@ -485,7 +485,7 @@ BEGIN
     gen_random_uuid(), p_tenant_id, v_traveler_id, p_lead_id, NULLIF(trim(p_payload->>'destination'), ''),
     COALESCE(p_payload->>'lead_source', 'website'), COALESCE(p_payload->>'priority', 'medium'),
     v_target_stage, CASE WHEN (p_payload->>'deal_value')::numeric >= 0 THEN (p_payload->>'deal_value')::numeric ELSE NULL END, 'INR',
-    p_payload->>'assigned_to',
+    NULLIF(trim(p_payload->>'assigned_to'), '')::uuid,
     CASE WHEN p_payload->>'last_contacted' IS NOT NULL AND pg_input_is_valid(p_payload->>'last_contacted', 'timestamptz') THEN (p_payload->>'last_contacted')::timestamptz ELSE NULL END,
     CASE WHEN p_payload->>'next_follow_up' IS NOT NULL AND pg_input_is_valid(p_payload->>'next_follow_up', 'timestamptz') THEN (p_payload->>'next_follow_up')::timestamptz ELSE NULL END,
     v_ext_source, v_ext_event, v_review_req, v_review_reason, v_prop_name, v_prop_email, v_prop_phone,
@@ -519,7 +519,7 @@ BEGIN
       fulfillment_status, financial_data_complete, assigned_agent_id, archived_at, created_at, updated_at
     ) VALUES (
       gen_random_uuid(), p_tenant_id, v_traveler_id, v_inquiry_id, p_lead_id, 'BK-' || upper(replace(p_lead_id, '-', '')),
-      NULL, NULL, NULL, 'INR', 'confirmed', 'unknown', 'unknown', false, p_payload->>'assigned_to',
+      NULL, NULL, NULL, 'INR', 'confirmed', 'unknown', 'unknown', false, NULLIF(trim(p_payload->>'assigned_to'), '')::uuid,
       CASE WHEN v_is_archived THEN now() ELSE NULL END, now(), now()
     )
     ON CONFLICT (tenant_id, legacy_lead_id) DO UPDATE SET
