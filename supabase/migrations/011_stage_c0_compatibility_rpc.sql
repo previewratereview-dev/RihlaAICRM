@@ -2,7 +2,80 @@
 -- Migration 011: Stage C0 Live Write Compatibility & Synchronization RPC
 -- ====================================================================
 
--- 1. Additive Schema Updates: Maintenance Settings & Durable Event Queue
+-- 1. Lock Legacy Mutation Tables At Start of Migration Transaction
+SET LOCAL lock_timeout = '3s';
+SET LOCAL statement_timeout = '10s';
+
+LOCK TABLE
+  public.leads,
+  public.tasks,
+  public.activities,
+  public.conversations
+IN EXCLUSIVE MODE;
+
+-- 2. In-Transaction Baseline Drift & Target Entity Count Assertions
+DO $$
+DECLARE
+  v_lead_count int;
+  v_inq_count int;
+  v_bk_count int;
+  v_trav_count int;
+  v_unmapped_leads int;
+  v_unmapped_confirmed int;
+  v_tenant_violations int;
+BEGIN
+  SELECT COUNT(*) INTO v_lead_count FROM public.leads WHERE archived_at IS NULL;
+  SELECT COUNT(*) INTO v_inq_count FROM public.inquiries WHERE archived_at IS NULL;
+  SELECT COUNT(*) INTO v_bk_count FROM public.bookings WHERE archived_at IS NULL;
+  SELECT COUNT(*) INTO v_trav_count FROM public.traveler_profiles;
+
+  -- Verify baseline target counts for production snapshot
+  IF v_lead_count != 93 THEN
+    RAISE EXCEPTION 'In-transaction assertion failure: leads count % != 93', v_lead_count;
+  END IF;
+  IF v_inq_count != 93 THEN
+    RAISE EXCEPTION 'In-transaction assertion failure: inquiries count % != 93', v_inq_count;
+  END IF;
+  IF v_bk_count != 6 THEN
+    RAISE EXCEPTION 'In-transaction assertion failure: bookings count % != 6', v_bk_count;
+  END IF;
+  IF v_trav_count != 92 THEN
+    RAISE EXCEPTION 'In-transaction assertion failure: traveler_profiles count % != 92', v_trav_count;
+  END IF;
+
+  -- Verify unmapped leads
+  SELECT COUNT(*) INTO v_unmapped_leads
+  FROM public.leads l
+  WHERE l.archived_at IS NULL 
+    AND NOT EXISTS (SELECT 1 FROM public.inquiries i WHERE i.tenant_id = l.tenant_id AND i.legacy_lead_id = l.id);
+
+  IF v_unmapped_leads > 0 THEN
+    RAISE EXCEPTION 'In-transaction assertion failure: % leads missing mapped Inquiry', v_unmapped_leads;
+  END IF;
+
+  -- Verify unmapped confirmed leads
+  SELECT COUNT(*) INTO v_unmapped_confirmed
+  FROM public.leads l
+  WHERE l.archived_at IS NULL 
+    AND l.status IN ('booking_confirmed', 'closed_won')
+    AND NOT EXISTS (SELECT 1 FROM public.bookings b WHERE b.tenant_id = l.tenant_id AND b.legacy_lead_id = l.id);
+
+  IF v_unmapped_confirmed > 0 THEN
+    RAISE EXCEPTION 'In-transaction assertion failure: % confirmed leads missing Booking', v_unmapped_confirmed;
+  END IF;
+
+  -- Verify tenant isolation
+  SELECT COUNT(*) INTO v_tenant_violations
+  FROM public.inquiries i
+  JOIN public.traveler_profiles t ON t.id = i.traveler_id
+  WHERE t.tenant_id != i.tenant_id;
+
+  IF v_tenant_violations > 0 THEN
+    RAISE EXCEPTION 'In-transaction assertion failure: % tenant violations discovered', v_tenant_violations;
+  END IF;
+END $$;
+
+-- 3. Additive Schema Updates: Maintenance Settings & Durable Event Queue
 CREATE TABLE IF NOT EXISTS public.app_settings (
   key text PRIMARY KEY,
   value jsonb NOT NULL,
@@ -62,7 +135,7 @@ DO $$ BEGIN
   END IF;
 END $$;
 
--- 2. Legacy Table Database-Level Freeze Triggers (Protects Deployed Old Code)
+-- 4. Legacy Table Database-Level Freeze Triggers (Protects Deployed Old Code)
 CREATE OR REPLACE FUNCTION public.enforce_legacy_write_freeze()
 RETURNS trigger AS $$
 BEGIN
@@ -85,7 +158,7 @@ CREATE TRIGGER trg_freeze_legacy_activities BEFORE INSERT OR UPDATE OR DELETE ON
 DROP TRIGGER IF EXISTS trg_freeze_legacy_conversations ON public.conversations;
 CREATE TRIGGER trg_freeze_legacy_conversations BEFORE INSERT OR UPDATE OR DELETE ON public.conversations FOR EACH ROW EXECUTE FUNCTION public.enforce_legacy_write_freeze();
 
--- 3. Deterministic Activity Relationship Pointer Resolver (BEFORE INSERT OR UPDATE)
+-- 5. Deterministic Activity Relationship Pointer Resolver (BEFORE INSERT OR UPDATE)
 CREATE OR REPLACE FUNCTION public.resolve_activity_relationship_pointers()
 RETURNS trigger AS $$
 DECLARE
@@ -110,7 +183,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 
--- 4. Null-Safe Activity Relationship Integrity Validator (BEFORE INSERT OR UPDATE - Runs SECOND)
+-- 6. Null-Safe Activity Relationship Integrity Validator (BEFORE INSERT OR UPDATE - Runs SECOND)
 CREATE OR REPLACE FUNCTION public.verify_activity_relationship_integrity()
 RETURNS trigger AS $$
 DECLARE
@@ -170,7 +243,7 @@ CREATE TRIGGER trg_1_resolve_conversation_pointers BEFORE INSERT OR UPDATE ON pu
 DROP TRIGGER IF EXISTS trg_2_verify_conversation_integrity ON public.conversations;
 CREATE TRIGGER trg_2_verify_conversation_integrity BEFORE INSERT OR UPDATE ON public.conversations FOR EACH ROW EXECUTE FUNCTION public.verify_activity_relationship_integrity();
 
--- 5. Internal Dual-Write Engine (With Write Freeze Guard, FOR UPDATE, Advisory Lock Concurrency)
+-- 7. Internal Dual-Write Engine (With Write Freeze Guard, FOR UPDATE, Advisory Lock Concurrency)
 CREATE OR REPLACE FUNCTION public.execute_sync_lead_dual_write(
   p_tenant_id text,
   p_lead_id text,
@@ -385,7 +458,7 @@ $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 
 REVOKE ALL ON FUNCTION public.execute_sync_lead_dual_write FROM PUBLIC, anon, authenticated;
 
--- 6. Authenticated RPC Wrapper (Strict Role Allowlist & Tenant Derivation)
+-- 8. Authenticated RPC Wrapper (Strict Role Allowlist & Tenant Derivation)
 CREATE OR REPLACE FUNCTION public.sync_lead_authenticated(
   p_lead_id text,
   p_payload jsonb
@@ -415,7 +488,7 @@ $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 REVOKE EXECUTE ON FUNCTION public.sync_lead_authenticated FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.sync_lead_authenticated TO authenticated;
 
--- 7. Privileged Service-Role RPC (For trusted webhooks & background workers)
+-- 9. Privileged Service-Role RPC (For trusted webhooks & background workers)
 CREATE OR REPLACE FUNCTION public.sync_lead_service_role(
   p_tenant_id text,
   p_lead_id text,
@@ -433,7 +506,7 @@ $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 REVOKE EXECUTE ON FUNCTION public.sync_lead_service_role FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.sync_lead_service_role TO service_role, postgres;
 
--- 8. ATOMIC FREEZE INITIALIZATION (Commit Migration With Maintenance Freeze Active = TRUE)
+-- 10. ATOMIC FREEZE INITIALIZATION (Commit Migration With Maintenance Freeze Active = TRUE)
 INSERT INTO public.app_settings (key, value)
 VALUES ('maintenance_write_freeze', 'true'::jsonb)
 ON CONFLICT (key) DO UPDATE SET value = 'true'::jsonb, updated_at = now();
