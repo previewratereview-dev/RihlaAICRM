@@ -13,69 +13,63 @@ LOCK TABLE
   public.conversations
 IN EXCLUSIVE MODE;
 
--- 2. In-Transaction Baseline Drift & Target Entity Count Assertions
+-- 2. Validate Pre-C0 Current Schema Entity Counts (Before Adding C0 Columns)
 DO $$
 DECLARE
   v_lead_count int;
   v_inq_count int;
   v_bk_count int;
   v_trav_count int;
-  v_unmapped_leads int;
-  v_unmapped_confirmed int;
-  v_tenant_violations int;
 BEGIN
-  SELECT COUNT(*) INTO v_lead_count FROM public.leads WHERE archived_at IS NULL;
-  SELECT COUNT(*) INTO v_inq_count FROM public.inquiries WHERE archived_at IS NULL;
-  SELECT COUNT(*) INTO v_bk_count FROM public.bookings WHERE archived_at IS NULL;
+  SELECT COUNT(*) INTO v_lead_count FROM public.leads;
+  SELECT COUNT(*) INTO v_inq_count FROM public.inquiries;
+  SELECT COUNT(*) INTO v_bk_count FROM public.bookings;
   SELECT COUNT(*) INTO v_trav_count FROM public.traveler_profiles;
 
-  -- Verify baseline target counts for production snapshot
   IF v_lead_count != 93 THEN
-    RAISE EXCEPTION 'In-transaction assertion failure: leads count % != 93', v_lead_count;
+    RAISE EXCEPTION 'Pre-C0 assertion failure: leads count % != 93', v_lead_count;
   END IF;
   IF v_inq_count != 93 THEN
-    RAISE EXCEPTION 'In-transaction assertion failure: inquiries count % != 93', v_inq_count;
+    RAISE EXCEPTION 'Pre-C0 assertion failure: inquiries count % != 93', v_inq_count;
   END IF;
   IF v_bk_count != 6 THEN
-    RAISE EXCEPTION 'In-transaction assertion failure: bookings count % != 6', v_bk_count;
+    RAISE EXCEPTION 'Pre-C0 assertion failure: bookings count % != 6', v_bk_count;
   END IF;
   IF v_trav_count != 92 THEN
-    RAISE EXCEPTION 'In-transaction assertion failure: traveler_profiles count % != 92', v_trav_count;
-  END IF;
-
-  -- Verify unmapped leads
-  SELECT COUNT(*) INTO v_unmapped_leads
-  FROM public.leads l
-  WHERE l.archived_at IS NULL 
-    AND NOT EXISTS (SELECT 1 FROM public.inquiries i WHERE i.tenant_id = l.tenant_id AND i.legacy_lead_id = l.id);
-
-  IF v_unmapped_leads > 0 THEN
-    RAISE EXCEPTION 'In-transaction assertion failure: % leads missing mapped Inquiry', v_unmapped_leads;
-  END IF;
-
-  -- Verify unmapped confirmed leads
-  SELECT COUNT(*) INTO v_unmapped_confirmed
-  FROM public.leads l
-  WHERE l.archived_at IS NULL 
-    AND l.status IN ('booking_confirmed', 'closed_won')
-    AND NOT EXISTS (SELECT 1 FROM public.bookings b WHERE b.tenant_id = l.tenant_id AND b.legacy_lead_id = l.id);
-
-  IF v_unmapped_confirmed > 0 THEN
-    RAISE EXCEPTION 'In-transaction assertion failure: % confirmed leads missing Booking', v_unmapped_confirmed;
-  END IF;
-
-  -- Verify tenant isolation
-  SELECT COUNT(*) INTO v_tenant_violations
-  FROM public.inquiries i
-  JOIN public.traveler_profiles t ON t.id = i.traveler_id
-  WHERE t.tenant_id != i.tenant_id;
-
-  IF v_tenant_violations > 0 THEN
-    RAISE EXCEPTION 'In-transaction assertion failure: % tenant violations discovered', v_tenant_violations;
+    RAISE EXCEPTION 'Pre-C0 assertion failure: traveler_profiles count % != 92', v_trav_count;
   END IF;
 END $$;
 
--- 3. Additive Schema Updates: Maintenance Settings & Durable Event Queue
+-- 3. Additive Schema Updates: Archive Columns, Identity Review, Settings & Event Queue
+ALTER TABLE public.leads 
+  ADD COLUMN IF NOT EXISTS archived_at timestamptz;
+
+ALTER TABLE public.inquiries 
+  ADD COLUMN IF NOT EXISTS archived_at timestamptz,
+  ADD COLUMN IF NOT EXISTS external_source text,
+  ADD COLUMN IF NOT EXISTS external_event_id text,
+  ADD COLUMN IF NOT EXISTS identity_review_required boolean NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS identity_review_reason text,
+  ADD COLUMN IF NOT EXISTS proposed_display_name text,
+  ADD COLUMN IF NOT EXISTS proposed_email text,
+  ADD COLUMN IF NOT EXISTS proposed_phone text;
+
+ALTER TABLE public.bookings 
+  ADD COLUMN IF NOT EXISTS archived_at timestamptz;
+
+ALTER TABLE public.conversations 
+  ADD COLUMN IF NOT EXISTS external_message_id text;
+
+-- Add Constraints
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_inquiries_external_event') THEN
+    ALTER TABLE public.inquiries ADD CONSTRAINT uq_inquiries_external_event UNIQUE (tenant_id, external_source, external_event_id);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_conversations_external_message') THEN
+    ALTER TABLE public.conversations ADD CONSTRAINT uq_conversations_external_message UNIQUE (tenant_id, external_message_id);
+  END IF;
+END $$;
+
 CREATE TABLE IF NOT EXISTS public.app_settings (
   key text PRIMARY KEY,
   value jsonb NOT NULL,
@@ -106,36 +100,120 @@ CREATE TABLE IF NOT EXISTS public.inbound_event_queue (
   processed_at timestamptz
 );
 
-ALTER TABLE public.leads 
-  ADD COLUMN IF NOT EXISTS archived_at timestamptz;
+-- 4. Full In-Transaction Compatibility Drift Auditor (Locked Table Boundary)
+DO $$
+DECLARE
+  v_unmapped_leads int;
+  v_unmapped_confirmed int;
+  v_field_mismatches int;
+  v_tenant_violations int;
+  v_unmapped_tasks int;
+  v_unmapped_activities int;
+  v_unmapped_conversations int;
+BEGIN
+  -- Assert 0 unmapped Leads -> Inquiry
+  SELECT COUNT(*) INTO v_unmapped_leads
+  FROM public.leads l
+  WHERE l.archived_at IS NULL 
+    AND NOT EXISTS (SELECT 1 FROM public.inquiries i WHERE i.tenant_id = l.tenant_id AND i.legacy_lead_id = l.id);
 
-ALTER TABLE public.inquiries 
-  ADD COLUMN IF NOT EXISTS archived_at timestamptz,
-  ADD COLUMN IF NOT EXISTS external_source text,
-  ADD COLUMN IF NOT EXISTS external_event_id text,
-  ADD COLUMN IF NOT EXISTS identity_review_required boolean NOT NULL DEFAULT false,
-  ADD COLUMN IF NOT EXISTS identity_review_reason text,
-  ADD COLUMN IF NOT EXISTS proposed_display_name text,
-  ADD COLUMN IF NOT EXISTS proposed_email text,
-  ADD COLUMN IF NOT EXISTS proposed_phone text;
-
-ALTER TABLE public.bookings 
-  ADD COLUMN IF NOT EXISTS archived_at timestamptz;
-
-ALTER TABLE public.conversations 
-  ADD COLUMN IF NOT EXISTS external_message_id text;
-
--- Add Constraints
-DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_inquiries_external_event') THEN
-    ALTER TABLE public.inquiries ADD CONSTRAINT uq_inquiries_external_event UNIQUE (tenant_id, external_source, external_event_id);
+  IF v_unmapped_leads > 0 THEN
+    RAISE EXCEPTION 'Compatibility drift failure: % leads missing mapped Inquiry', v_unmapped_leads;
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_conversations_external_message') THEN
-    ALTER TABLE public.conversations ADD CONSTRAINT uq_conversations_external_message UNIQUE (tenant_id, external_message_id);
+
+  -- Assert 0 confirmed Leads missing Booking
+  SELECT COUNT(*) INTO v_unmapped_confirmed
+  FROM public.leads l
+  WHERE l.archived_at IS NULL 
+    AND l.status IN ('booking_confirmed', 'closed_won')
+    AND NOT EXISTS (SELECT 1 FROM public.bookings b WHERE b.tenant_id = l.tenant_id AND b.legacy_lead_id = l.id);
+
+  IF v_unmapped_confirmed > 0 THEN
+    RAISE EXCEPTION 'Compatibility drift failure: % confirmed leads missing Booking', v_unmapped_confirmed;
+  END IF;
+
+  -- Assert 0 Lead -> Inquiry field reconciliation mismatches
+  SELECT COUNT(*) INTO v_field_mismatches
+  FROM public.leads l
+  JOIN public.inquiries i ON i.tenant_id = l.tenant_id AND i.legacy_lead_id = l.id
+  WHERE l.archived_at IS NULL
+    AND (
+      (CASE l.status
+        WHEN 'new' THEN 'inquiry_received'
+        WHEN 'inquiry_received' THEN 'inquiry_received'
+        WHEN 'contacted' THEN 'initial_contact'
+        WHEN 'initial_contact' THEN 'initial_contact'
+        WHEN 'interested' THEN 'options_shared'
+        WHEN 'options_shared' THEN 'options_shared'
+        WHEN 'demo_scheduled' THEN 'consultation_booked'
+        WHEN 'consultation_booked' THEN 'consultation_booked'
+        WHEN 'proposal_sent' THEN 'itinerary_sent'
+        WHEN 'itinerary_sent' THEN 'itinerary_sent'
+        WHEN 'follow_up' THEN 'follow_up'
+        WHEN 'negotiation' THEN 'customizing_package'
+        WHEN 'customizing_package' THEN 'customizing_package'
+        WHEN 'closed_won' THEN 'booking_confirmed'
+        WHEN 'booking_confirmed' THEN 'booking_confirmed'
+        WHEN 'closed_lost' THEN 'booking_lost'
+        WHEN 'booking_lost' THEN 'booking_lost'
+        ELSE 'inquiry_received'
+      END) IS DISTINCT FROM i.pipeline_stage
+      OR (NULLIF(trim(l.destination), '')) IS DISTINCT FROM i.destination
+      OR (COALESCE(l.lead_source, 'website')) IS DISTINCT FROM i.lead_source
+      OR (COALESCE(l.priority, 'medium')) IS DISTINCT FROM i.priority
+      OR (l.assigned_to) IS DISTINCT FROM i.assigned_agent_id
+    );
+
+  IF v_field_mismatches > 0 THEN
+    RAISE EXCEPTION 'Compatibility drift failure: % field reconciliation mismatches discovered', v_field_mismatches;
+  END IF;
+
+  -- Assert 0 tenant relationship violations across Inquiry, Traveler, Booking
+  SELECT COUNT(*) INTO v_tenant_violations
+  FROM (
+    SELECT i.id FROM public.inquiries i JOIN public.traveler_profiles t ON t.id = i.traveler_id WHERE t.tenant_id != i.tenant_id
+    UNION ALL
+    SELECT b.id FROM public.bookings b JOIN public.traveler_profiles t ON t.id = b.traveler_id WHERE t.tenant_id != b.tenant_id
+    UNION ALL
+    SELECT b.id FROM public.bookings b JOIN public.inquiries i ON i.id = b.inquiry_id WHERE i.tenant_id != b.tenant_id
+  ) violations;
+
+  IF v_tenant_violations > 0 THEN
+    RAISE EXCEPTION 'Compatibility drift failure: % tenant relationship violations discovered', v_tenant_violations;
+  END IF;
+
+  -- Assert 0 unmapped Lead-linked Tasks
+  SELECT COUNT(*) INTO v_unmapped_tasks
+  FROM public.tasks t
+  WHERE t.lead_id IS NOT NULL 
+    AND (t.inquiry_id IS NULL OR t.traveler_id IS NULL);
+
+  IF v_unmapped_tasks > 0 THEN
+    RAISE EXCEPTION 'Compatibility drift failure: % lead-linked tasks missing inquiry_id or traveler_id', v_unmapped_tasks;
+  END IF;
+
+  -- Assert 0 unmapped Lead-linked Activities
+  SELECT COUNT(*) INTO v_unmapped_activities
+  FROM public.activities a
+  WHERE a.lead_id IS NOT NULL 
+    AND (a.inquiry_id IS NULL OR a.traveler_id IS NULL);
+
+  IF v_unmapped_activities > 0 THEN
+    RAISE EXCEPTION 'Compatibility drift failure: % lead-linked activities missing inquiry_id or traveler_id', v_unmapped_activities;
+  END IF;
+
+  -- Assert 0 unmapped Lead-linked Conversations
+  SELECT COUNT(*) INTO v_unmapped_conversations
+  FROM public.conversations c
+  WHERE c.lead_id IS NOT NULL 
+    AND (c.inquiry_id IS NULL OR c.traveler_id IS NULL);
+
+  IF v_unmapped_conversations > 0 THEN
+    RAISE EXCEPTION 'Compatibility drift failure: % lead-linked conversations missing inquiry_id or traveler_id', v_unmapped_conversations;
   END IF;
 END $$;
 
--- 4. Legacy Table Database-Level Freeze Triggers (Protects Deployed Old Code)
+-- 5. Legacy Table Database-Level Freeze Triggers (Protects Deployed Old Code)
 CREATE OR REPLACE FUNCTION public.enforce_legacy_write_freeze()
 RETURNS trigger AS $$
 BEGIN
@@ -158,7 +236,7 @@ CREATE TRIGGER trg_freeze_legacy_activities BEFORE INSERT OR UPDATE OR DELETE ON
 DROP TRIGGER IF EXISTS trg_freeze_legacy_conversations ON public.conversations;
 CREATE TRIGGER trg_freeze_legacy_conversations BEFORE INSERT OR UPDATE OR DELETE ON public.conversations FOR EACH ROW EXECUTE FUNCTION public.enforce_legacy_write_freeze();
 
--- 5. Deterministic Activity Relationship Pointer Resolver (BEFORE INSERT OR UPDATE)
+-- 6. Deterministic Activity Relationship Pointer Resolver (BEFORE INSERT OR UPDATE)
 CREATE OR REPLACE FUNCTION public.resolve_activity_relationship_pointers()
 RETURNS trigger AS $$
 DECLARE
@@ -183,7 +261,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 
--- 6. Null-Safe Activity Relationship Integrity Validator (BEFORE INSERT OR UPDATE - Runs SECOND)
+-- 7. Null-Safe Activity Relationship Integrity Validator (BEFORE INSERT OR UPDATE - Runs SECOND)
 CREATE OR REPLACE FUNCTION public.verify_activity_relationship_integrity()
 RETURNS trigger AS $$
 DECLARE
@@ -243,7 +321,7 @@ CREATE TRIGGER trg_1_resolve_conversation_pointers BEFORE INSERT OR UPDATE ON pu
 DROP TRIGGER IF EXISTS trg_2_verify_conversation_integrity ON public.conversations;
 CREATE TRIGGER trg_2_verify_conversation_integrity BEFORE INSERT OR UPDATE ON public.conversations FOR EACH ROW EXECUTE FUNCTION public.verify_activity_relationship_integrity();
 
--- 7. Internal Dual-Write Engine (With Write Freeze Guard, FOR UPDATE, Advisory Lock Concurrency)
+-- 8. Internal Dual-Write Engine (With Write Freeze Guard, FOR UPDATE, Advisory Lock Concurrency)
 CREATE OR REPLACE FUNCTION public.execute_sync_lead_dual_write(
   p_tenant_id text,
   p_lead_id text,
@@ -458,7 +536,7 @@ $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 
 REVOKE ALL ON FUNCTION public.execute_sync_lead_dual_write FROM PUBLIC, anon, authenticated;
 
--- 8. Authenticated RPC Wrapper (Strict Role Allowlist & Tenant Derivation)
+-- 9. Authenticated RPC Wrapper (Strict Role Allowlist & Tenant Derivation)
 CREATE OR REPLACE FUNCTION public.sync_lead_authenticated(
   p_lead_id text,
   p_payload jsonb
@@ -488,7 +566,7 @@ $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 REVOKE EXECUTE ON FUNCTION public.sync_lead_authenticated FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.sync_lead_authenticated TO authenticated;
 
--- 9. Privileged Service-Role RPC (For trusted webhooks & background workers)
+-- 10. Privileged Service-Role RPC (For trusted webhooks & background workers)
 CREATE OR REPLACE FUNCTION public.sync_lead_service_role(
   p_tenant_id text,
   p_lead_id text,
@@ -506,7 +584,7 @@ $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 REVOKE EXECUTE ON FUNCTION public.sync_lead_service_role FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.sync_lead_service_role TO service_role, postgres;
 
--- 10. ATOMIC FREEZE INITIALIZATION (Commit Migration With Maintenance Freeze Active = TRUE)
+-- 11. ATOMIC FREEZE INITIALIZATION (Commit Migration With Maintenance Freeze Active = TRUE)
 INSERT INTO public.app_settings (key, value)
 VALUES ('maintenance_write_freeze', 'true'::jsonb)
 ON CONFLICT (key) DO UPDATE SET value = 'true'::jsonb, updated_at = now();
