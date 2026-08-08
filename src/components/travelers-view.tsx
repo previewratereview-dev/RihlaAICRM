@@ -8,6 +8,8 @@ import { normalizeLeadStatus } from '@/lib/pipeline-status';
 import { EmptyState } from '@/components/ui/empty-state';
 import { isNewTravelersReadEnabled } from '@/lib/feature-flags';
 import { scoped } from '@/lib/data/scoped';
+import { LeadFormModal } from '@/components/leads/lead-form-modal';
+import type { LeadFormData } from '@/lib/schemas';
 import type { Lead, TravelerDirectoryItem, TravelerKPIs } from '@/types';
 
 function getLastTripDate(lead: Lead): string {
@@ -44,6 +46,12 @@ export function TravelersView({ useNewReadOverride }: TravelersViewProps = {}) {
   const [rebookingId, setRebookingId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [repeatOnly, setRepeatOnly] = useState(false);
+
+  // New Inquiry Modal state
+  const [selectedTravelerForInquiry, setSelectedTravelerForInquiry] = useState<TravelerDirectoryItem | null>(null);
+  const [isInquiryModalOpen, setIsInquiryModalOpen] = useState(false);
+  const [inquiryFormError, setInquiryFormError] = useState<string | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // New Entity Read State
   const [newTravelers, setNewTravelers] = useState<TravelerDirectoryItem[]>([]);
@@ -180,41 +188,43 @@ export function TravelersView({ useNewReadOverride }: TravelersViewProps = {}) {
     }
   };
 
-  // New Inquiry handler for new entity read model (uses approved Stage C0 write path)
-  const handleNewInquiry = async (traveler: TravelerDirectoryItem) => {
-    setRebookingId(traveler.id);
+  // Open New Inquiry modal with preselected traveler
+  const handleNewInquiry = (traveler: TravelerDirectoryItem) => {
+    setSelectedTravelerForInquiry(traveler);
+    setInquiryFormError(null);
+    setIsInquiryModalOpen(true);
+  };
+
+  // Submit handler for preselected traveler New Inquiry form modal
+  const handleSubmitNewInquiry = async (data: LeadFormData) => {
+    if (!selectedTravelerForInquiry) return;
+    setInquiryFormError(null);
+    setRebookingId(selectedTravelerForInquiry.id);
     try {
       await addLead({
-        fullName: traveler.displayName,
-        email: traveler.email || '',
-        phone: traveler.phone || '',
-        whatsapp: traveler.phone || '',
-        leadSource: 'referral',
-        tripType: 'Custom Itinerary',
-        destination: '',
-        country: '',
-        city: '',
-        numberOfTravelers: '1',
-        departureDate: '',
-        returnDate: '',
-        duration: '',
-        travelClass: 'economy',
-        budget: '₹5,000',
-        dealValue: 5000,
+        ...data,
+        fullName: selectedTravelerForInquiry.displayName,
+        email: selectedTravelerForInquiry.email || data.email || '',
+        phone: selectedTravelerForInquiry.phone || data.phone || '',
+        whatsapp: selectedTravelerForInquiry.phone || data.whatsapp || '',
+        leadSource: (data.leadSource || 'referral') as Lead['leadSource'],
+        priority: (data.priority || 'medium') as Lead['priority'],
+        selectedTravelerId: selectedTravelerForInquiry.id,
         status: 'inquiry_received',
-        priority: 'medium',
-        assignedTo: currentUser?.id || team[0]?.id || '',
-        selectedTravelerId: traveler.id,
-        tags: ['New Inquiry'],
-        specialRequests: `New inquiry initiated for existing traveler profile (${traveler.displayName}).`,
-        sourceOfDiscovery: `Returning Traveler Profile (${traveler.id})`,
-        lastContacted: '',
-        nextFollowUp: '',
         tenantId: currentUser?.tenantId || '',
       });
+      setIsInquiryModalOpen(false);
+      setSelectedTravelerForInquiry(null);
+      setToastMessage(`Inquiry created successfully for ${selectedTravelerForInquiry.displayName}!`);
+      setTimeout(() => setToastMessage(null), 4000);
       if (isNewReadActive) {
         await fetchNewTravelersData();
       }
+    } catch (err: unknown) {
+      console.error('[TravelersView] addLead failed:', err);
+      const msg = err instanceof Error ? err.message : 'Failed to create inquiry';
+      setInquiryFormError(msg);
+      throw err;
     } finally {
       setRebookingId(null);
     }
@@ -225,11 +235,18 @@ export function TravelersView({ useNewReadOverride }: TravelersViewProps = {}) {
   return (
     <div className="h-full w-full overflow-y-auto p-4 lg:p-6 scrollbar-thin">
       <div className="max-w-7xl mx-auto space-y-5">
+        {toastMessage && (
+          <div className="px-4 py-3 rounded-xl bg-green-50 border border-green-200 text-green-800 text-sm font-semibold flex items-center justify-between shadow-sm">
+            <span>{toastMessage}</span>
+            <button onClick={() => setToastMessage(null)} className="text-green-600 hover:text-green-800 text-xs font-mono">dismiss</button>
+          </div>
+        )}
+
         <div className="flex flex-col gap-3">
           <div>
             <h2 className="text-2xl font-semibold text-foreground tracking-tight">Travelers</h2>
             <p className="text-sm text-muted-foreground font-medium mt-1">
-              A curated directory of returning clients, customer profiles, and new inquiry opportunities.
+              Customer profiles, travel history, and inquiry activity.
             </p>
           </div>
 
@@ -243,7 +260,7 @@ export function TravelersView({ useNewReadOverride }: TravelersViewProps = {}) {
                 </p>
               </div>
               <div className="rounded-2xl border border-border/60 bg-card/80 p-3">
-                <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground font-mono">Repeat Clients</p>
+                <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground font-mono">Repeat Customers</p>
                 <p className="mt-1 text-xl font-semibold text-foreground">
                   {isNewReadActive ? kpis.repeatTravelers : totalRepeatClientsLegacy}
                 </p>
@@ -270,7 +287,7 @@ export function TravelersView({ useNewReadOverride }: TravelersViewProps = {}) {
                 }`}
               >
                 <RotateCcw className="h-4 w-4" />
-                <span className="font-medium">Repeat Only</span>
+                <span className="font-medium">Repeat Customers</span>
               </button>
               <label className="relative block w-full sm:w-[220px]">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -499,6 +516,38 @@ export function TravelersView({ useNewReadOverride }: TravelersViewProps = {}) {
           )}
         </div>
       </div>
+
+      {isInquiryModalOpen && selectedTravelerForInquiry && (
+        <LeadFormModal
+          isEdit={false}
+          defaultValues={{
+            fullName: selectedTravelerForInquiry.displayName,
+            email: selectedTravelerForInquiry.email || '',
+            phone: selectedTravelerForInquiry.phone || '',
+            whatsapp: selectedTravelerForInquiry.phone || '',
+            selectedTravelerId: selectedTravelerForInquiry.id,
+            destination: '',
+            leadSource: 'referral',
+            tripType: 'Custom Itinerary',
+            status: 'inquiry_received',
+            priority: 'medium',
+            dealValue: 5000,
+            numberOfTravelers: '1',
+            budget: '₹5,000',
+            assignedTo: currentUser?.id || team[0]?.id || '',
+          }}
+          csvImportMessage={null}
+          team={team}
+          onSubmit={handleSubmitNewInquiry}
+          onClose={() => {
+            setIsInquiryModalOpen(false);
+            setSelectedTravelerForInquiry(null);
+            setInquiryFormError(null);
+          }}
+          onDismissCsvMessage={() => {}}
+          formError={inquiryFormError}
+        />
+      )}
     </div>
   );
 }

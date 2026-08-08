@@ -13,9 +13,9 @@ export function createLeadsSlice(set: SetState, get: GetState) {
     notes: {} as Record<string, LeadNote[]>,
     activities: {} as Record<string, LeadActivity[]>,
 
-    addLead: async (newLeadData: Omit<Lead, 'id' | 'createdAt' | 'updatedAt' | 'aiScore' | 'aiSummary'>) => {
+    addLead: async (newLeadData: Omit<Lead, 'id' | 'createdAt' | 'updatedAt' | 'aiScore' | 'aiSummary'> & { id?: string }) => {
       console.log('addLead in slice called with data:', newLeadData);
-      const id = `lead-${generateId()}`;
+      const id = newLeadData.id || `lead-${generateId()}`;
       const now = new Date().toISOString();
       const currentUser = get().currentUser;
       if (!currentUser) {

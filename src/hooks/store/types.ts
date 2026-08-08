@@ -87,7 +87,7 @@ export interface CRMStore {
   setImpersonateTenant: (tenantId: string | null, tenantName?: string) => void;
 
   // Leads actions
-  addLead: (lead: Omit<Lead, 'id' | 'createdAt' | 'updatedAt' | 'aiScore' | 'aiSummary'>) => Promise<void>;
+  addLead: (lead: Omit<Lead, 'id' | 'createdAt' | 'updatedAt' | 'aiScore' | 'aiSummary'> & { id?: string }) => Promise<void>;
   updateLead: (id: string, updates: Partial<Lead>) => Promise<void>;
   deleteLead: (id: string) => Promise<void>;
   addLeadNote: (leadId: string, authorId: string, authorName: string, content: string) => Promise<void>;

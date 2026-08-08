@@ -5,6 +5,7 @@ import { useForm, type Resolver } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { leadSchema, type LeadFormData, LEAD_DEFAULTS } from '@/lib/schemas';
 import { LEAD_SOURCE_OPTIONS, PRIORITY_OPTIONS } from '@/lib/constants';
+import { generateId } from '@/lib/utils';
 import type { Lead, User } from '@/types';
 
 interface LeadFormModalProps {
@@ -12,7 +13,7 @@ interface LeadFormModalProps {
   defaultValues: Partial<Lead>;
   csvImportMessage: string | null;
   team: User[];
-  onSubmit: (data: LeadFormData) => void;
+  onSubmit: (data: LeadFormData) => void | Promise<void>;
   onClose: () => void;
   onDismissCsvMessage: () => void;
   formError?: string | null;
@@ -35,6 +36,10 @@ export function LeadFormModal({
   formError,
   onValidationError,
 }: LeadFormModalProps) {
+  const [isSubmitting, setIsSubmitting] = React.useState(false);
+  const isTravelerPreselected = Boolean(defaultValues.selectedTravelerId);
+  const sessionFormIdRef = React.useRef<string>(`lead-${generateId()}`);
+
   const { register, handleSubmit, formState: { errors } } = useForm<LeadFormData>({
     resolver: zodResolver(leadSchema) as Resolver<LeadFormData>,
     defaultValues: {
@@ -46,8 +51,22 @@ export function LeadFormModal({
     },
   });
 
+  const handleFormSubmit = async (data: LeadFormData) => {
+    if (isSubmitting) return;
+    setIsSubmitting(true);
+    try {
+      await onSubmit({
+        ...data,
+        id: sessionFormIdRef.current,
+      } as LeadFormData & { id?: string });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const inputClass = "h-10 rounded-xl bg-background border border-input px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/10";
   const inputErrorClass = "h-10 rounded-xl bg-background border border-red-300 px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-red-500 focus:ring-2 focus:ring-red-100";
+  const readOnlyInputClass = "h-10 rounded-xl bg-secondary/60 border border-border/80 px-3 text-sm text-muted-foreground cursor-not-allowed select-none";
   const selectClass = "h-10 rounded-xl bg-background border border-input px-3 text-sm text-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/10";
   const selectErrorClass = "h-10 rounded-xl bg-background border border-red-300 px-3 text-sm text-foreground focus:outline-none focus:border-red-500 focus:ring-2 focus:ring-red-100";
   const textareaClass = "rounded-xl bg-background border border-input p-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/10 resize-none";
@@ -57,7 +76,7 @@ export function LeadFormModal({
       className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
       role="dialog"
       aria-modal="true"
-      aria-label={isEdit ? 'Edit lead' : 'Create new lead'}
+      aria-label={isEdit ? 'Edit lead' : isTravelerPreselected ? 'New Inquiry for Traveler' : 'Create new lead'}
     >
       <motion.div
         initial={{ scale: 0.96, opacity: 0 }}
@@ -67,17 +86,18 @@ export function LeadFormModal({
       >
         <div className="flex h-14 items-center justify-between px-5 border-b border-border/60 bg-secondary/50">
           <span className="font-heading font-bold text-foreground text-xs uppercase tracking-wider select-none">
-            {isEdit ? 'Edit Booking Details' : 'New Booking Entry'}
+            {isEdit ? 'Edit Booking Details' : isTravelerPreselected ? 'New Inquiry for Existing Traveler' : 'New Booking Entry'}
           </span>
           <button
             onClick={onClose}
-            className="p-2 rounded-xl text-muted-foreground hover:text-foreground hover:bg-secondary transition-all cursor-pointer"
+            disabled={isSubmitting}
+            className="p-2 rounded-xl text-muted-foreground hover:text-foreground hover:bg-secondary transition-all cursor-pointer disabled:opacity-50"
           >
             <X className="h-4 w-4" />
           </button>
         </div>
 
-        <form onSubmit={handleSubmit(onSubmit, (errors) => {
+        <form onSubmit={handleSubmit(handleFormSubmit, (errors) => {
           const firstError = Object.values(errors)[0];
           const msg = firstError?.message || 'Please fix the errors below';
           onValidationError?.(msg);
@@ -93,6 +113,13 @@ export function LeadFormModal({
             </div>
           )}
 
+          {isTravelerPreselected && (
+            <div className="px-4 py-2.5 rounded-xl bg-primary/10 border border-primary/20 text-xs text-primary font-medium flex items-center justify-between">
+              <span>Selected Traveler Profile Linked: <strong>{defaultValues.fullName}</strong></span>
+              <span className="font-mono text-[10px] uppercase bg-primary/20 px-2 py-0.5 rounded-md">ID: {String(defaultValues.selectedTravelerId).slice(0, 8)}...</span>
+            </div>
+          )}
+
           {formError && (
             <div className="px-4 py-2 rounded-lg text-sm font-medium bg-red-50 border border-red-200 text-red-700">
               {formError}
@@ -104,9 +131,10 @@ export function LeadFormModal({
               <label className="text-muted-foreground font-mono text-[10px] uppercase font-semibold tracking-wider">Traveler Name</label>
               <input
                 type="text"
+                readOnly={isTravelerPreselected}
                 placeholder="e.g. Richard Hendricks"
                 {...register('fullName')}
-                className={errors.fullName ? inputErrorClass : inputClass}
+                className={isTravelerPreselected ? readOnlyInputClass : errors.fullName ? inputErrorClass : inputClass}
               />
               <FieldError message={errors.fullName?.message} />
             </div>
@@ -127,9 +155,10 @@ export function LeadFormModal({
               <label className="text-muted-foreground font-mono text-[10px] uppercase font-semibold tracking-wider">Email</label>
               <input
                 type="email"
+                readOnly={isTravelerPreselected}
                 placeholder="richard@piedpiper.com"
                 {...register('email')}
-                className={errors.email ? inputErrorClass : inputClass}
+                className={isTravelerPreselected ? readOnlyInputClass : errors.email ? inputErrorClass : inputClass}
               />
               <FieldError message={errors.email?.message} />
             </div>
@@ -137,9 +166,10 @@ export function LeadFormModal({
               <label className="text-muted-foreground font-mono text-[10px] uppercase font-semibold tracking-wider">Phone</label>
               <input
                 type="text"
+                readOnly={isTravelerPreselected}
                 placeholder="+1 555-0182"
                 {...register('phone')}
-                className={inputClass}
+                className={isTravelerPreselected ? readOnlyInputClass : inputClass}
               />
             </div>
             <div className="flex flex-col gap-1.5">
@@ -252,15 +282,19 @@ export function LeadFormModal({
             <button
               type="button"
               onClick={onClose}
-              className="h-10 px-5 rounded-xl bg-background border border-input hover:border-primary/40 text-sm font-semibold text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+              disabled={isSubmitting}
+              className="h-10 px-5 rounded-xl bg-background border border-input hover:border-primary/40 text-sm font-semibold text-muted-foreground hover:text-foreground transition-colors cursor-pointer disabled:opacity-50"
             >
               Cancel
             </button>
             <button
               type="submit"
-              className="h-10 px-5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors cursor-pointer shadow-md shadow-primary/20"
+              disabled={isSubmitting}
+              className="h-10 px-5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors cursor-pointer shadow-md shadow-primary/20 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {isEdit ? 'Save Changes' : 'Create Booking'}
+              {isSubmitting
+                ? (isEdit ? 'Saving...' : 'Creating...')
+                : (isEdit ? 'Save Changes' : isTravelerPreselected ? 'Create Inquiry' : 'Create Entry')}
             </button>
           </div>
         </form>

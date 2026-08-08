@@ -22,3 +22,7 @@ export const useCRMStore = create<CRMStore>()((set, get) => ({
   ...createTeamSlice(set, get),
   ...createSettingsSlice(set, get),
 }));
+
+if (typeof window !== 'undefined') {
+  (window as unknown as Record<string, unknown>).useCRMStore = useCRMStore;
+}
