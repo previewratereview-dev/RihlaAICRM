@@ -30,9 +30,9 @@ export async function POST(request: NextRequest) {
     // Proceed with server configuration if body is empty or non-JSON
   }
 
-  const demoEmail = process.env.DEMO_USER_EMAIL;
-  const demoPassword = process.env.DEMO_USER_PASSWORD;
-  const demoTenantId = process.env.DEMO_TENANT_ID;
+  const demoEmail = process.env.DEMO_USER_EMAIL?.trim();
+  const demoPassword = process.env.DEMO_USER_PASSWORD?.trim();
+  const demoTenantId = process.env.DEMO_TENANT_ID?.trim();
 
   if (!demoEmail || !demoPassword || !demoTenantId) {
     logger.warn('[DemoSession] Server demo configuration is missing (DEMO_USER_EMAIL, DEMO_USER_PASSWORD, or DEMO_TENANT_ID).');
@@ -128,7 +128,7 @@ export async function POST(request: NextRequest) {
   }
 
   // Tenant boundary verification
-  if (profile.tenant_id !== demoTenantId) {
+  if (profile.tenant_id?.trim() !== demoTenantId) {
     logger.error('[DemoSession] Tenant mismatch for demo user.', { actualTenant: profile.tenant_id, expectedTenant: demoTenantId });
     await supabase.auth.signOut({ scope: 'local' });
     return NextResponse.json(
