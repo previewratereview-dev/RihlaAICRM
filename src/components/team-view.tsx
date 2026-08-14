@@ -37,16 +37,8 @@ export function TeamView() {
   const [searchTerm, setSearchTerm] = useState('');
   const [roleFilter, setRoleFilter] = useState('all');
 
-  // Mark the currently logged-in user as online client-side
-  const teamWithPresence = useMemo(() => {
-    return team.map((member) => ({
-      ...member,
-      isOnline: member.id === currentUser?.id ? true : member.isOnline,
-    }));
-  }, [team, currentUser?.id]);
-
   const filteredTeam = useMemo(() => {
-    return teamWithPresence.filter((member) => {
+    return team.filter((member) => {
       const matchesSearch =
         !searchTerm.trim() ||
         member.fullName.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -54,9 +46,7 @@ export function TeamView() {
       const matchesRole = roleFilter === 'all' || member.role === roleFilter;
       return matchesSearch && matchesRole;
     });
-  }, [teamWithPresence, searchTerm, roleFilter]);
-
-  const onlineCount = teamWithPresence.filter((m) => m.isOnline).length;
+  }, [team, searchTerm, roleFilter]);
 
   return (
     <div className="h-full w-full overflow-y-auto p-6 lg:p-8 scrollbar-thin">
@@ -70,8 +60,7 @@ export function TeamView() {
               Team Management
             </h2>
             <p className="text-sm text-muted-foreground font-medium mt-1">
-              {teamWithPresence.length} members &middot;{' '}
-              <span className="text-emerald-600 font-semibold">{onlineCount} online</span>
+              {team.length} {team.length === 1 ? 'member' : 'members'}
             </p>
           </div>
         </div>
@@ -91,7 +80,7 @@ export function TeamView() {
             <span className={`inline-flex items-center justify-center h-5 min-w-5 px-1.5 rounded-full text-[10px] font-bold ${
               activeTab === 'directory' ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'
             }`}>
-              {teamWithPresence.length}
+              {team.length}
             </span>
           </button>
 
@@ -174,18 +163,13 @@ export function TeamView() {
                         }`}
                       >
                         <div className="flex items-start gap-4">
-                          {/* Avatar + online dot */}
+                          {/* Avatar */}
                           <div className="relative shrink-0">
                             <div className={`h-14 w-14 rounded-full bg-gradient-to-br from-primary to-primary/70 text-white flex items-center justify-center text-lg font-bold shadow-md ${
                               isCurrentUser ? 'ring-2 ring-primary ring-offset-2' : ''
                             }`}>
                               {getInitials(member.fullName)}
                             </div>
-                            <span
-                              className={`absolute bottom-0.5 right-0.5 h-3.5 w-3.5 rounded-full border-2 border-background ${
-                                member.isOnline ? 'bg-emerald-500' : 'bg-muted-foreground/30'
-                              }`}
-                            />
                           </div>
 
                           <div className="flex-1 min-w-0">
@@ -209,18 +193,6 @@ export function TeamView() {
                             <div className="flex items-center gap-1.5 mt-2 text-xs text-muted-foreground">
                               <Mail className="h-3 w-3 shrink-0" />
                               <span className="truncate">{member.email}</span>
-                            </div>
-
-                            <div className="mt-2">
-                              <span
-                                className={`text-[10px] font-mono font-bold uppercase tracking-wide px-2 py-0.5 rounded-full ${
-                                  member.isOnline
-                                    ? 'text-emerald-700 bg-emerald-50'
-                                    : 'text-muted-foreground bg-secondary/50'
-                                }`}
-                              >
-                                {member.isOnline ? '● Online' : '○ Offline'}
-                              </span>
                             </div>
                           </div>
                         </div>

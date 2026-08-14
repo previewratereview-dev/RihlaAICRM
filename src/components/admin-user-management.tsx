@@ -293,16 +293,15 @@ export function AdminUserManagement() {
                     </span>
                   </td>
                   <td className="px-4 py-3">
-                    <div className="flex items-center gap-1.5">
-                      <div className={`h-2 w-2 rounded-full ${user.isOnline ? 'bg-emerald-500' : 'bg-muted-foreground'}`} />
-                      <span className="text-xs">{user.isOnline ? 'Online' : 'Offline'}</span>
-                    </div>
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400">
+                      Active
+                    </span>
                   </td>
                   <td className="px-4 py-3 text-xs text-muted-foreground">
                     {user.role === 'admin' ? 'Full Access' : user.role === 'viewer' ? 'Read-only' : 'Standard'}
                   </td>
-                  <td className="px-4 py-3 text-xs text-muted-foreground">
-                    {user.isOnline ? 'Just now' : '2 days ago'}
+                  <td className="px-4 py-3 text-xs text-muted-foreground font-mono">
+                    —
                   </td>
                   <td className="px-4 py-3 text-right">
                     <div className="flex items-center justify-end gap-2">

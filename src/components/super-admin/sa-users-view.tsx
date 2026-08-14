@@ -220,11 +220,9 @@ export function SuperAdminUsersView() {
                       <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
                         user.status === 'deactivated'
                           ? 'bg-red-100 text-red-600 dark:bg-red-950 dark:text-red-400'
-                          : user.isOnline
-                          ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-950 dark:text-emerald-400'
-                          : 'bg-secondary text-muted-foreground'
+                          : 'bg-emerald-100 text-emerald-600 dark:bg-emerald-950 dark:text-emerald-400'
                       }`}>
-                        {user.status === 'deactivated' ? 'deactivated' : user.isOnline ? 'online' : 'offline'}
+                        {user.status === 'deactivated' ? 'deactivated' : 'active'}
                       </span>
                     </td>
                     <td className="p-4 text-right">

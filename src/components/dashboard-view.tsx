@@ -24,7 +24,7 @@ import {
   Users,
   DollarSign,
   Cpu,
-  Smile,
+  Compass,
   ArrowUpRight,
   ChevronRight,
 } from 'lucide-react';
@@ -194,10 +194,10 @@ export function DashboardView() {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-5">
         {[
           { label: 'Unique Travelers', value: crmMetrics.uniqueTravelersCount, icon: Users, trend: `${crmMetrics.repeatClientsCount} repeat`, trendColor: 'text-emerald-600', trendBg: 'bg-emerald-50', iconBg: 'bg-blue-50', iconColor: 'text-blue-600' },
-          { label: 'Recognized Revenue', value: formatCurrency(crmMetrics.recognizedRevenue), icon: DollarSign, trend: 'Confirmed', trendColor: 'text-emerald-600', trendBg: 'bg-emerald-50', iconBg: 'bg-emerald-50', iconColor: 'text-emerald-600' },
+          { label: 'Open Inquiries', value: crmMetrics.openInquiries, icon: Compass, trend: 'Active', trendColor: 'text-amber-600', trendBg: 'bg-amber-50', iconBg: 'bg-amber-50', iconColor: 'text-amber-600' },
+          { label: 'Confirmed Trips', value: crmMetrics.confirmedBookings, icon: Cpu, trend: 'Confirmed', trendColor: 'text-emerald-600', trendBg: 'bg-emerald-50', iconBg: 'bg-emerald-50', iconColor: 'text-emerald-600' },
           { label: 'Conversion Rate', value: `${crmMetrics.conversionRate}%`, icon: TrendingUp, trend: 'Closed-Won', trendColor: 'text-blue-600', trendBg: 'bg-blue-50', iconBg: 'bg-blue-50', iconColor: 'text-blue-600' },
-          { label: 'Confirmed Trips', value: crmMetrics.confirmedBookings, icon: Cpu, trend: 'Confirmed', trendColor: 'text-amber-600', trendBg: 'bg-amber-50', iconBg: 'bg-amber-50', iconColor: 'text-amber-600' },
-          { label: 'Client CSAT', value: '98.4%', icon: Smile, trend: 'Stable', trendColor: 'text-emerald-600', trendBg: 'bg-emerald-50', iconBg: 'bg-emerald-50', iconColor: 'text-emerald-600' },
+          { label: 'Recognized Revenue', value: formatCurrency(crmMetrics.recognizedRevenue), icon: DollarSign, trend: 'Confirmed', trendColor: 'text-emerald-600', trendBg: 'bg-emerald-50', iconBg: 'bg-emerald-50', iconColor: 'text-emerald-600' },
         ].map((stat, idx) => (
           <motion.div
             key={idx}
