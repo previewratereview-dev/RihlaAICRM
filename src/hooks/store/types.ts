@@ -68,6 +68,7 @@ export interface CRMStore {
   // Auth actions
   login: (email: string, password: string, isPreviewFlow?: boolean) => Promise<{ success: boolean; error: string | null }>;
   logout: () => Promise<void>;
+  resetSessionState: () => void;
   restoreSession: () => Promise<void>;
   syncData: () => Promise<void>;
   logAuditEvent: (action: AuditLog['action'], details: string) => Promise<void>;

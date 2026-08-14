@@ -15,11 +15,16 @@ interface NotificationStore {
   notifications: AppNotification[];
   markRead: (id: string) => void;
   markAllRead: () => void;
+  clear: () => void;
   syncFromCRM: (tasks: Task[], conversations: Conversation[], userId: string) => void;
 }
 
 export const useNotificationStore = create<NotificationStore>((set, get) => ({
   notifications: [],
+
+  clear: () => {
+    set({ notifications: [] });
+  },
 
   markRead: (id) => {
     set({

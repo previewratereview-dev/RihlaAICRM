@@ -7,6 +7,29 @@ import { enrichLeadsWithAIScores } from '@/lib/ai/score-integration';
 import { getActiveTenantId } from './helpers';
 import { logger } from '@/lib/logger';
 
+import { useNotificationStore } from '../use-notification-store';
+
+const DEFAULT_SESSION_SETTINGS: import('./types').Settings = {
+  agencyName: 'Rihla',
+  logoText: 'RIHLA',
+  accentColor: '#FF6B35',
+  systemPrompt: '',
+  makeWebhookUrl: '',
+  emailAutomation: true,
+  emailStatusAutomation: false,
+  emailFromName: '',
+  emailReplyTo: '',
+  emailFollowUpTemplate: '',
+  whatsappAutomation: true,
+  smsAutomation: false,
+  dailyTargetScore: 50,
+};
+
+const DEFAULT_SESSION_BRANDING = {
+  agencyName: 'Rihla',
+  primaryColor: '#FF6B35',
+};
+
 export interface AuthAdapter {
   login: (email: string, password: string) => Promise<{ success: boolean; error: string | null; user?: User }>;
   logout: () => Promise<void>;
@@ -27,6 +50,35 @@ export function createAuthSlice(set: SetState, get: GetState) {
     tenants: [] as import('@/types').Tenant[],
     tenantsWithStats: [] as import('@/types').TenantWithStats[],
     platformUsers: [] as import('@/types').PlatformUser[],
+
+    resetSessionState: () => {
+      set({
+        currentUser: null,
+        tenantId: null,
+        sessionLoading: false,
+        dataLoading: false,
+        leads: [],
+        tasks: [],
+        conversations: [],
+        notes: {},
+        activities: {},
+        messages: {},
+        auditLogs: [],
+        team: [],
+        settings: { ...DEFAULT_SESSION_SETTINGS },
+        tenantBranding: { ...DEFAULT_SESSION_BRANDING },
+        tenantFeatures: {},
+        impersonateTenantId: null,
+        impersonateTenantName: null,
+        impersonationStartedAt: null,
+        impersonationRemainingMs: null,
+        tenants: [],
+        tenantsWithStats: [],
+        platformUsers: [],
+        globalSearchQuery: '',
+        typingState: {},
+      });
+    },
 
     setAuthAdapter: (adapter: AuthAdapter) => {
       authAdapter = adapter;
@@ -74,15 +126,34 @@ export function createAuthSlice(set: SetState, get: GetState) {
     },
 
     logout: async () => {
-      const user = get().currentUser;
-      if (user) {
-        await get().logAuditEvent('logout', `${user.fullName} logged out.`);
+      // 1. Best-effort audit event (failure MUST NOT block logout)
+      try {
+        const user = get().currentUser;
+        if (user) {
+          await get().logAuditEvent('logout', `${user.fullName} logged out.`);
+        }
+      } catch (e) {
+        logger.warn('Failed to record logout audit event (non-blocking)', { error: String(e) });
       }
+
+      // 2. Clear all session-scoped client state
+      get().resetSessionState();
+      useNotificationStore.getState().clear();
+
+      // 3. Supabase signOut
       const adapter = getAuthAdapter();
       if (adapter) {
-        await adapter.logout();
+        try {
+          await adapter.logout();
+        } catch (e) {
+          logger.warn('Failed to sign out via auth adapter', { error: String(e) });
+        }
       }
-      set({ currentUser: null, tenantId: null, leads: [], tasks: [], conversations: [], notes: {}, activities: {}, messages: {}, auditLogs: [], tenants: [], tenantsWithStats: [], platformUsers: [] });
+
+      // 4. Hard navigation to /login (destroys in-memory React/RSC AI context)
+      if (typeof window !== 'undefined') {
+        window.location.replace('/login');
+      }
     },
 
     restoreSession: async () => {

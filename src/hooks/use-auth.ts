@@ -3,6 +3,8 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import type { User, UserRole } from '@/types';
+import { useCRMStore } from './use-crm-store';
+import { useNotificationStore } from './use-notification-store';
 
 interface AuthState {
   user: User | null;
@@ -241,9 +243,14 @@ export function useAuth() {
     const isLocalMode = !process.env.NEXT_PUBLIC_SUPABASE_URL;
     if (isLocalMode) return;
 
-    const { data: subscription } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      if (!session?.user) {
+    const { data: subscription } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (!session?.user || event === 'SIGNED_OUT') {
         setState({ user: null, loading: false, error: null });
+        if (typeof window !== 'undefined' && window.location.pathname.startsWith('/app')) {
+          useCRMStore.getState().resetSessionState();
+          useNotificationStore.getState().clear();
+          window.location.replace('/login');
+        }
         return;
       }
 

@@ -114,12 +114,15 @@ export function CrmShell({ initialTab, useNewTravelersRead, useNewInquiriesRead 
   }, [sessionLoading]);
 
   useEffect(() => {
-    // Only redirect to login after AuthBridge has finished initializing.
-    // getAuthAdapter() returns non-null once AuthBridge has mounted.
-    // const hasAuthBridge = !!getAuthAdapter();
-    // if (!sessionLoading && !currentUser && hasAuthBridge) {
-    //   router.push('/login');
-    // }
+    // Secondary client defense: if session is resolved and no authenticated user exists, redirect to login
+    const hasAuthBridge = !!getAuthAdapter();
+    if (!sessionLoading && !currentUser && hasAuthBridge) {
+      if (typeof window !== 'undefined') {
+        window.location.replace('/login');
+      } else {
+        router.replace('/login');
+      }
+    }
   }, [sessionLoading, currentUser, router]);
 
   // Fetch subscription status — skip entirely for super admins (no billing gates)
@@ -165,7 +168,9 @@ export function CrmShell({ initialTab, useNewTravelersRead, useNewInquiriesRead 
     );
   }
 
-  // if (!currentUser) return null;
+  if (!currentUser) {
+    return null;
+  }
 
   const renderActiveView = () => {
     switch (activeTab) {
