@@ -79,7 +79,7 @@ export function AnalyticsView() {
   };
 
   const statCards = [
-    { label: 'Recognized Revenue', value: formatCurrency(crmMetrics.recognizedRevenue), icon: DollarSign },
+    { label: 'Pipeline Value', value: formatCurrency(crmMetrics.pipelineEstimatedValue), icon: DollarSign },
     { label: 'Confirmed Bookings', value: String(crmMetrics.confirmedBookings), icon: Users },
     { label: 'Conversion Rate', value: `${crmMetrics.conversionRate}%`, icon: TrendingUp },
     { label: 'Avg. Deal Size', value: formatCurrency(crmMetrics.avgDealSize), icon: BarChart3 },

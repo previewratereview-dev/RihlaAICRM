@@ -197,7 +197,7 @@ export function DashboardView() {
           { label: 'Open Inquiries', value: crmMetrics.openInquiries, icon: Compass, trend: 'Active', trendColor: 'text-amber-600', trendBg: 'bg-amber-50', iconBg: 'bg-amber-50', iconColor: 'text-amber-600' },
           { label: 'Confirmed Trips', value: crmMetrics.confirmedBookings, icon: Cpu, trend: 'Confirmed', trendColor: 'text-emerald-600', trendBg: 'bg-emerald-50', iconBg: 'bg-emerald-50', iconColor: 'text-emerald-600' },
           { label: 'Conversion Rate', value: `${crmMetrics.conversionRate}%`, icon: TrendingUp, trend: 'Closed-Won', trendColor: 'text-blue-600', trendBg: 'bg-blue-50', iconBg: 'bg-blue-50', iconColor: 'text-blue-600' },
-          { label: 'Recognized Revenue', value: formatCurrency(crmMetrics.recognizedRevenue), icon: DollarSign, trend: 'Confirmed', trendColor: 'text-emerald-600', trendBg: 'bg-emerald-50', iconBg: 'bg-emerald-50', iconColor: 'text-emerald-600' },
+          { label: 'Pipeline Value', value: formatCurrency(crmMetrics.pipelineEstimatedValue), icon: DollarSign, trend: 'Estimated', trendColor: 'text-purple-600', trendBg: 'bg-purple-50', iconBg: 'bg-purple-50', iconColor: 'text-purple-600' },
         ].map((stat, idx) => (
           <motion.div
             key={idx}
@@ -228,7 +228,7 @@ export function DashboardView() {
           <div className="flex justify-between items-center mb-6">
             <div>
               <h3 className="text-sm font-bold text-foreground uppercase tracking-wider font-mono">Revenue Pipeline Growth</h3>
-              <p className="text-xs text-muted-foreground font-medium mt-1">Closed contract revenue history.</p>
+              <p className="text-xs text-muted-foreground font-medium mt-1">Closed contract deal value history.</p>
             </div>
           </div>
           <div className="h-[200px] w-full min-w-0">

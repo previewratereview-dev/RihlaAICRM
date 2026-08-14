@@ -60,23 +60,28 @@ describe('Phase F1A: Product Truth & Shell Integrity', () => {
   });
 
   // 1. Static Scan: Fabricated Metrics & Values Absent from Source Code
-  it('A. Source code does not contain hardcoded 98.4% CSAT or "2 days ago" login simulation', () => {
+  it('A. Source code does not contain hardcoded 98.4% CSAT, "Recognized Revenue", or "2 days ago" login simulation', () => {
     const dashboardFile = path.join(process.cwd(), 'src/components/dashboard-view.tsx');
     const userMgmtFile = path.join(process.cwd(), 'src/components/admin-user-management.tsx');
     const teamViewFile = path.join(process.cwd(), 'src/components/team-view.tsx');
+    const analyticsFile = path.join(process.cwd(), 'src/components/analytics-view.tsx');
 
     const dashboardContent = fs.readFileSync(dashboardFile, 'utf-8');
     const userMgmtContent = fs.readFileSync(userMgmtFile, 'utf-8');
     const teamViewContent = fs.readFileSync(teamViewFile, 'utf-8');
+    const analyticsContent = fs.readFileSync(analyticsFile, 'utf-8');
 
     expect(dashboardContent).not.toMatch(/98\.4%/);
     expect(dashboardContent).not.toMatch(/Client CSAT/i);
+    expect(dashboardContent).not.toMatch(/Recognized Revenue/i);
+    expect(analyticsContent).not.toMatch(/Recognized Revenue/i);
     expect(userMgmtContent).not.toMatch(/2 days ago/);
+    expect(userMgmtContent).not.toMatch(/<th>Status<\/th>/i);
     expect(teamViewContent).not.toMatch(/online now/i);
   });
 
   // 2. Dashboard KPI Card Calculations
-  it('B. Dashboard renders real calculated metrics (Open Inquiries) without fabricated CSAT', () => {
+  it('B. Dashboard renders real calculated metrics (Open Inquiries & Pipeline Value) without fabricated CSAT or Recognized Revenue', () => {
     const mockLeads: Lead[] = [
       {
         id: 'inq-1',
@@ -124,16 +129,17 @@ describe('Phase F1A: Product Truth & Shell Integrity', () => {
 
     render(<DashboardView />);
 
-    // Assert "Client CSAT" and "98.4%" are NOT present
+    // Assert "Client CSAT", "98.4%", and "Recognized Revenue" are NOT present
     expect(screen.queryByText(/Client CSAT/i)).toBeNull();
     expect(screen.queryByText('98.4%')).toBeNull();
+    expect(screen.queryByText(/Recognized Revenue/i)).toBeNull();
 
-    // Assert real Open Inquiries card is rendered with calculated value (1 open inquiry)
+    // Assert truthful Open Inquiries & Pipeline Value cards are rendered
     expect(screen.getByText('Open Inquiries')).toBeDefined();
+    expect(screen.getByText('Pipeline Value')).toBeDefined();
     expect(screen.getByText('Unique Travelers')).toBeDefined();
     expect(screen.getByText('Confirmed Trips')).toBeDefined();
     expect(screen.getByText('Conversion Rate')).toBeDefined();
-    expect(screen.getByText('Recognized Revenue')).toBeDefined();
   });
 
   // 3. DevTools Production Guard & Positioning
@@ -158,8 +164,8 @@ describe('Phase F1A: Product Truth & Shell Integrity', () => {
     vi.unstubAllEnvs();
   });
 
-  // 4. User Management Truthfulness (Status, Last Login & Permissions)
-  it('E. User Management displays truthful account status and dash for unauthenticated last login', () => {
+  // 4. User Management Truthfulness (Status removed, Last Login dash & Permissions preserved)
+  it('E. User Management removes unpersisted Status column and renders dash for unauthenticated last login', () => {
     const mockUsers: User[] = [
       {
         id: 'u-1',
@@ -186,15 +192,12 @@ describe('Phase F1A: Product Truth & Shell Integrity', () => {
 
     render(<AdminUserManagement />);
 
-    // Assert "Online" and "Offline" status strings are NOT present
+    // Assert "Online", "Offline", and unpersisted "Status" / "Active" header/cells are NOT present
     expect(screen.queryByText('Online')).toBeNull();
     expect(screen.queryByText('Offline')).toBeNull();
+    expect(screen.queryByText('Status')).toBeNull();
     expect(screen.queryByText('2 days ago')).toBeNull();
     expect(screen.queryByText('Just now')).toBeNull();
-
-    // Assert Active badges are rendered
-    const activeBadges = screen.getAllByText('Active');
-    expect(activeBadges.length).toBe(2);
 
     // Assert Last Login is rendered truthfully as dash
     const dashes = screen.getAllByText('—');

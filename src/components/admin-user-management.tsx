@@ -274,7 +274,6 @@ export function AdminUserManagement() {
               <tr>
                 <th className="px-4 py-3 font-medium">User</th>
                 <th className="px-4 py-3 font-medium">Role</th>
-                <th className="px-4 py-3 font-medium">Status</th>
                 <th className="px-4 py-3 font-medium">Permissions</th>
                 <th className="px-4 py-3 font-medium">Last Login</th>
                 <th className="px-4 py-3 font-medium text-right">Actions</th>
@@ -290,11 +289,6 @@ export function AdminUserManagement() {
                   <td className="px-4 py-3">
                     <span className="text-[10px] font-mono bg-muted text-muted-foreground px-2 py-1 rounded-md uppercase">
                       {user.role}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400">
-                      Active
                     </span>
                   </td>
                   <td className="px-4 py-3 text-xs text-muted-foreground">
