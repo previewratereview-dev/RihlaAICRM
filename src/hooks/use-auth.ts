@@ -218,7 +218,7 @@ export function useAuth() {
     [supabase]
   );
 
-  const logout = useCallback(async () => {
+  const logout = useCallback(async (options?: { scope?: 'global' | 'local' | 'others' }) => {
     setState((s) => ({ ...s, loading: true, error: null }));
 
     // Local Mode — just clear state, no Supabase session to sign out
@@ -229,7 +229,7 @@ export function useAuth() {
     }
 
     try {
-      await supabase.auth.signOut();
+      await supabase.auth.signOut(options);
       setState({ user: null, loading: false, error: null });
     } catch (e: unknown) {
       setState((p) => ({ ...p, loading: false, error: e instanceof Error ? e.message : 'Logout failed' }));

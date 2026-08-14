@@ -69,22 +69,36 @@ export function CopilotRegistrationInner() {
       } else {
         isPreviewingRef.current = false;
         setPreviewMode(false);
+        const isSessionConflict = result.code === 'DEMO_REQUIRES_SIGN_OUT';
         setUIState((prev: UIMessage[]) => [
           ...prev,
           {
             id: Date.now().toString(),
             role: 'assistant',
             display: (
-              <div className="p-3.5 rounded-xl border border-destructive/30 bg-destructive/10 text-destructive text-sm space-y-2">
-                <p className="font-semibold">Unable to start live demo session</p>
+              <div className={`p-3.5 rounded-xl border ${isSessionConflict ? 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300' : 'border-destructive/30 bg-destructive/10 text-destructive'} text-sm space-y-2`}>
+                <p className="font-semibold">{isSessionConflict ? 'Active Account Session Detected' : 'Unable to start live demo session'}</p>
                 <p className="text-xs opacity-90">{result.error || 'Server demo authentication is currently unavailable.'}</p>
-                <button
-                  type="button"
-                  onClick={() => window.dispatchEvent(new Event('triggerPreviewMode'))}
-                  className="mt-1 inline-flex items-center text-xs font-semibold text-primary underline hover:opacity-80"
-                >
-                  Retry Demo Connection
-                </button>
+                {isSessionConflict ? (
+                  <div className="flex items-center gap-3 pt-1">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs"
+                      onClick={() => router.push('/app')}
+                    >
+                      Go to Your Dashboard
+                    </Button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => window.dispatchEvent(new Event('triggerPreviewMode'))}
+                    className="mt-1 inline-flex items-center text-xs font-semibold text-primary underline hover:opacity-80"
+                  >
+                    Retry Demo Connection
+                  </button>
+                )}
               </div>
             ),
           },
@@ -93,10 +107,11 @@ export function CopilotRegistrationInner() {
     };
     window.addEventListener('triggerPreviewMode', handlePreview);
     return () => window.removeEventListener('triggerPreviewMode', handlePreview);
-  }, [startDemoSession, setUIState]);
+  }, [startDemoSession, setUIState, router]);
 
   const handleExitPreview = async () => {
-    await logout();
+    // Demo session exit must use local-scoped signout to avoid terminating other visitors' demo sessions
+    await logout({ scope: 'local', redirect: false });
     setPreviewMode(false);
     isPreviewingRef.current = false;
     setSetupProgress('welcome');

@@ -8,12 +8,13 @@ import { logger } from '@/lib/logger';
  * Phase F0B: Secure Server-Side Demo Session Bootstrap Endpoint
  *
  * Implements a server-only authentication path for "Try Rihla / Demo":
- * 1. Reads server-only credentials (DEMO_USER_EMAIL, DEMO_USER_PASSWORD, DEMO_TENANT_ID).
- * 2. Never accepts or processes client-supplied demo credentials.
- * 3. Authenticates against Supabase and sets session cookies via Supabase SSR.
- * 4. Authoritatively validates the authenticated user against `public.profiles`.
- * 5. Asserts the user belongs to `DEMO_TENANT_ID` and does NOT hold `super_admin` role.
- * 6. Fails closed and destroys the attempted session if any check fails.
+ * 1. Rejects client-supplied demo credentials.
+ * 2. Inspects existing session:
+ *    - If already authenticated as the verified demo user, reuses the session safely.
+ *    - If authenticated as a real user, rejects with 409 DEMO_REQUIRES_SIGN_OUT without overwriting.
+ * 3. If unauthenticated, authenticates against server-only demo credentials.
+ * 4. Authoritatively validates identity against `public.profiles` (asserts tenant match, asserts NOT super_admin).
+ * 5. Uses local-scoped signOut (`{ scope: 'local' }`) on verification failures to protect other concurrent demo visitors.
  */
 export async function POST(request: NextRequest) {
   // Reject requests attempting to supply client-side credentials
@@ -44,6 +45,49 @@ export async function POST(request: NextRequest) {
   const cookieStore = await cookies();
   const supabase = createClient(cookieStore);
 
+  // 1. Inspect existing session before establishing a demo session
+  const { data: existingSessionData } = await supabase.auth.getUser();
+  const existingUser = existingSessionData?.user;
+
+  if (existingUser) {
+    const { data: existingProfile } = await supabase
+      .from('profiles')
+      .select('id, tenant_id, role, full_name')
+      .eq('id', existingUser.id)
+      .single();
+
+    const isAlreadyDemoUser =
+      existingUser.email?.toLowerCase() === demoEmail.toLowerCase() &&
+      existingProfile?.tenant_id === demoTenantId &&
+      existingProfile?.role !== 'super_admin';
+
+    if (isAlreadyDemoUser && existingProfile) {
+      return NextResponse.json({
+        success: true,
+        destination: '/app',
+        user: {
+          id: existingUser.id,
+          email: existingUser.email,
+          fullName: existingProfile.full_name || 'Demo User',
+          role: existingProfile.role,
+          tenantId: existingProfile.tenant_id,
+        },
+      });
+    }
+
+    // Existing session belongs to a real user — fail closed, do not overwrite or sign out
+    logger.warn('[DemoSession] Blocked demo bootstrap: active real user session present.', { userId: existingUser.id });
+    return NextResponse.json(
+      {
+        success: false,
+        code: 'DEMO_REQUIRES_SIGN_OUT',
+        error: 'An active user session is already signed in. Please sign out of your account before starting the public demo.',
+      },
+      { status: 409 }
+    );
+  }
+
+  // 2. Unauthenticated visitor — authenticate demo credentials
   const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
     email: demoEmail,
     password: demoPassword,
@@ -57,7 +101,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Authoritative identity & tenant verification
+  // 3. Authoritative identity & tenant verification
   const { data: profile, error: profileError } = await supabase
     .from('profiles')
     .select('id, tenant_id, role, full_name')
@@ -66,17 +110,17 @@ export async function POST(request: NextRequest) {
 
   if (profileError || !profile) {
     logger.error('[DemoSession] Demo user profile record not found in public.profiles.', { userId: authData.user.id });
-    await supabase.auth.signOut();
+    await supabase.auth.signOut({ scope: 'local' });
     return NextResponse.json(
       { success: false, error: 'Demo profile could not be verified.' },
       { status: 403 }
     );
   }
 
-  // Security guard: Demo account MUST NOT hold super-admin or platform privileges
-  if (profile.role === 'super_admin' || profile.role === 'platform_super_admin') {
+  // Security guard: Demo account MUST NOT hold super-admin permissions
+  if (profile.role === 'super_admin') {
     logger.error('[DemoSession] Security violation: Demo user possesses super_admin role. Terminating session.', { userId: authData.user.id });
-    await supabase.auth.signOut();
+    await supabase.auth.signOut({ scope: 'local' });
     return NextResponse.json(
       { success: false, error: 'Security violation: Demo account cannot hold administrative privileges.' },
       { status: 403 }
@@ -86,7 +130,7 @@ export async function POST(request: NextRequest) {
   // Tenant boundary verification
   if (profile.tenant_id !== demoTenantId) {
     logger.error('[DemoSession] Tenant mismatch for demo user.', { actualTenant: profile.tenant_id, expectedTenant: demoTenantId });
-    await supabase.auth.signOut();
+    await supabase.auth.signOut({ scope: 'local' });
     return NextResponse.json(
       { success: false, error: 'Demo tenant configuration mismatch.' },
       { status: 403 }

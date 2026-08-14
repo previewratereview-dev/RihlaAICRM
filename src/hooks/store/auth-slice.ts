@@ -32,7 +32,7 @@ const DEFAULT_SESSION_BRANDING = {
 
 export interface AuthAdapter {
   login: (email: string, password: string) => Promise<{ success: boolean; error: string | null; user?: User }>;
-  logout: () => Promise<void>;
+  logout: (options?: { scope?: 'global' | 'local' | 'others' }) => Promise<void>;
   loadSession: () => Promise<void>;
   user: User | null;
   loading: boolean;
@@ -127,7 +127,7 @@ export function createAuthSlice(set: SetState, get: GetState) {
         const res = await fetch('/api/auth/demo-session', { method: 'POST' });
         const data = await res.json();
         if (!data.success || !data.user) {
-          return { success: false, error: data.error || 'Failed to start demo session' };
+          return { success: false, error: data.error || 'Failed to start demo session', code: data.code };
         }
         const adapter = getAuthAdapter();
         if (adapter?.loadSession) {
@@ -147,7 +147,7 @@ export function createAuthSlice(set: SetState, get: GetState) {
       }
     },
 
-    logout: async () => {
+    logout: async (options?: { scope?: 'global' | 'local' | 'others'; redirect?: boolean }) => {
       // 1. Best-effort audit event (failure MUST NOT block logout)
       try {
         const user = get().currentUser;
@@ -162,18 +162,19 @@ export function createAuthSlice(set: SetState, get: GetState) {
       get().resetSessionState();
       useNotificationStore.getState().clear();
 
-      // 3. Supabase signOut
+      // 3. Supabase signOut (defaults to global, or local if specified)
       const adapter = getAuthAdapter();
       if (adapter) {
         try {
-          await adapter.logout();
+          await adapter.logout(options?.scope ? { scope: options.scope } : undefined);
         } catch (e) {
           logger.warn('Failed to sign out via auth adapter', { error: String(e) });
         }
       }
 
-      // 4. Hard navigation to /login (destroys in-memory React/RSC AI context)
-      if (typeof window !== 'undefined') {
+      // 4. Hard navigation to /login unless explicitly disabled (destroys in-memory React/RSC AI context)
+      const shouldRedirect = options?.redirect !== false;
+      if (shouldRedirect && typeof window !== 'undefined') {
         window.location.replace('/login');
       }
     },

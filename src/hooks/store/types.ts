@@ -67,15 +67,15 @@ export interface CRMStore {
 
   // Auth actions
   login: (email: string, password: string) => Promise<{ success: boolean; error: string | null }>;
-  startDemoSession: () => Promise<{ success: boolean; error: string | null }>;
-  logout: () => Promise<void>;
+  startDemoSession: () => Promise<{ success: boolean; error: string | null; code?: string }>;
+  logout: (options?: { scope?: 'global' | 'local' | 'others'; redirect?: boolean }) => Promise<void>;
   resetSessionState: () => void;
   restoreSession: () => Promise<void>;
   syncData: () => Promise<void>;
   logAuditEvent: (action: AuditLog['action'], details: string) => Promise<void>;
   setAuthAdapter: (adapter: {
     login: (email: string, password: string) => Promise<{ success: boolean; error: string | null; user?: User }>;
-    logout: () => Promise<void>;
+    logout: (options?: { scope?: 'global' | 'local' | 'others' }) => Promise<void>;
     loadSession: () => Promise<void>;
     user: User | null;
     loading: boolean;

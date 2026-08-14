@@ -16,12 +16,15 @@ import * as path from 'path';
  * B. Client cannot submit arbitrary credentials to /api/auth/demo-session (400 Bad Request).
  * C. Missing server demo environment variables fail closed (503 Service Unavailable).
  * D. Invalid demo credentials fail closed (401 Unauthorized).
- * E. Missing demo user profile fails closed and terminates session (403 Forbidden).
- * F. Demo account with super_admin role fails closed and terminates session (403 Forbidden).
- * G. Demo account with mismatched tenant fails closed and terminates session (403 Forbidden).
- * H. Successful demo bootstrap returns /app destination, valid non-admin user, and tenant.
- * I. Demo exit/cleanup executes canonical logout and completely purges state.
- * J. F0A /app server boundary continues to reject unauthenticated requests.
+ * E. Missing demo user profile fails closed and terminates session using local scope (403 Forbidden).
+ * F. Demo account with super_admin role fails closed and terminates session using local scope (403 Forbidden).
+ * G. Demo account with mismatched tenant fails closed and terminates session using local scope (403 Forbidden).
+ * H. Successful demo bootstrap for unauthenticated visitor returns destination /app, valid user, and tenant.
+ * I. Existing verified demo session is safely reused without re-authenticating.
+ * J. Existing REAL authenticated user session is NOT overwritten (409 Conflict with DEMO_REQUIRES_SIGN_OUT).
+ * K. Rejected bootstrap leaves real user session intact (signOut is NOT called).
+ * L. Demo exit/cleanup executes local-scoped logout and completely purges store & notifications.
+ * M. F0A /app server boundary continues to reject unauthenticated requests.
  */
 
 const redirectMock = vi.fn((url: string) => {
@@ -37,7 +40,7 @@ vi.mock('next/navigation', () => ({
   }),
 }));
 
-describe('Phase F0B: Secure Demo Authentication & Session Boundary', () => {
+describe('Phase F0B: Secure Demo Authentication & Session Safety', () => {
   const originalEnv = { ...process.env };
 
   beforeEach(() => {
@@ -115,6 +118,7 @@ describe('Phase F0B: Secure Demo Authentication & Session Boundary', () => {
     vi.doMock('@/lib/supabase/server', () => ({
       createClient: vi.fn().mockReturnValue({
         auth: {
+          getUser: vi.fn().mockResolvedValue({ data: { user: null }, error: null }),
           signInWithPassword: vi.fn().mockResolvedValue({
             data: { user: null },
             error: new Error('Invalid login credentials'),
@@ -133,8 +137,8 @@ describe('Phase F0B: Secure Demo Authentication & Session Boundary', () => {
     expect(data.error).toMatch(/Demo authentication failed/i);
   });
 
-  // E. Missing profile fails closed and terminates session
-  it('E. Missing demo user profile fails closed with 403 and signs out', async () => {
+  // E. Missing profile fails closed and terminates session using local scope
+  it('E. Missing demo user profile fails closed with 403 and signs out with local scope', async () => {
     process.env.DEMO_USER_EMAIL = 'demo@example.com';
     process.env.DEMO_USER_PASSWORD = 'correct-password';
     process.env.DEMO_TENANT_ID = 'demo-tenant';
@@ -148,6 +152,7 @@ describe('Phase F0B: Secure Demo Authentication & Session Boundary', () => {
     vi.doMock('@/lib/supabase/server', () => ({
       createClient: vi.fn().mockReturnValue({
         auth: {
+          getUser: vi.fn().mockResolvedValue({ data: { user: null }, error: null }),
           signInWithPassword: vi.fn().mockResolvedValue({
             data: { user: { id: 'demo-user-id', email: 'demo@example.com' } },
             error: null,
@@ -175,11 +180,11 @@ describe('Phase F0B: Secure Demo Authentication & Session Boundary', () => {
     const data = await res.json();
     expect(data.success).toBe(false);
     expect(data.error).toMatch(/Demo profile could not be verified/i);
-    expect(signOutMock).toHaveBeenCalled();
+    expect(signOutMock).toHaveBeenCalledWith({ scope: 'local' });
   });
 
-  // F. Demo account with super_admin role fails closed
-  it('F. Demo account with super_admin role fails closed with 403 and signs out', async () => {
+  // F. Demo account with super_admin role fails closed with local scope
+  it('F. Demo account with super_admin role fails closed with 403 and signs out with local scope', async () => {
     process.env.DEMO_USER_EMAIL = 'demo@example.com';
     process.env.DEMO_USER_PASSWORD = 'correct-password';
     process.env.DEMO_TENANT_ID = 'demo-tenant';
@@ -193,6 +198,7 @@ describe('Phase F0B: Secure Demo Authentication & Session Boundary', () => {
     vi.doMock('@/lib/supabase/server', () => ({
       createClient: vi.fn().mockReturnValue({
         auth: {
+          getUser: vi.fn().mockResolvedValue({ data: { user: null }, error: null }),
           signInWithPassword: vi.fn().mockResolvedValue({
             data: { user: { id: 'demo-user-id', email: 'demo@example.com' } },
             error: null,
@@ -220,11 +226,11 @@ describe('Phase F0B: Secure Demo Authentication & Session Boundary', () => {
     const data = await res.json();
     expect(data.success).toBe(false);
     expect(data.error).toMatch(/Demo account cannot hold administrative privileges/i);
-    expect(signOutMock).toHaveBeenCalled();
+    expect(signOutMock).toHaveBeenCalledWith({ scope: 'local' });
   });
 
-  // G. Demo account with mismatched tenant fails closed
-  it('G. Demo account with mismatched tenant fails closed with 403 and signs out', async () => {
+  // G. Demo account with mismatched tenant fails closed with local scope
+  it('G. Demo account with mismatched tenant fails closed with 403 and signs out with local scope', async () => {
     process.env.DEMO_USER_EMAIL = 'demo@example.com';
     process.env.DEMO_USER_PASSWORD = 'correct-password';
     process.env.DEMO_TENANT_ID = 'expected-demo-tenant';
@@ -238,6 +244,7 @@ describe('Phase F0B: Secure Demo Authentication & Session Boundary', () => {
     vi.doMock('@/lib/supabase/server', () => ({
       createClient: vi.fn().mockReturnValue({
         auth: {
+          getUser: vi.fn().mockResolvedValue({ data: { user: null }, error: null }),
           signInWithPassword: vi.fn().mockResolvedValue({
             data: { user: { id: 'demo-user-id', email: 'demo@example.com' } },
             error: null,
@@ -265,7 +272,7 @@ describe('Phase F0B: Secure Demo Authentication & Session Boundary', () => {
     const data = await res.json();
     expect(data.success).toBe(false);
     expect(data.error).toMatch(/Demo tenant configuration mismatch/i);
-    expect(signOutMock).toHaveBeenCalled();
+    expect(signOutMock).toHaveBeenCalledWith({ scope: 'local' });
   });
 
   // H. Successful demo bootstrap returns valid user and /app destination
@@ -281,6 +288,7 @@ describe('Phase F0B: Secure Demo Authentication & Session Boundary', () => {
     vi.doMock('@/lib/supabase/server', () => ({
       createClient: vi.fn().mockReturnValue({
         auth: {
+          getUser: vi.fn().mockResolvedValue({ data: { user: null }, error: null }),
           signInWithPassword: vi.fn().mockResolvedValue({
             data: { user: { id: 'demo-user-123', email: 'demo@example.com' } },
             error: null,
@@ -312,8 +320,104 @@ describe('Phase F0B: Secure Demo Authentication & Session Boundary', () => {
     expect(data.user.tenantId).toBe('demo-tenant-valid');
   });
 
-  // I. Demo session exit/cleanup completely purges state
-  it('I. Exiting demo session executes logout and completely purges store & notifications', async () => {
+  // I. Safe reuse of already verified demo session
+  it('I. Existing verified demo session is safely reused without re-authenticating', async () => {
+    process.env.DEMO_USER_EMAIL = 'demo@example.com';
+    process.env.DEMO_USER_PASSWORD = 'correct-password';
+    process.env.DEMO_TENANT_ID = 'demo-tenant-valid';
+
+    const signInWithPasswordMock = vi.fn();
+
+    vi.doMock('next/headers', () => ({
+      cookies: vi.fn().mockResolvedValue({ getAll: () => [] }),
+    }));
+
+    vi.doMock('@/lib/supabase/server', () => ({
+      createClient: vi.fn().mockReturnValue({
+        auth: {
+          getUser: vi.fn().mockResolvedValue({
+            data: { user: { id: 'demo-user-existing', email: 'demo@example.com' } },
+            error: null,
+          }),
+          signInWithPassword: signInWithPasswordMock,
+        },
+        from: vi.fn().mockReturnValue({
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              single: vi.fn().mockResolvedValue({
+                data: { id: 'demo-user-existing', tenant_id: 'demo-tenant-valid', role: 'specialist', full_name: 'Existing Demo User' },
+                error: null,
+              }),
+            }),
+          }),
+        }),
+      }),
+    }));
+
+    const { POST } = await import('@/app/api/auth/demo-session/route');
+    const req = new NextRequest('http://localhost:3000/api/auth/demo-session', { method: 'POST' });
+    const res = await POST(req);
+
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.success).toBe(true);
+    expect(data.user.id).toBe('demo-user-existing');
+    expect(signInWithPasswordMock).not.toHaveBeenCalled();
+  });
+
+  // J & K. Existing real user session is NOT overwritten and remains intact
+  it('J. Existing real authenticated user is NOT overwritten (409 Conflict with DEMO_REQUIRES_SIGN_OUT)', async () => {
+    process.env.DEMO_USER_EMAIL = 'demo@example.com';
+    process.env.DEMO_USER_PASSWORD = 'correct-password';
+    process.env.DEMO_TENANT_ID = 'demo-tenant-valid';
+
+    const signInWithPasswordMock = vi.fn();
+    const signOutMock = vi.fn();
+
+    vi.doMock('next/headers', () => ({
+      cookies: vi.fn().mockResolvedValue({ getAll: () => [] }),
+    }));
+
+    vi.doMock('@/lib/supabase/server', () => ({
+      createClient: vi.fn().mockReturnValue({
+        auth: {
+          getUser: vi.fn().mockResolvedValue({
+            data: { user: { id: 'real-user-id', email: 'realagent@agencyabc.com' } },
+            error: null,
+          }),
+          signInWithPassword: signInWithPasswordMock,
+          signOut: signOutMock,
+        },
+        from: vi.fn().mockReturnValue({
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              single: vi.fn().mockResolvedValue({
+                data: { id: 'real-user-id', tenant_id: 'tenant-agency-abc', role: 'admin', full_name: 'Real Agency Admin' },
+                error: null,
+              }),
+            }),
+          }),
+        }),
+      }),
+    }));
+
+    const { POST } = await import('@/app/api/auth/demo-session/route');
+    const req = new NextRequest('http://localhost:3000/api/auth/demo-session', { method: 'POST' });
+    const res = await POST(req);
+
+    expect(res.status).toBe(409);
+    const data = await res.json();
+    expect(data.success).toBe(false);
+    expect(data.code).toBe('DEMO_REQUIRES_SIGN_OUT');
+    expect(data.error).toMatch(/An active user session is already signed in/i);
+
+    // Assert real user session was NOT overwritten and NOT signed out
+    expect(signInWithPasswordMock).not.toHaveBeenCalled();
+    expect(signOutMock).not.toHaveBeenCalled();
+  });
+
+  // L. Demo session exit/cleanup uses local scope and completely purges state
+  it('L. Exiting demo session executes local-scoped logout and completely purges store & notifications', async () => {
     useCRMStore.setState({
       currentUser: {
         id: 'demo-user-id',
@@ -348,18 +452,19 @@ describe('Phase F0B: Secure Demo Authentication & Session Boundary', () => {
       loading: false,
     });
 
-    // Invoke canonical logout
-    await useCRMStore.getState().logout();
+    // Invoke logout with local scope and no hard redirect (for preview exit)
+    await useCRMStore.getState().logout({ scope: 'local', redirect: false });
 
     expect(useCRMStore.getState().currentUser).toBeNull();
     expect(useCRMStore.getState().tenantId).toBeNull();
     expect(useCRMStore.getState().leads).toHaveLength(0);
     expect(useNotificationStore.getState().notifications).toHaveLength(0);
-    expect(adapterLogoutMock).toHaveBeenCalled();
+    expect(adapterLogoutMock).toHaveBeenCalledWith({ scope: 'local' });
+    expect(replaceMock).not.toHaveBeenCalled();
   });
 
-  // J. F0A /app server boundary rejects unauthenticated access
-  it('J. F0A /app server layout continues to reject unauthenticated requests', async () => {
+  // M. F0A /app server boundary rejects unauthenticated access
+  it('M. F0A /app server layout continues to reject unauthenticated requests', async () => {
     process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://mock.supabase.co';
 
     vi.doMock('next/headers', () => ({
