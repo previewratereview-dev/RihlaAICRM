@@ -9,6 +9,7 @@ import { escapeHtml } from '@/lib/security/sanitize';
 const SendMessageSchema = z.object({
   channel: z.enum(['whatsapp', 'sms', 'email']),
   to: z.string().max(255).optional(),
+  subject: z.string().max(255).optional(),
   content: z.string().min(1).max(5000),
   leadName: z.string().max(200).optional(),
   conversationId: z.string().max(255).optional(),
@@ -29,7 +30,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid request.', details: validation.error.issues }, { status: 400 });
     }
 
-    const { channel, to, content, leadName, conversationId } = validation.data;
+    const { channel, to, subject, content, leadName, conversationId } = validation.data;
 
     let result: { ok: boolean; error?: string };
 
@@ -42,8 +43,9 @@ export async function POST(request: NextRequest) {
         break;
       case 'email':
         result = await sendEmail({
+          tenantId: guard.tenantId,
           to: to || '',
-          subject: `Message from your travel specialist`,
+          subject: subject || `Message from your travel specialist`,
           html: `<p>Hi ${escapeHtml(leadName || 'there')},</p><p>${escapeHtml(content).replace(/\n/g, '<br>')}</p>`,
         });
         break;

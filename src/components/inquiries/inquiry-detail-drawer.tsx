@@ -10,10 +10,12 @@ import {
   AlertTriangle,
   User as UserIcon,
   MapPin,
-  Clock
+  Clock,
+  MessageSquare
 } from 'lucide-react';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { useCRMStore } from '@/hooks/use-crm-store';
+import { EmailComposerModal } from '@/components/communication/email-composer-modal';
 import type { InquiryDirectoryItem, LeadNote, LeadActivity, User, Lead, LeadStatus } from '@/types';
 
 interface InquiryDetailDrawerProps {
@@ -44,12 +46,27 @@ export function InquiryDetailDrawer({
   currentUser,
 }: InquiryDetailDrawerProps) {
   const [newNoteText, setNewNoteText] = useState('');
+  const [isEmailModalOpen, setIsEmailModalOpen] = useState(false);
   const leads = useCRMStore((s) => s.leads);
+  const startConversation = useCRMStore((s) => s.startConversation);
   
   // Try to find the legacy lead to support legacy write actions
   const legacyLead = inquiry.legacyLeadId 
     ? leads.find((l) => l.id === inquiry.legacyLeadId)
     : null;
+
+  const handleStartConversation = async () => {
+    try {
+      await startConversation(inquiry.legacyLeadId || inquiry.inquiryId, 'email', {
+        travelerName: inquiry.travelerDisplayName,
+        travelerEmail: inquiry.travelerEmail || undefined,
+        phone: inquiry.travelerPhone || undefined,
+      });
+      onClose();
+    } catch (err) {
+      console.error('Failed to start conversation:', err);
+    }
+  };
 
   const handleAddNote = (e: React.FormEvent) => {
     e.preventDefault();
@@ -119,21 +136,43 @@ export function InquiryDetailDrawer({
         <div className="flex-1 overflow-y-auto p-4 sm:p-6">
           <div className="space-y-6">
             
-            {/* Quick Actions */}
+            {/* Unified Communication Action Bar: Message, Email, Call */}
             <div className="flex gap-2">
-              <a
-                href={`mailto:${inquiry.travelerEmail}`}
-                className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium rounded-md border ${inquiry.travelerEmail ? 'hover:bg-accent cursor-pointer' : 'opacity-50 cursor-not-allowed'}`}
-                onClick={(e) => !inquiry.travelerEmail && e.preventDefault()}
+              <button
+                type="button"
+                onClick={handleStartConversation}
+                className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-xl border border-border/80 bg-background hover:bg-muted text-foreground transition-all cursor-pointer shadow-sm"
+                title="Open CRM Conversation"
               >
-                <Mail className="h-4 w-4" /> Email
-              </a>
+                <MessageSquare className="h-4 w-4 text-primary" />
+                <span>Message</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsEmailModalOpen(true)}
+                disabled={!inquiry.travelerEmail}
+                className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-xl border ${
+                  inquiry.travelerEmail
+                    ? 'border-border/80 bg-background hover:bg-muted text-foreground cursor-pointer'
+                    : 'border-border/40 bg-muted/20 text-muted-foreground opacity-50 cursor-not-allowed'
+                } transition-all shadow-sm`}
+                title={inquiry.travelerEmail ? 'Compose email' : 'No email registered'}
+              >
+                <Mail className="h-4 w-4 text-blue-600" />
+                <span>Email</span>
+              </button>
               <a
-                href={`tel:${inquiry.travelerPhone}`}
-                className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium rounded-md border ${inquiry.travelerPhone ? 'hover:bg-accent cursor-pointer' : 'opacity-50 cursor-not-allowed'}`}
+                href={inquiry.travelerPhone ? `tel:${inquiry.travelerPhone}` : undefined}
+                className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-xl border ${
+                  inquiry.travelerPhone
+                    ? 'border-border/80 bg-background hover:bg-muted text-foreground cursor-pointer'
+                    : 'border-border/40 bg-muted/20 text-muted-foreground opacity-50 cursor-not-allowed'
+                } transition-all shadow-sm`}
                 onClick={(e) => !inquiry.travelerPhone && e.preventDefault()}
+                title={inquiry.travelerPhone ? `Call ${inquiry.travelerPhone}` : 'No phone registered'}
               >
-                <Phone className="h-4 w-4" /> Call
+                <Phone className="h-4 w-4 text-emerald-600" />
+                <span>Call</span>
               </a>
             </div>
 
@@ -166,7 +205,7 @@ export function InquiryDetailDrawer({
                     <div className="text-sm font-medium">{inquiry.destination || '—'}</div>
                   </div>
                   <div>
-                    <div className="text-xs text-muted-foreground">Source</div>
+                    <div className="text-xs text-muted-foreground">Lead Source</div>
                     <div className="text-sm">{inquiry.leadSource || '—'}</div>
                   </div>
                   <div>
@@ -277,7 +316,7 @@ export function InquiryDetailDrawer({
                         <span className="text-xs text-muted-foreground">{formatDate(note.createdAt)}</span>
                         {inquiry.legacyLeadId && (
                           <button
-                            onClick={() => onDeleteNote(inquiry.legacyLeadId!, note.id)}
+                            onClick={() => inquiry.legacyLeadId && onDeleteNote(inquiry.legacyLeadId, note.id)}
                             className="opacity-0 group-hover:opacity-100 p-1 text-red-500 hover:bg-red-500/10 rounded transition-all"
                           >
                             <X className="h-3 w-3" />
@@ -317,6 +356,18 @@ export function InquiryDetailDrawer({
           </div>
         </div>
       </motion.div>
+
+      {/* Reusable In-Product Email Composer Modal */}
+      {isEmailModalOpen && (
+        <EmailComposerModal
+          isOpen={isEmailModalOpen}
+          onClose={() => setIsEmailModalOpen(false)}
+          travelerName={inquiry.travelerDisplayName}
+          travelerEmail={inquiry.travelerEmail || ''}
+          defaultSubject={`Inquiry regarding ${inquiry.destination || 'your trip'}`}
+          inquiryId={inquiry.inquiryId}
+        />
+      )}
     </>
   );
 }

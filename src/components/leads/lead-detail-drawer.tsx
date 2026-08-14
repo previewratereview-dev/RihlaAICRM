@@ -14,13 +14,14 @@ import {
   Edit2,
   Video,
   CalendarDays,
-  Send,
+  MessageSquare,
 } from 'lucide-react';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { getScoreLabel } from '@/lib/ai/lead-scoring';
 import { LeadAiActions } from '@/components/lead-ai-actions';
 import { LEAD_STATUS_OPTIONS } from '@/lib/constants';
 import { useCRMStore } from '@/hooks/use-crm-store';
+import { EmailComposerModal } from '@/components/communication/email-composer-modal';
 import type { Lead, LeadNote, LeadActivity, User, LeadStatus } from '@/types';
 
 interface LeadDetailDrawerProps {
@@ -50,11 +51,8 @@ export function LeadDetailDrawer({
   onDeleteNote,
   currentUser,
 }: LeadDetailDrawerProps) {
-  const settings = useCRMStore((s) => s.settings);
   const [newNoteText, setNewNoteText] = useState('');
-  const [sendingEmail, setSendingEmail] = useState(false);
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const [emailSent, setEmailSent] = useState(false);
+  const [isEmailModalOpen, setIsEmailModalOpen] = useState(false);
 
   const startConversation = useCRMStore((s) => s.startConversation);
 
@@ -72,99 +70,79 @@ export function LeadDetailDrawer({
     }
     const channel = lead.email ? 'email' : 'whatsapp';
     try {
-      await startConversation(lead.id, channel);
-    } catch (err) {
-      console.error('startConversation Error:', err, JSON.stringify(err));
-      alert(`Failed to start conversation: ${JSON.stringify(err)}`);
-    }
-  };
-
-  const handleSendEmail = async () => {
-    if (!lead.email) return;
-    setSendingEmail(true);
-    setEmailSent(false);
-
-    const template = settings.emailFollowUpTemplate || `Hi {{name}},\n\nThank you for your travel inquiry{{#destination}} for {{destination}}{{/destination}}. A specialist will be in touch shortly.\n\nBest regards,\nYour Travel Team`;
-    const body = template
-      .replace(/\{\{name\}\}/g, lead.fullName)
-      .replace(/\{\{destination\}\}/g, lead.destination || '')
-      .replace(/\n/g, '<br>');
-
-    try {
-      const res = await fetch('/api/messaging/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          channel: 'email',
-          to: lead.email,
-          content: body,
-          leadName: lead.fullName,
-        }),
+      await startConversation(lead.id, channel, {
+        travelerName: lead.fullName,
+        travelerEmail: lead.email,
+        phone: lead.phone,
       });
-      const data = await res.json();
-      if (data.ok) {
-        setEmailSent(true);
-      }
-    } catch {
-      // email send failed silently
-    } finally {
-      setSendingEmail(false);
+      onClose();
+    } catch (err) {
+      console.error('startConversation Error:', err);
     }
   };
 
   return (
-    <motion.div
-      initial={{ x: '100%' }}
-      animate={{ x: 0 }}
-      exit={{ x: '100%' }}
-      transition={{ type: 'spring', damping: 30, stiffness: 260 }}
-      className="w-[440px] md:w-[500px] h-screen bg-background border-l border-border/60 shadow-[0_0_50px_rgba(15,23,42,0.08)] flex flex-col z-30 overflow-hidden"
-    >
-      <div className="flex h-16 items-center justify-between px-5 border-b border-border/60 shrink-0">
-        <div className="flex items-center gap-2 select-none">
-          <Sparkle className="h-4 w-4 text-primary" />
-          <span className="font-heading font-bold text-foreground tracking-tight text-xs uppercase font-mono">Intelligence Profile</span>
-        </div>
-        <div className="flex items-center gap-2">
-          {lead.email && (
+    <>
+      <motion.div
+        initial={{ x: '100%' }}
+        animate={{ x: 0 }}
+        exit={{ x: '100%' }}
+        transition={{ type: 'spring', damping: 30, stiffness: 260 }}
+        className="w-[440px] md:w-[500px] h-screen bg-background border-l border-border/60 shadow-[0_0_50px_rgba(15,23,42,0.08)] flex flex-col z-30 overflow-hidden"
+      >
+        <div className="flex h-16 items-center justify-between px-5 border-b border-border/60 shrink-0">
+          <div className="flex items-center gap-2 select-none">
+            <Sparkle className="h-4 w-4 text-primary" />
+            <span className="font-heading font-bold text-foreground tracking-tight text-xs uppercase font-mono">Intelligence Profile</span>
+          </div>
+          <div className="flex items-center gap-2">
             <button
-              onClick={handleSendEmail}
-              disabled={sendingEmail}
-              className="p-2 rounded-xl border border-border bg-background text-muted-foreground hover:text-blue-500 hover:border-blue-500/40 transition-all cursor-pointer disabled:opacity-50"
-              title="Send Quick Email"
+              onClick={handleStartConversation}
+              className="p-2 rounded-xl border border-border bg-background text-muted-foreground hover:text-primary hover:border-primary/40 transition-all cursor-pointer"
+              title="Message"
             >
-              {sendingEmail ? <span className="animate-spin text-[10px]">...</span> : <Send className="h-4 w-4" />}
+              <MessageSquare className="h-4 w-4" />
             </button>
-          )}
-          <button
-            onClick={handleStartConversation}
-            className="p-2 rounded-xl border border-border bg-background text-muted-foreground hover:text-green-500 hover:border-green-500/40 transition-all cursor-pointer"
-            title="Open Chat in CRM"
-          >
-            <Mail className="h-4 w-4" />
-          </button>
-          <button
-            onClick={() => onEdit(lead)}
-            className="p-2 rounded-xl border border-border bg-background text-muted-foreground hover:text-primary hover:border-primary/40 transition-all cursor-pointer"
-            title="Edit Lead Details"
-          >
-            <Edit2 className="h-4 w-4" />
-          </button>
-          <button
-            onClick={() => onDelete(lead.id)}
-            className="p-2 rounded-xl border border-border bg-background text-muted-foreground hover:text-red-600 hover:border-red-200 hover:bg-red-50 transition-all cursor-pointer"
-            title="Delete Lead"
-          >
-            <Trash2 className="h-4 w-4" />
-          </button>
-          <button
-            onClick={onClose}
-            className="p-2 rounded-xl border border-border bg-background text-muted-foreground hover:text-foreground hover:border-primary/40 transition-all cursor-pointer"
-          >
-            <X className="h-4 w-4" />
-          </button>
+            {lead.email && (
+              <button
+                onClick={() => setIsEmailModalOpen(true)}
+                className="p-2 rounded-xl border border-border bg-background text-muted-foreground hover:text-blue-500 hover:border-blue-500/40 transition-all cursor-pointer"
+                title="Email"
+              >
+                <Mail className="h-4 w-4" />
+              </button>
+            )}
+            {lead.phone && (
+              <a
+                href={`tel:${lead.phone}`}
+                className="p-2 rounded-xl border border-border bg-background text-muted-foreground hover:text-emerald-500 hover:border-emerald-500/40 transition-all cursor-pointer inline-flex items-center justify-center"
+                title={`Call ${lead.phone}`}
+              >
+                <Phone className="h-4 w-4" />
+              </a>
+            )}
+            <button
+              onClick={() => onEdit(lead)}
+              className="p-2 rounded-xl border border-border bg-background text-muted-foreground hover:text-primary hover:border-primary/40 transition-all cursor-pointer"
+              title="Edit Lead Details"
+            >
+              <Edit2 className="h-4 w-4" />
+            </button>
+            <button
+              onClick={() => onDelete(lead.id)}
+              className="p-2 rounded-xl border border-border bg-background text-muted-foreground hover:text-red-600 hover:border-red-200 hover:bg-red-50 transition-all cursor-pointer"
+              title="Delete Lead"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+            <button
+              onClick={onClose}
+              className="p-2 rounded-xl border border-border bg-background text-muted-foreground hover:text-foreground hover:border-primary/40 transition-all cursor-pointer"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
         </div>
-      </div>
 
       <div className="flex-1 overflow-y-auto p-6 space-y-6 scrollbar-thin text-sm text-foreground">
         {/* Lead Info Card */}
@@ -462,5 +440,16 @@ export function LeadDetailDrawer({
         </div>
       </div>
     </motion.div>
-  );
+
+    {isEmailModalOpen && (
+      <EmailComposerModal
+        isOpen={isEmailModalOpen}
+        onClose={() => setIsEmailModalOpen(false)}
+        travelerName={lead.fullName}
+        travelerEmail={lead.email || ''}
+        defaultSubject={`Inquiry regarding ${lead.destination || 'your travel'}`}
+      />
+    )}
+  </>
+);
 }

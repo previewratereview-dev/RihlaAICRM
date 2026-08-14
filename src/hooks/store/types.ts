@@ -108,7 +108,11 @@ export interface CRMStore {
   addMeeting: (meeting: Omit<Task, 'id' | 'createdAt' | 'updatedAt' | 'type' | 'status' | 'assignedName'>) => Promise<void>;
 
   // Messaging actions
-  startConversation: (leadId: string, channel?: 'whatsapp' | 'sms' | 'email') => Promise<string>;
+  startConversation: (
+    leadId: string,
+    channel?: 'whatsapp' | 'sms' | 'email',
+    context?: { travelerName?: string; travelerEmail?: string; phone?: string; tenantId?: string }
+  ) => Promise<string>;
   sendMessage: (conversationId: string, content: string, senderType: 'user' | 'contact' | 'system', senderId: string, senderName: string) => Promise<void>;
   editMessage: (conversationId: string, messageId: string, newContent: string) => Promise<void>;
   deleteMessage: (conversationId: string, messageId: string) => Promise<void>;

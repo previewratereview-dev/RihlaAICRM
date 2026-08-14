@@ -1,7 +1,5 @@
-'use client';
-
 import React, { useMemo, useState, useEffect, useCallback } from 'react';
-import { RotateCcw, Loader2, Search, Plus, AlertCircle, RefreshCw } from 'lucide-react';
+import { RotateCcw, Loader2, Search, Plus, AlertCircle, RefreshCw, MessageSquare, Mail, Phone } from 'lucide-react';
 import { useCRMStore } from '@/hooks/use-crm-store';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { normalizeLeadStatus } from '@/lib/pipeline-status';
@@ -9,6 +7,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { isNewTravelersReadEnabled } from '@/lib/feature-flags';
 import { scoped } from '@/lib/data/scoped';
 import { LeadFormModal } from '@/components/leads/lead-form-modal';
+import { EmailComposerModal } from '@/components/communication/email-composer-modal';
 import type { LeadFormData } from '@/lib/schemas';
 import type { Lead, TravelerDirectoryItem, TravelerKPIs } from '@/types';
 
@@ -42,10 +41,14 @@ export function TravelersView({ useNewReadOverride }: TravelersViewProps = {}) {
   const team = useCRMStore((state) => state.team);
   const currentUser = useCRMStore((state) => state.currentUser);
   const addLead = useCRMStore((state) => state.addLead);
+  const startConversation = useCRMStore((state) => state.startConversation);
 
   const [rebookingId, setRebookingId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [repeatOnly, setRepeatOnly] = useState(false);
+
+  // Email Composer state
+  const [selectedTravelerForEmail, setSelectedTravelerForEmail] = useState<{ displayName: string; email: string } | null>(null);
 
   // New Inquiry Modal state
   const [selectedTravelerForInquiry, setSelectedTravelerForInquiry] = useState<TravelerDirectoryItem | null>(null);
@@ -424,19 +427,60 @@ export function TravelersView({ useNewReadOverride }: TravelersViewProps = {}) {
 
                         {/* Action Column */}
                         <td className="border-b border-border/50 px-4 py-3 align-top text-right">
-                          <button
-                            type="button"
-                            onClick={() => handleNewInquiry(traveler)}
-                            disabled={rebookingId === traveler.id}
-                            className="inline-flex items-center justify-center gap-1.5 rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-muted-foreground transition-colors hover:bg-slate-200 focus-visible:text-foreground focus-visible:ring-2 focus-visible:ring-slate-300 disabled:cursor-not-allowed disabled:opacity-60"
-                          >
-                            {rebookingId === traveler.id ? (
-                              <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
-                            ) : (
-                              <Plus className="h-3.5 w-3.5 text-muted-foreground" />
-                            )}
-                            New Inquiry
-                          </button>
+                          <div className="flex items-center justify-end gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                startConversation(traveler.id, 'email', {
+                                  travelerName: traveler.displayName,
+                                  travelerEmail: traveler.email || undefined,
+                                  phone: traveler.phone || undefined,
+                                });
+                              }}
+                              className="p-1.5 rounded-lg border border-border bg-background text-muted-foreground hover:text-primary hover:border-primary/40 transition-colors cursor-pointer"
+                              title="Message"
+                            >
+                              <MessageSquare className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setSelectedTravelerForEmail({ displayName: traveler.displayName, email: traveler.email || '' })}
+                              disabled={!traveler.email}
+                              className={`p-1.5 rounded-lg border ${
+                                traveler.email
+                                  ? 'border-border bg-background text-muted-foreground hover:text-blue-500 hover:border-blue-500/40 cursor-pointer'
+                                  : 'border-border/40 bg-muted/20 text-muted-foreground opacity-40 cursor-not-allowed'
+                              } transition-colors`}
+                              title={traveler.email ? 'Email' : 'No email registered'}
+                            >
+                              <Mail className="h-3.5 w-3.5" />
+                            </button>
+                            <a
+                              href={traveler.phone ? `tel:${traveler.phone}` : undefined}
+                              className={`p-1.5 rounded-lg border ${
+                                traveler.phone
+                                  ? 'border-border bg-background text-muted-foreground hover:text-emerald-500 hover:border-emerald-500/40 cursor-pointer'
+                                  : 'border-border/40 bg-muted/20 text-muted-foreground opacity-40 cursor-not-allowed'
+                              } transition-colors inline-flex items-center justify-center`}
+                              onClick={(e) => !traveler.phone && e.preventDefault()}
+                              title={traveler.phone ? `Call ${traveler.phone}` : 'No phone registered'}
+                            >
+                              <Phone className="h-3.5 w-3.5" />
+                            </a>
+                            <button
+                              type="button"
+                              onClick={() => handleNewInquiry(traveler)}
+                              disabled={rebookingId === traveler.id}
+                              className="inline-flex items-center justify-center gap-1.5 rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-muted-foreground transition-colors hover:bg-slate-200 focus-visible:text-foreground focus-visible:ring-2 focus-visible:ring-slate-300 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {rebookingId === traveler.id ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                              ) : (
+                                <Plus className="h-3.5 w-3.5 text-muted-foreground" />
+                              )}
+                              New Inquiry
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -493,19 +537,60 @@ export function TravelersView({ useNewReadOverride }: TravelersViewProps = {}) {
                           <span className="text-foreground">{formatDate(getLastTripDate(client))}</span>
                         </td>
                         <td className="border-b border-border/50 px-4 py-3 align-top text-right">
-                          <button
-                            type="button"
-                            onClick={() => handleRebookLegacy(client)}
-                            disabled={rebookingId === client.id}
-                            className="inline-flex items-center justify-center gap-2 rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-muted-foreground transition-colors hover:bg-slate-200 focus-visible:text-foreground focus-visible:ring-2 focus-visible:ring-slate-300 disabled:cursor-not-allowed disabled:opacity-60"
-                          >
-                            {rebookingId === client.id ? (
-                              <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                            ) : (
-                              <RotateCcw className="h-4 w-4 text-muted-foreground" />
-                            )}
-                            Re-book
-                          </button>
+                          <div className="flex items-center justify-end gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                startConversation(client.id, 'email', {
+                                  travelerName: client.fullName,
+                                  travelerEmail: client.email || undefined,
+                                  phone: client.phone || undefined,
+                                });
+                              }}
+                              className="p-1.5 rounded-lg border border-border bg-background text-muted-foreground hover:text-primary hover:border-primary/40 transition-colors cursor-pointer"
+                              title="Message"
+                            >
+                              <MessageSquare className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setSelectedTravelerForEmail({ displayName: client.fullName, email: client.email || '' })}
+                              disabled={!client.email}
+                              className={`p-1.5 rounded-lg border ${
+                                client.email
+                                  ? 'border-border bg-background text-muted-foreground hover:text-blue-500 hover:border-blue-500/40 cursor-pointer'
+                                  : 'border-border/40 bg-muted/20 text-muted-foreground opacity-40 cursor-not-allowed'
+                              } transition-colors`}
+                              title={client.email ? 'Email' : 'No email registered'}
+                            >
+                              <Mail className="h-3.5 w-3.5" />
+                            </button>
+                            <a
+                              href={client.phone ? `tel:${client.phone}` : undefined}
+                              className={`p-1.5 rounded-lg border ${
+                                client.phone
+                                  ? 'border-border bg-background text-muted-foreground hover:text-emerald-500 hover:border-emerald-500/40 cursor-pointer'
+                                  : 'border-border/40 bg-muted/20 text-muted-foreground opacity-40 cursor-not-allowed'
+                              } transition-colors inline-flex items-center justify-center`}
+                              onClick={(e) => !client.phone && e.preventDefault()}
+                              title={client.phone ? `Call ${client.phone}` : 'No phone registered'}
+                            >
+                              <Phone className="h-3.5 w-3.5" />
+                            </a>
+                            <button
+                              type="button"
+                              onClick={() => handleRebookLegacy(client)}
+                              disabled={rebookingId === client.id}
+                              className="inline-flex items-center justify-center gap-2 rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-muted-foreground transition-colors hover:bg-slate-200 focus-visible:text-foreground focus-visible:ring-2 focus-visible:ring-slate-300 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {rebookingId === client.id ? (
+                                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                              ) : (
+                                <RotateCcw className="h-4 w-4 text-muted-foreground" />
+                              )}
+                              Re-book
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -546,6 +631,16 @@ export function TravelersView({ useNewReadOverride }: TravelersViewProps = {}) {
           }}
           onDismissCsvMessage={() => {}}
           formError={inquiryFormError}
+        />
+      )}
+
+      {selectedTravelerForEmail && (
+        <EmailComposerModal
+          isOpen={!!selectedTravelerForEmail}
+          onClose={() => setSelectedTravelerForEmail(null)}
+          travelerName={selectedTravelerForEmail.displayName}
+          travelerEmail={selectedTravelerForEmail.email}
+          defaultSubject={`Travel update from your specialist`}
         />
       )}
     </div>
