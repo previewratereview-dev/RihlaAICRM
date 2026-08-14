@@ -5,7 +5,7 @@ import * as path from 'path';
 dotenv.config({ path: path.join(__dirname, '../.env.local') });
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://djnscrvzsnttkfwsvrln.supabase.co';
-const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || 'sb_secret_ue2uDJPS6vKiKNRaQRy6Zg_j8SlQc14';
+const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 
 const supabase = createClient(supabaseUrl, serviceRoleKey);
 

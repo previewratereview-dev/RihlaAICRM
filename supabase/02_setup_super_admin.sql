@@ -6,7 +6,7 @@
 -- Step 1: Create the user in Supabase Dashboard:
 --   - Go to Authentication > Users > Add User
 --   - Email: rayees@stateai.in
---   - Password: Sabr4lyf@2
+--   - Password: <your-secure-password>
 --   - Auto Confirm: Yes
 --   - Copy the User UUID
 

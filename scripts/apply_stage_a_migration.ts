@@ -5,8 +5,8 @@ import * as fs from 'fs';
 
 dotenv.config({ path: path.join(__dirname, '../.env.local') });
 
-const projectRef = 'djnscrvzsnttkfwsvrln';
-const dbPassword = process.env.NEXT_PUBLIC_SEED_PASSWORD || 'Sabr4lyf@2';
+const projectRef = process.env.SUPABASE_PROJECT_REF || 'djnscrvzsnttkfwsvrln';
+const dbPassword = process.env.DATABASE_PASSWORD || process.env.NEXT_PUBLIC_SEED_PASSWORD || '';
 
 const connectionString = `postgres://postgres.${projectRef}:${encodeURIComponent(dbPassword)}@aws-0-ap-south-1.pooler.supabase.com:6543/postgres`;
 const directConnectionString = `postgres://postgres:${encodeURIComponent(dbPassword)}@db.${projectRef}.supabase.co:5432/postgres`;
