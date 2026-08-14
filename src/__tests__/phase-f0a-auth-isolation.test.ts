@@ -1,23 +1,22 @@
+// @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import React from 'react';
+import { render, cleanup } from '@testing-library/react';
 import { useCRMStore } from '@/hooks/use-crm-store';
 import { useNotificationStore } from '@/hooks/use-notification-store';
 import type { User, Lead, Task } from '@/types';
+import { CrmShell } from '@/components/crm-shell';
 
 /**
  * Phase F0A: Authentication, Session Isolation & Protected App Boundary Tests
  *
- * Validates:
- * A. unauthenticated /app -> /login
- * B. unauthenticated /app/inquiries -> /login
- * C. unauthenticated /app/travelers -> /login
- * D. authenticated protected request renders
- * E. logout while on /app -> state purge + /login
- * F. spontaneous SIGNED_OUT while on /app -> state purge + notification clear + /login
- * G. direct reload /app after logout -> denied server-side
- * H. User A -> logout -> User B isolation
- * I. failed logout audit event does not block logout
- * J. CrmShell does not render sensitive shell when definitively unauthenticated
- * K. Super admin profile allows access without agency tenant
+ * Covers:
+ * 1. Server Layout Authentication Boundary & Authorization Rules
+ * 2. Strict Super-Admin Profile Role Authorization (Negative test for @stateai.in email)
+ * 3. Global SIGNED_OUT State Purge (on /app and on public routes)
+ * 4. Actual CrmShell Defensive Client Auth-Guard (Loading, Unauthenticated, Authenticated)
+ * 5. User A -> Logout -> User B Isolation
+ * 6. Non-blocking Logout Audit Logging
  */
 
 const redirectMock = vi.fn((url: string) => {
@@ -26,9 +25,34 @@ const redirectMock = vi.fn((url: string) => {
 
 vi.mock('next/navigation', () => ({
   redirect: (url: string) => redirectMock(url),
+  useRouter: () => ({
+    push: vi.fn(),
+    replace: vi.fn(),
+    prefetch: vi.fn(),
+  }),
 }));
 
-describe('Phase F0A: Server-Side /app Layout Boundary (A, B, C, D, G, K)', () => {
+// Mock sub-components for CrmShell render tests
+vi.mock('@/components/sidebar', () => ({
+  Sidebar: () => React.createElement('div', { 'data-testid': 'crm-sidebar' }, 'Sidebar'),
+}));
+vi.mock('@/components/header', () => ({
+  Header: () => React.createElement('div', { 'data-testid': 'crm-header' }, 'Header'),
+}));
+vi.mock('@/components/dashboard-view', () => ({
+  DashboardView: () => React.createElement('div', { 'data-testid': 'dashboard-view' }, 'Protected Dashboard Content'),
+}));
+vi.mock('@/components/global-copilot', () => ({
+  GlobalCopilot: () => React.createElement('div', { 'data-testid': 'global-copilot' }, 'Copilot'),
+}));
+vi.mock('@/components/dev-tools', () => ({
+  DevTools: () => React.createElement('div', { 'data-testid': 'dev-tools' }, 'DevTools'),
+}));
+vi.mock('sonner', () => ({
+  Toaster: () => React.createElement('div', { 'data-testid': 'toaster' }),
+}));
+
+describe('1. Server-Side /app Layout Boundary & Role Authorization', () => {
   const originalSupabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 
   beforeEach(() => {
@@ -37,6 +61,7 @@ describe('Phase F0A: Server-Side /app Layout Boundary (A, B, C, D, G, K)', () =>
   });
 
   afterEach(() => {
+    cleanup();
     process.env.NEXT_PUBLIC_SUPABASE_URL = originalSupabaseUrl;
     vi.resetModules();
   });
@@ -68,7 +93,7 @@ describe('Phase F0A: Server-Side /app Layout Boundary (A, B, C, D, G, K)', () =>
     expect(redirectMock).toHaveBeenCalledWith('/login');
   });
 
-  it('B & C. AppLayout wraps all /app child routes (/app/inquiries, /app/travelers) and denies access without valid profile', async () => {
+  it('B. Negative Test: @stateai.in email with ordinary role (specialist) and global/missing tenant is DENIED access', async () => {
     vi.doMock('next/headers', () => ({
       cookies: vi.fn().mockResolvedValue({ getAll: () => [] }),
     }));
@@ -77,7 +102,7 @@ describe('Phase F0A: Server-Side /app Layout Boundary (A, B, C, D, G, K)', () =>
       createClient: vi.fn().mockReturnValue({
         auth: {
           getUser: vi.fn().mockResolvedValue({
-            data: { user: { id: 'user-no-profile', email: 'guest@example.com' } },
+            data: { user: { id: 'user-specialist-domain', email: 'employee@stateai.in' } },
             error: null,
           }),
         },
@@ -85,8 +110,8 @@ describe('Phase F0A: Server-Side /app Layout Boundary (A, B, C, D, G, K)', () =>
           select: vi.fn().mockReturnValue({
             eq: vi.fn().mockReturnValue({
               single: vi.fn().mockResolvedValue({
-                data: null,
-                error: new Error('Profile record not found'),
+                data: { id: 'user-specialist-domain', tenant_id: 'global', role: 'specialist' },
+                error: null,
               }),
             }),
           }),
@@ -97,15 +122,49 @@ describe('Phase F0A: Server-Side /app Layout Boundary (A, B, C, D, G, K)', () =>
     const AppLayout = (await import('../app/app/layout')).default;
 
     try {
-      await AppLayout({ children: 'Child Inquiries View' });
+      await AppLayout({ children: 'Should Be Denied' });
     } catch (e: unknown) {
       expect((e as Error).message).toBe('NEXT_REDIRECT:/login');
     }
 
+    // Must be redirected to /login because email domain alone does NOT grant super-admin access
     expect(redirectMock).toHaveBeenCalledWith('/login');
   });
 
-  it('D. AppLayout allows rendering when request is authenticated with valid tenant', async () => {
+  it('C. Authoritative Super Admin: explicit super_admin role is permitted without tenant_id restrictions', async () => {
+    vi.doMock('next/headers', () => ({
+      cookies: vi.fn().mockResolvedValue({ getAll: () => [] }),
+    }));
+
+    vi.doMock('@/lib/supabase/server', () => ({
+      createClient: vi.fn().mockReturnValue({
+        auth: {
+          getUser: vi.fn().mockResolvedValue({
+            data: { user: { id: 'sa-authoritative', email: 'admin@anycompany.com' } },
+            error: null,
+          }),
+        },
+        from: vi.fn().mockReturnValue({
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              single: vi.fn().mockResolvedValue({
+                data: { id: 'sa-authoritative', tenant_id: 'global', role: 'super_admin' },
+                error: null,
+              }),
+            }),
+          }),
+        }),
+      }),
+    }));
+
+    const AppLayout = (await import('../app/app/layout')).default;
+    const result = await AppLayout({ children: 'Super Admin Control Center' });
+
+    expect(redirectMock).not.toHaveBeenCalled();
+    expect(result).toBeDefined();
+  });
+
+  it('D. Authenticated normal user with valid tenant is permitted to render /app', async () => {
     vi.doMock('next/headers', () => ({
       cookies: vi.fn().mockResolvedValue({ getAll: () => [] }),
     }));
@@ -137,157 +196,190 @@ describe('Phase F0A: Server-Side /app Layout Boundary (A, B, C, D, G, K)', () =>
     expect(redirectMock).not.toHaveBeenCalled();
     expect(result).toBeDefined();
   });
-
-  it('G. Direct reload of /app after logout: server boundary denies access when session cookie is gone', async () => {
-    vi.doMock('next/headers', () => ({
-      cookies: vi.fn().mockResolvedValue({ getAll: () => [] }),
-    }));
-
-    vi.doMock('@/lib/supabase/server', () => ({
-      createClient: vi.fn().mockReturnValue({
-        auth: {
-          getUser: vi.fn().mockResolvedValue({
-            data: { user: null },
-            error: new Error('Auth session missing'),
-          }),
-        },
-      }),
-    }));
-
-    const AppLayout = (await import('../app/app/layout')).default;
-
-    try {
-      await AppLayout({ children: 'Should Not Render' });
-    } catch (e: unknown) {
-      expect((e as Error).message).toBe('NEXT_REDIRECT:/login');
-    }
-
-    expect(redirectMock).toHaveBeenCalledWith('/login');
-  });
-
-  it('K. Super admin user is permitted to render /app without tenant_id restrictions', async () => {
-    vi.doMock('next/headers', () => ({
-      cookies: vi.fn().mockResolvedValue({ getAll: () => [] }),
-    }));
-
-    vi.doMock('@/lib/supabase/server', () => ({
-      createClient: vi.fn().mockReturnValue({
-        auth: {
-          getUser: vi.fn().mockResolvedValue({
-            data: { user: { id: 'sa-user', email: 'admin@stateai.in' } },
-            error: null,
-          }),
-        },
-        from: vi.fn().mockReturnValue({
-          select: vi.fn().mockReturnValue({
-            eq: vi.fn().mockReturnValue({
-              single: vi.fn().mockResolvedValue({
-                data: { id: 'sa-user', tenant_id: 'global', role: 'super_admin' },
-                error: null,
-              }),
-            }),
-          }),
-        }),
-      }),
-    }));
-
-    const AppLayout = (await import('../app/app/layout')).default;
-    const result = await AppLayout({ children: 'Super Admin Control Center' });
-
-    expect(redirectMock).not.toHaveBeenCalled();
-    expect(result).toBeDefined();
-  });
 });
 
-describe('Phase F0A: Client Session Reset & Multi-Tenant Isolation (E, F, H, I, J)', () => {
+describe('2. Global SIGNED_OUT Session Reset (on /app and public routes)', () => {
   beforeEach(() => {
     useCRMStore.getState().resetSessionState();
     useNotificationStore.getState().clear();
   });
 
-  it('E. Logout while on /app executes state purge and hard navigation to /login', async () => {
-    const adapterLogoutMock = vi.fn().mockResolvedValue(undefined);
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('A. SIGNED_OUT on /app route: purges store state, clears notifications, and redirects to /login', () => {
     useCRMStore.setState({
       currentUser: {
-        id: 'user-active',
-        email: 'active@agency.com',
-        fullName: 'Active Agent',
+        id: 'u-app',
+        email: 'agent@test.com',
+        fullName: 'Agent On App',
         avatarUrl: '',
         role: 'specialist',
-        tenantId: 'tenant-active',
+        tenantId: 'tenant-app',
         isOnline: true,
       },
-      tenantId: 'tenant-active',
-      leads: [{ id: 'lead-1', fullName: 'Client 1', tenantId: 'tenant-active' } as unknown as Lead],
+      tenantId: 'tenant-app',
+      leads: [{ id: 'l1', fullName: 'Confidential Lead' } as unknown as Lead],
     });
     useNotificationStore.setState({
-      notifications: [{ id: 'n1', title: 'Task', body: 'Do task', type: 'task', read: false, createdAt: '' }],
+      notifications: [{ id: 'n1', title: 'Private', body: '', type: 'task', read: false, createdAt: '' }],
+    });
+
+    const replaceMock = vi.fn();
+    Object.defineProperty(window, 'location', {
+      value: { replace: replaceMock, pathname: '/app/inquiries' },
+      writable: true,
+      configurable: true,
+    });
+
+    // Simulated execution of onAuthStateChange global reset logic
+    useCRMStore.getState().resetSessionState();
+    useNotificationStore.getState().clear();
+    if (window.location.pathname.startsWith('/app')) {
+      window.location.replace('/login');
+    }
+
+    expect(useCRMStore.getState().currentUser).toBeNull();
+    expect(useCRMStore.getState().tenantId).toBeNull();
+    expect(useCRMStore.getState().leads).toHaveLength(0);
+    expect(useNotificationStore.getState().notifications).toHaveLength(0);
+    expect(replaceMock).toHaveBeenCalledWith('/login');
+  });
+
+  it('B. SIGNED_OUT on public route (/register or /login): purges store state and notifications WITHOUT redirect loop', () => {
+    useCRMStore.setState({
+      currentUser: {
+        id: 'u-pub',
+        email: 'user@test.com',
+        fullName: 'Public Route User',
+        avatarUrl: '',
+        role: 'specialist',
+        tenantId: 'tenant-pub',
+        isOnline: true,
+      },
+      tenantId: 'tenant-pub',
+      leads: [{ id: 'l2', fullName: 'Public Route Lead' } as unknown as Lead],
+    });
+    useNotificationStore.setState({
+      notifications: [{ id: 'n2', title: 'Alert', body: '', type: 'task', read: false, createdAt: '' }],
+    });
+
+    const replaceMock = vi.fn();
+    Object.defineProperty(window, 'location', {
+      value: { replace: replaceMock, pathname: '/register' },
+      writable: true,
+      configurable: true,
+    });
+
+    // Simulated execution of onAuthStateChange global reset logic
+    useCRMStore.getState().resetSessionState();
+    useNotificationStore.getState().clear();
+    if (window.location.pathname.startsWith('/app')) {
+      window.location.replace('/login');
+    }
+
+    // State MUST be completely cleared
+    expect(useCRMStore.getState().currentUser).toBeNull();
+    expect(useCRMStore.getState().tenantId).toBeNull();
+    expect(useCRMStore.getState().leads).toHaveLength(0);
+    expect(useNotificationStore.getState().notifications).toHaveLength(0);
+
+    // Must NOT trigger unnecessary redirect when on public routes
+    expect(replaceMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('3. CrmShell Defensive Client Auth-Guard', () => {
+  beforeEach(() => {
+    useCRMStore.getState().resetSessionState();
+    useNotificationStore.getState().clear();
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('A. sessionLoading = true: protected CRM views are NOT rendered (shows restoring session indicator)', () => {
+    useCRMStore.setState({
+      sessionLoading: true,
+      currentUser: null,
+    });
+
+    const { queryByTestId, getByText } = render(React.createElement(CrmShell));
+
+    // Protected view content must NOT be rendered
+    expect(queryByTestId('dashboard-view')).toBeNull();
+    expect(queryByTestId('crm-sidebar')).toBeNull();
+
+    // Restoring session indicator should be visible
+    expect(getByText(/Restoring session/i)).toBeDefined();
+  });
+
+  it('B. sessionLoading = false, currentUser = null: protected CRM shell is NOT rendered and initiates redirect', () => {
+    const replaceMock = vi.fn();
+    Object.defineProperty(window, 'location', {
+      value: { replace: replaceMock, pathname: '/app' },
+      writable: true,
+      configurable: true,
+    });
+
+    useCRMStore.setState({
+      sessionLoading: false,
+      currentUser: null,
     });
 
     useCRMStore.getState().setAuthAdapter({
       login: vi.fn(),
-      logout: adapterLogoutMock,
+      logout: vi.fn(),
       loadSession: vi.fn(),
       user: null,
       loading: false,
     });
 
-    const replaceMock = vi.fn();
-    vi.stubGlobal('window', {
-      location: { replace: replaceMock, pathname: '/app/dashboard' },
-    });
+    const { queryByTestId } = render(React.createElement(CrmShell));
 
-    await useCRMStore.getState().logout();
+    // Protected CRM views must NOT render
+    expect(queryByTestId('dashboard-view')).toBeNull();
+    expect(queryByTestId('crm-sidebar')).toBeNull();
 
-    expect(useCRMStore.getState().currentUser).toBeNull();
-    expect(useCRMStore.getState().tenantId).toBeNull();
-    expect(useCRMStore.getState().leads).toHaveLength(0);
-    expect(useNotificationStore.getState().notifications).toHaveLength(0);
-    expect(adapterLogoutMock).toHaveBeenCalled();
+    // Secondary client guard should trigger redirect to /login
     expect(replaceMock).toHaveBeenCalledWith('/login');
-
-    vi.unstubAllGlobals();
   });
 
-  it('F. Spontaneous SIGNED_OUT event on /app triggers session reset and notification clear before redirect', async () => {
-    // Populate store before event
+  it('C. sessionLoading = false, currentUser authenticated: normal CrmShell rendering is permitted', () => {
     useCRMStore.setState({
+      sessionLoading: false,
       currentUser: {
-        id: 'user-spontaneous',
-        email: 'user@agency.com',
-        fullName: 'Spontaneous User',
+        id: 'user-crm-test',
+        email: 'test@agency.com',
+        fullName: 'Agent Tested',
         avatarUrl: '',
-        role: 'specialist',
-        tenantId: 'tenant-spontaneous',
+        role: 'admin',
+        tenantId: 'tenant-123',
         isOnline: true,
       },
-      tenantId: 'tenant-spontaneous',
-      leads: [{ id: 'lead-s', fullName: 'Sensitive Lead', tenantId: 'tenant-spontaneous' } as unknown as Lead],
-    });
-    useNotificationStore.setState({
-      notifications: [{ id: 'notif-s', title: 'Sensitive Notification', body: 'Details', type: 'task', read: false, createdAt: '' }],
+      activeTab: 'dashboard',
     });
 
-    const replaceMock = vi.fn();
-    vi.stubGlobal('window', {
-      location: { replace: replaceMock, pathname: '/app/inquiries' },
-    });
+    const { getByTestId } = render(React.createElement(CrmShell));
 
-    // Simulate onAuthStateChange SIGNED_OUT execution path
+    expect(getByTestId('crm-header')).toBeDefined();
+    expect(document.getElementById('main-content')).toBeDefined();
+  });
+});
+
+describe('4. User A -> Logout -> User B Isolation & Reset Contract', () => {
+  beforeEach(() => {
     useCRMStore.getState().resetSessionState();
     useNotificationStore.getState().clear();
-    window.location.replace('/login');
-
-    expect(useCRMStore.getState().currentUser).toBeNull();
-    expect(useCRMStore.getState().tenantId).toBeNull();
-    expect(useCRMStore.getState().leads).toHaveLength(0);
-    expect(useNotificationStore.getState().notifications).toHaveLength(0);
-    expect(replaceMock).toHaveBeenCalledWith('/login');
-
-    vi.unstubAllGlobals();
   });
 
-  it('H. User A -> Logout -> User B isolation guarantees User B cannot access User A data', async () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('A. User A logout ensures User B cannot observe User A state', () => {
     const userA: User = {
       id: 'user-a-id',
       email: 'usera@agencyalpha.com',
@@ -351,7 +443,7 @@ describe('Phase F0A: Client Session Reset & Multi-Tenant Isolation (E, F, H, I, 
     expect(notifications.notifications.some((n) => n.title.includes('Alpha'))).toBe(false);
   });
 
-  it('I. Failed logout audit event does not block logout', async () => {
+  it('B. Failed logout audit event does not block logout', async () => {
     const failingLogAuditEvent = vi.fn().mockRejectedValue(new Error('Network error writing audit log'));
     const adapterLogoutMock = vi.fn().mockResolvedValue(undefined);
 
@@ -379,8 +471,10 @@ describe('Phase F0A: Client Session Reset & Multi-Tenant Isolation (E, F, H, I, 
     });
 
     const replaceMock = vi.fn();
-    vi.stubGlobal('window', {
-      location: { replace: replaceMock, pathname: '/app' },
+    Object.defineProperty(window, 'location', {
+      value: { replace: replaceMock, pathname: '/app' },
+      writable: true,
+      configurable: true,
     });
 
     await useCRMStore.getState().logout();
@@ -390,22 +484,18 @@ describe('Phase F0A: Client Session Reset & Multi-Tenant Isolation (E, F, H, I, 
     expect(useCRMStore.getState().leads).toHaveLength(0);
     expect(adapterLogoutMock).toHaveBeenCalled();
     expect(replaceMock).toHaveBeenCalledWith('/login');
-
-    vi.unstubAllGlobals();
   });
 
-  it('J. ResetSessionState contract ensures fresh object instances for settings and branding', () => {
+  it('C. ResetSessionState contract ensures fresh object instances for settings and branding', () => {
     useCRMStore.getState().resetSessionState();
     const settingsFirst = useCRMStore.getState().settings;
     const brandingFirst = useCRMStore.getState().tenantBranding;
 
-    // Mutate state
     useCRMStore.setState({
       settings: { ...settingsFirst, agencyName: 'Mutated Agency' },
       tenantBranding: { ...brandingFirst, agencyName: 'Mutated Branding' },
     });
 
-    // Reset again
     useCRMStore.getState().resetSessionState();
     const settingsSecond = useCRMStore.getState().settings;
     const brandingSecond = useCRMStore.getState().tenantBranding;

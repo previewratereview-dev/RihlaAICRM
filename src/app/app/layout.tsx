@@ -44,12 +44,8 @@ export default async function AppLayout({
     redirect('/login');
   }
 
-  // Super admin users are platform-level and may hold global or null tenant
-  const isSuperAdmin =
-    profile.role === 'super_admin' ||
-    profile.role === 'platform_super_admin' ||
-    user.email?.endsWith('@stateai.in') ||
-    user.email?.endsWith('@stateai.com');
+  // Super admin users are platform-level and are not bound to an agency tenant
+  const isSuperAdmin = profile.role === 'super_admin';
 
   if (!isSuperAdmin && (!profile.tenant_id || profile.tenant_id === 'global')) {
     redirect('/login');

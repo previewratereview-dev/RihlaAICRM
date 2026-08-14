@@ -246,9 +246,10 @@ export function useAuth() {
     const { data: subscription } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (!session?.user || event === 'SIGNED_OUT') {
         setState({ user: null, loading: false, error: null });
+        useCRMStore.getState().resetSessionState();
+        useNotificationStore.getState().clear();
+
         if (typeof window !== 'undefined' && window.location.pathname.startsWith('/app')) {
-          useCRMStore.getState().resetSessionState();
-          useNotificationStore.getState().clear();
           window.location.replace('/login');
         }
         return;
