@@ -6,15 +6,17 @@ import { generateId } from '@/lib/utils';
 
 dotenv.config({ path: path.join(__dirname, '../../.env.local') });
 
-const projectRef = 'djnscrvzsnttkfwsvrln';
-const pass = 'a3iIWlBC4uvzlEdb';
+const projectRef = process.env.SUPABASE_PROJECT_REF || '';
+const pass = process.env.DATABASE_PASSWORD || '';
+const isDbConfigured = Boolean(projectRef && pass);
 
-describe('UI-Level Rapid Double-Submit Safety & Idempotency', () => {
+describe.skipIf(!isDbConfigured)('UI-Level Rapid Double-Submit Safety & Idempotency', () => {
   let pgClient: Client;
   const testTenantId = `tenant-ui-double-submit-${Date.now()}`;
   let seedTravelerId: string;
 
   beforeEach(async () => {
+    if (!isDbConfigured) return;
     pgClient = new Client({
       host: 'aws-0-ap-northeast-1.pooler.supabase.com',
       port: 6543,
