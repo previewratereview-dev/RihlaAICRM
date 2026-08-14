@@ -23,13 +23,14 @@ export function CopilotRegistrationInner() {
   const router = useRouter();
   const currentUser = useCRMStore(state => state.currentUser);
   const sessionLoading = useCRMStore(state => state.sessionLoading);
-  const login = useCRMStore(state => state.login);
+  const startDemoSession = useCRMStore(state => state.startDemoSession);
   const logout = useCRMStore(state => state.logout);
 
   const [input, setInput] = useState('');
   const [uiState, setUIState] = useUIState();
   const { submitUserMessage } = useActions() as { submitUserMessage: (content: string, clientContext?: { isLoggedIn: boolean, firstName?: string, tenantId?: string }) => Promise<{ id: string, display: React.ReactNode }> };
   const [loading, setLoading] = useState(false);
+  const [isStartingDemo, setIsStartingDemo] = useState(false);
 
   const isPreviewingRef = useRef(false);
   const hasOverriddenRef = useRef(false);
@@ -39,7 +40,8 @@ export function CopilotRegistrationInner() {
   const [setupProgress, setSetupProgress] = useState('welcome');
 
   useEffect(() => {
-    if (currentUser && uiState.length === 1 && uiState[0].role === 'assistant' && !hasOverriddenRef.current) {
+    // If user is already logged in, show a welcome message only once
+    if (currentUser && !sessionLoading && !isPreviewingRef.current && !hasOverriddenRef.current && uiState.length > 0) {
       hasOverriddenRef.current = true;
       setUIState([
         {
@@ -53,17 +55,45 @@ export function CopilotRegistrationInner() {
         }
       ]);
     }
-  }, [currentUser, uiState, uiState.length, setUIState]);
+  }, [currentUser, sessionLoading, uiState, setUIState]);
 
   useEffect(() => {
     const handlePreview = async () => {
-      setPreviewMode(true);
-      isPreviewingRef.current = true;
-      await login('demo@stateai.in', 'Test@123', true);
+      setIsStartingDemo(true);
+      const result = await startDemoSession();
+      setIsStartingDemo(false);
+
+      if (result.success) {
+        isPreviewingRef.current = true;
+        setPreviewMode(true);
+      } else {
+        isPreviewingRef.current = false;
+        setPreviewMode(false);
+        setUIState((prev: UIMessage[]) => [
+          ...prev,
+          {
+            id: Date.now().toString(),
+            role: 'assistant',
+            display: (
+              <div className="p-3.5 rounded-xl border border-destructive/30 bg-destructive/10 text-destructive text-sm space-y-2">
+                <p className="font-semibold">Unable to start live demo session</p>
+                <p className="text-xs opacity-90">{result.error || 'Server demo authentication is currently unavailable.'}</p>
+                <button
+                  type="button"
+                  onClick={() => window.dispatchEvent(new Event('triggerPreviewMode'))}
+                  className="mt-1 inline-flex items-center text-xs font-semibold text-primary underline hover:opacity-80"
+                >
+                  Retry Demo Connection
+                </button>
+              </div>
+            ),
+          },
+        ]);
+      }
     };
     window.addEventListener('triggerPreviewMode', handlePreview);
     return () => window.removeEventListener('triggerPreviewMode', handlePreview);
-  }, [login]);
+  }, [startDemoSession, setUIState]);
 
   const handleExitPreview = async () => {
     await logout();
@@ -351,30 +381,40 @@ export function CopilotRegistrationInner() {
               className="w-[280px] h-full hidden md:flex flex-col justify-center shrink-0 pl-8 border-l border-black/5 dark:border-white/5"
             >
               <h3 className="text-sm font-bold text-foreground mb-6 uppercase tracking-wider">Setup Progress</h3>
-              <div className="space-y-6">
-                {SETUP_STEPS.map((step, index) => {
-                  const isCompleted = index < currentStepIndex;
-                  const isActive = index === currentStepIndex;
-                  return (
-                    <div key={step.id} className="flex items-center gap-3">
-                      <div className={`relative flex items-center justify-center w-6 h-6 rounded-full transition-colors ${isCompleted ? 'bg-purple-500 text-white' :
-                          isActive ? 'bg-purple-500/20 text-purple-500 border border-purple-500/50' :
-                            'bg-muted text-muted-foreground'
-                        }`}>
-                        {isCompleted ? <CheckCircle2 className="w-4 h-4" /> :
-                          isActive ? <Circle className="w-3 h-3 fill-current animate-pulse" /> :
-                            <span className="text-[10px] font-bold">{index + 1}</span>}
+              {isStartingDemo ? (
+                <div className="p-4 rounded-xl border border-primary/20 bg-primary/5 space-y-3">
+                  <div className="flex items-center gap-3">
+                    <div className="h-4 w-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                    <span className="text-sm font-semibold text-foreground">Starting Demo...</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">Authenticating secure session...</p>
+                </div>
+              ) : (
+                <div className="space-y-6">
+                  {SETUP_STEPS.map((step, index) => {
+                    const isCompleted = index < currentStepIndex;
+                    const isActive = index === currentStepIndex;
+                    return (
+                      <div key={step.id} className="flex items-center gap-3">
+                        <div className={`relative flex items-center justify-center w-6 h-6 rounded-full transition-colors ${isCompleted ? 'bg-purple-500 text-white' :
+                            isActive ? 'bg-purple-500/20 text-purple-500 border border-purple-500/50' :
+                              'bg-muted text-muted-foreground'
+                          }`}>
+                          {isCompleted ? <CheckCircle2 className="w-4 h-4" /> :
+                            isActive ? <Circle className="w-3 h-3 fill-current animate-pulse" /> :
+                              <span className="text-[10px] font-bold">{index + 1}</span>}
+                        </div>
+                        <span className={`text-sm font-medium transition-colors ${isActive ? 'text-foreground font-bold' :
+                            isCompleted ? 'text-foreground' :
+                              'text-muted-foreground'
+                          }`}>
+                          {step.label}
+                        </span>
                       </div>
-                      <span className={`text-sm font-medium transition-colors ${isActive ? 'text-foreground font-bold' :
-                          isCompleted ? 'text-foreground' :
-                            'text-muted-foreground'
-                        }`}>
-                        {step.label}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
+                    );
+                  })}
+                </div>
+              )}
             </motion.div>
           ) : (
             <motion.div

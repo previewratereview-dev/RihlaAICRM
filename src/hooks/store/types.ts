@@ -66,7 +66,8 @@ export interface CRMStore {
   tenantId: string | null;
 
   // Auth actions
-  login: (email: string, password: string, isPreviewFlow?: boolean) => Promise<{ success: boolean; error: string | null }>;
+  login: (email: string, password: string) => Promise<{ success: boolean; error: string | null }>;
+  startDemoSession: () => Promise<{ success: boolean; error: string | null }>;
   logout: () => Promise<void>;
   resetSessionState: () => void;
   restoreSession: () => Promise<void>;

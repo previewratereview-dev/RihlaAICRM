@@ -92,10 +92,7 @@ export function createAuthSlice(set: SetState, get: GetState) {
       }
     },
 
-    login: async (email: string, password: string, isPreviewFlow: boolean = false) => {
-      if (email.toLowerCase() === 'demo@stateai.in' && !isPreviewFlow) {
-        return { success: false, error: 'Direct login to the demo account is restricted. Please use the Preview CRM option instead.' };
-      }
+    login: async (email: string, password: string) => {
       const adapter = getAuthAdapter();
       if (!adapter) {
         return { success: false, error: 'Auth not initialized' };
@@ -123,6 +120,31 @@ export function createAuthSlice(set: SetState, get: GetState) {
         return { success: true, error: null };
       }
       return { success: false, error: result.error };
+    },
+
+    startDemoSession: async () => {
+      try {
+        const res = await fetch('/api/auth/demo-session', { method: 'POST' });
+        const data = await res.json();
+        if (!data.success || !data.user) {
+          return { success: false, error: data.error || 'Failed to start demo session' };
+        }
+        const adapter = getAuthAdapter();
+        if (adapter?.loadSession) {
+          await adapter.loadSession();
+        }
+        set({
+          currentUser: data.user,
+          tenantId: data.user.tenantId,
+          activeTab: 'dashboard',
+          sessionLoading: false,
+        });
+        await get().syncData();
+        return { success: true, error: null };
+      } catch (err) {
+        logger.error('Failed to start demo session', { error: String(err) });
+        return { success: false, error: 'Network error establishing demo session' };
+      }
     },
 
     logout: async () => {
