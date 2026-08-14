@@ -5,6 +5,9 @@ import { sendSMS } from '@/lib/integrations/sms';
 import { sendEmail } from '@/lib/integrations/email';
 import { z } from 'zod';
 import { escapeHtml } from '@/lib/security/sanitize';
+import { createClient } from '@supabase/supabase-js';
+import { generateId } from '@/lib/utils';
+import { logger } from '@/lib/logger';
 
 const SendMessageSchema = z.object({
   channel: z.enum(['whatsapp', 'sms', 'email']),
@@ -13,6 +16,9 @@ const SendMessageSchema = z.object({
   content: z.string().min(1).max(5000),
   leadName: z.string().max(200).optional(),
   conversationId: z.string().max(255).optional(),
+  travelerId: z.string().uuid().optional(),
+  inquiryId: z.string().uuid().optional(),
+  legacyLeadId: z.string().max(255).optional(),
 });
 
 export async function POST(request: NextRequest) {
@@ -30,7 +36,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid request.', details: validation.error.issues }, { status: 400 });
     }
 
-    const { channel, to, subject, content, leadName, conversationId } = validation.data;
+    const { channel, to, subject, content, leadName, conversationId, travelerId, inquiryId, legacyLeadId } = validation.data;
 
     let result: { ok: boolean; error?: string };
 
@@ -51,6 +57,32 @@ export async function POST(request: NextRequest) {
         break;
       default:
         return NextResponse.json({ error: 'Unknown channel' }, { status: 400 });
+    }
+
+    // Authoritative CRM Communication History
+    if (result.ok) {
+      try {
+        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+        const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+        if (supabaseUrl && serviceKey) {
+          const supabase = createClient(supabaseUrl, serviceKey);
+          await supabase.from('activities').insert({
+            id: `act-${generateId()}`,
+            tenant_id: guard.tenantId,
+            lead_id: legacyLeadId || null,
+            traveler_id: travelerId || null,
+            inquiry_id: inquiryId || null,
+            user_id: guard.user?.id || null,
+            user_name: guard.user?.fullName || 'Specialist',
+            type: `${channel}_sent`,
+            title: `${channel.toUpperCase()} sent: ${subject || (content.length > 30 ? content.slice(0, 30) + '...' : content)}`,
+            description: content.length > 500 ? content.slice(0, 500) + '...' : content,
+            created_at: new Date().toISOString(),
+          });
+        }
+      } catch (historyErr) {
+        logger.warn('Failed to record activity log for sent communication', { error: String(historyErr) });
+      }
     }
 
     return NextResponse.json({

@@ -10,23 +10,43 @@ export function createConversationsSlice(set: SetState, get: GetState) {
     messages: {} as Record<string, Message[]>,
 
     startConversation: async (
-      leadId: string,
+      leadId: string | null | undefined,
       channel: 'whatsapp' | 'sms' | 'email' = 'email',
-      context?: { travelerName?: string; travelerEmail?: string; phone?: string; tenantId?: string }
+      context?: {
+        travelerId?: string | null;
+        inquiryId?: string | null;
+        bookingId?: string | null;
+        travelerName?: string;
+        travelerEmail?: string;
+        phone?: string;
+        tenantId?: string;
+      }
     ) => {
       const currentUser = get().currentUser;
       if (!currentUser) throw new Error('User not authenticated');
 
-      const lead = get().leads.find((l) => l.id === leadId);
+      // Verify if leadId corresponds to a genuine legacy lead
+      const lead = leadId ? get().leads.find((l) => l.id === leadId) : null;
+      const genuineLeadId = lead ? lead.id : (leadId && leadId.startsWith('lead-') ? leadId : null);
+
+      const travelerId = context?.travelerId || null;
+      const inquiryId = context?.inquiryId || null;
+      const bookingId = context?.bookingId || null;
+
       const travelerName = context?.travelerName || lead?.fullName || 'Traveler';
       const travelerEmail = context?.travelerEmail || lead?.email || '';
       const phone = context?.phone || lead?.phone || '';
       const tenantId = context?.tenantId || lead?.tenantId || get().tenantId || currentUser.tenantId;
 
       // Check if conversation already exists for this lead/traveler on this channel
-      const existing = get().conversations.find((c) => 
-        (c.leadId === leadId || (travelerEmail && c.leadEmail === travelerEmail)) && c.channel === channel
-      );
+      const existing = get().conversations.find((c) => {
+        if (c.channel !== channel) return false;
+        if (genuineLeadId && c.leadId === genuineLeadId) return true;
+        if (travelerId && c.travelerId === travelerId) return true;
+        if (travelerEmail && c.leadEmail === travelerEmail) return true;
+        return false;
+      });
+
       if (existing) {
         set({ activeTab: 'conversations' });
         return existing.id;
@@ -37,7 +57,11 @@ export function createConversationsSlice(set: SetState, get: GetState) {
       
       const newConv: Conversation = {
         id: convId,
-        leadId,
+        tenantId,
+        leadId: genuineLeadId,
+        travelerId,
+        inquiryId,
+        bookingId,
         leadName: travelerName,
         leadAvatar: '',
         leadCompany: lead?.businessName || '',
@@ -50,7 +74,6 @@ export function createConversationsSlice(set: SetState, get: GetState) {
         lastMessage: 'Conversation started',
         lastMessageAt: now,
         unreadCount: 0,
-        tenantId,
         isOnline: false,
       };
 

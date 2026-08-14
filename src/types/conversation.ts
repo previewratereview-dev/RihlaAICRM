@@ -19,7 +19,10 @@ export interface Message {
 export interface Conversation {
   id: string;
   tenantId: string;
-  leadId: string;
+  leadId?: string | null;
+  travelerId?: string | null;
+  inquiryId?: string | null;
+  bookingId?: string | null;
   leadName: string;
   leadAvatar: string;
   leadCompany: string;

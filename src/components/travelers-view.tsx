@@ -48,7 +48,12 @@ export function TravelersView({ useNewReadOverride }: TravelersViewProps = {}) {
   const [repeatOnly, setRepeatOnly] = useState(false);
 
   // Email Composer state
-  const [selectedTravelerForEmail, setSelectedTravelerForEmail] = useState<{ displayName: string; email: string } | null>(null);
+  const [selectedTravelerForEmail, setSelectedTravelerForEmail] = useState<{
+    displayName: string;
+    email: string;
+    travelerId?: string;
+    legacyLeadId?: string;
+  } | null>(null);
 
   // New Inquiry Modal state
   const [selectedTravelerForInquiry, setSelectedTravelerForInquiry] = useState<TravelerDirectoryItem | null>(null);
@@ -431,7 +436,8 @@ export function TravelersView({ useNewReadOverride }: TravelersViewProps = {}) {
                             <button
                               type="button"
                               onClick={() => {
-                                startConversation(traveler.id, 'email', {
+                                startConversation(null, 'email', {
+                                  travelerId: traveler.id,
                                   travelerName: traveler.displayName,
                                   travelerEmail: traveler.email || undefined,
                                   phone: traveler.phone || undefined,
@@ -444,7 +450,11 @@ export function TravelersView({ useNewReadOverride }: TravelersViewProps = {}) {
                             </button>
                             <button
                               type="button"
-                              onClick={() => setSelectedTravelerForEmail({ displayName: traveler.displayName, email: traveler.email || '' })}
+                              onClick={() => setSelectedTravelerForEmail({
+                                displayName: traveler.displayName,
+                                email: traveler.email || '',
+                                travelerId: traveler.id,
+                              })}
                               disabled={!traveler.email}
                               className={`p-1.5 rounded-lg border ${
                                 traveler.email
@@ -554,7 +564,11 @@ export function TravelersView({ useNewReadOverride }: TravelersViewProps = {}) {
                             </button>
                             <button
                               type="button"
-                              onClick={() => setSelectedTravelerForEmail({ displayName: client.fullName, email: client.email || '' })}
+                              onClick={() => setSelectedTravelerForEmail({
+                                displayName: client.fullName,
+                                email: client.email || '',
+                                legacyLeadId: client.id,
+                              })}
                               disabled={!client.email}
                               className={`p-1.5 rounded-lg border ${
                                 client.email
@@ -602,6 +616,7 @@ export function TravelersView({ useNewReadOverride }: TravelersViewProps = {}) {
         </div>
       </div>
 
+      {/* Inquiry Creation Modal */}
       {isInquiryModalOpen && selectedTravelerForInquiry && (
         <LeadFormModal
           isEdit={false}
@@ -640,6 +655,8 @@ export function TravelersView({ useNewReadOverride }: TravelersViewProps = {}) {
           onClose={() => setSelectedTravelerForEmail(null)}
           travelerName={selectedTravelerForEmail.displayName}
           travelerEmail={selectedTravelerForEmail.email}
+          travelerId={selectedTravelerForEmail.travelerId}
+          legacyLeadId={selectedTravelerForEmail.legacyLeadId}
           defaultSubject={`Travel update from your specialist`}
         />
       )}

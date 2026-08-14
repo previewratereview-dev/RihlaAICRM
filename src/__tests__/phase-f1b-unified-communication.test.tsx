@@ -5,7 +5,6 @@ import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/re
 import React from 'react';
 import { useCRMStore } from '@/hooks/use-crm-store';
 import { InquiryDetailDrawer } from '@/components/inquiries/inquiry-detail-drawer';
-import { LeadDetailDrawer } from '@/components/leads/lead-detail-drawer';
 import { TravelersView } from '@/components/travelers-view';
 import { EmailComposerModal } from '@/components/communication/email-composer-modal';
 import type { InquiryDirectoryItem, Lead, User } from '@/types';
@@ -80,6 +79,27 @@ describe('Phase F1B: Unified Traveler & Inquiry Communication Workflow', () => {
     createdAt: '2026-08-01T10:00:00Z',
   };
 
+  const mockPureInquiry: InquiryDirectoryItem = {
+    inquiryId: 'inq-202',
+    legacyLeadId: null,
+    travelerId: 'trav-202',
+    travelerDisplayName: 'Omar Farooq',
+    travelerEmail: 'omar@example.com',
+    travelerPhone: '+971509876543',
+    destination: 'Swiss Alps Expedition',
+    pipelineStage: 'initial_contact',
+    priority: 'medium',
+    expectedValue: 18000,
+    currency: 'INR',
+    leadSource: 'website',
+    assignedAgentId: 'user-agent-1',
+    lastContactedAt: null,
+    nextFollowUpAt: null,
+    identityReviewRequired: false,
+    identityReviewReason: null,
+    createdAt: '2026-08-05T10:00:00Z',
+  };
+
   const mockConfirmedLead: Lead = {
     id: 'lead-101',
     fullName: 'Layla Al-Mansoor',
@@ -113,10 +133,13 @@ describe('Phase F1B: Unified Traveler & Inquiry Communication Workflow', () => {
     tenantId: 'tenant-demo',
   };
 
+  const originalStartConversation = useCRMStore.getState().startConversation;
+
   beforeEach(() => {
     vi.clearAllMocks();
     useCRMStore.getState().resetSessionState();
     useCRMStore.setState({
+      startConversation: originalStartConversation,
       currentUser: mockUser,
       tenantId: 'tenant-demo',
       leads: [mockConfirmedLead],
@@ -182,6 +205,8 @@ describe('Phase F1B: Unified Traveler & Inquiry Communication Workflow', () => {
       'lead-101',
       'email',
       expect.objectContaining({
+        travelerId: 'trav-101',
+        inquiryId: 'inq-101',
         travelerName: 'Layla Al-Mansoor',
         travelerEmail: 'layla@example.com',
       })
@@ -257,6 +282,9 @@ describe('Phase F1B: Unified Traveler & Inquiry Communication Workflow', () => {
         onClose={onCloseSpy}
         travelerName="Layla Al-Mansoor"
         travelerEmail="layla@example.com"
+        travelerId="trav-101"
+        inquiryId="inq-101"
+        legacyLeadId="lead-101"
         defaultSubject="Your Kyoto Trip"
         defaultContent="We have prepared your customized itinerary."
       />
@@ -280,6 +308,9 @@ describe('Phase F1B: Unified Traveler & Inquiry Communication Workflow', () => {
         subject: 'Your Kyoto Trip',
         content: 'We have prepared your customized itinerary.',
         leadName: 'Layla Al-Mansoor',
+        travelerId: 'trav-101',
+        inquiryId: 'inq-101',
+        legacyLeadId: 'lead-101',
       }),
     });
 
@@ -380,5 +411,54 @@ describe('Phase F1B: Unified Traveler & Inquiry Communication Workflow', () => {
     expect(messageBtns.length).toBeGreaterThan(0);
     expect(emailBtns.length).toBeGreaterThan(0);
     expect(callLinks.length).toBeGreaterThan(0);
+  });
+
+  it('N. Canonical Entity Linkage: startConversation stores canonical travelerId + inquiryId and keeps leadId null when no genuine lead exists', async () => {
+    // 1. Start conversation from pure canonical inquiry (legacyLeadId = null)
+    const convId = await useCRMStore.getState().startConversation(
+      null,
+      'email',
+      {
+        travelerId: mockPureInquiry.travelerId,
+        inquiryId: mockPureInquiry.inquiryId,
+        travelerName: mockPureInquiry.travelerDisplayName,
+        travelerEmail: mockPureInquiry.travelerEmail || undefined,
+        phone: mockPureInquiry.travelerPhone || undefined,
+        tenantId: 'tenant-demo',
+      }
+    );
+
+    const createdConv = useCRMStore.getState().conversations.find((c) => c.id === convId);
+    expect(createdConv).toBeDefined();
+    // Invariants:
+    expect(createdConv?.travelerId).toBe('trav-202');
+    expect(createdConv?.inquiryId).toBe('inq-202');
+    expect(createdConv?.leadId).toBeNull(); // NEVER fabricated or set to inquiryId/travelerId!
+    expect(createdConv?.tenantId).toBe('tenant-demo');
+  });
+
+  it('O. Traveler with NO Inquiry: startConversation safely links travelerId with leadId=null and inquiryId=null without fabricating entities', async () => {
+    const initialLeadsCount = useCRMStore.getState().leads.length;
+
+    const convId = await useCRMStore.getState().startConversation(
+      null,
+      'email',
+      {
+        travelerId: 'trav-standalone-999',
+        travelerName: 'Fatima Al-Nuaimi',
+        travelerEmail: 'fatima@example.com',
+        tenantId: 'tenant-demo',
+      }
+    );
+
+    const createdConv = useCRMStore.getState().conversations.find((c) => c.id === convId);
+    expect(createdConv).toBeDefined();
+    expect(createdConv?.travelerId).toBe('trav-standalone-999');
+    expect(createdConv?.inquiryId).toBeNull();
+    expect(createdConv?.leadId).toBeNull();
+    expect(createdConv?.leadName).toBe('Fatima Al-Nuaimi');
+
+    // Asserts no fake Inquiry or Lead was created in store
+    expect(useCRMStore.getState().leads.length).toBe(initialLeadsCount);
   });
 });

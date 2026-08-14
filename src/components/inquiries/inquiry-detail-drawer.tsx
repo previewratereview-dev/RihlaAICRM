@@ -57,7 +57,9 @@ export function InquiryDetailDrawer({
 
   const handleStartConversation = async () => {
     try {
-      await startConversation(inquiry.legacyLeadId || inquiry.inquiryId, 'email', {
+      await startConversation(inquiry.legacyLeadId, 'email', {
+        travelerId: inquiry.travelerId,
+        inquiryId: inquiry.inquiryId,
         travelerName: inquiry.travelerDisplayName,
         travelerEmail: inquiry.travelerEmail || undefined,
         phone: inquiry.travelerPhone || undefined,
@@ -364,8 +366,10 @@ export function InquiryDetailDrawer({
           onClose={() => setIsEmailModalOpen(false)}
           travelerName={inquiry.travelerDisplayName}
           travelerEmail={inquiry.travelerEmail || ''}
-          defaultSubject={`Inquiry regarding ${inquiry.destination || 'your trip'}`}
+          travelerId={inquiry.travelerId}
           inquiryId={inquiry.inquiryId}
+          legacyLeadId={inquiry.legacyLeadId || undefined}
+          defaultSubject={`Inquiry regarding ${inquiry.destination || 'your trip'}`}
         />
       )}
     </>

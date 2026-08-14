@@ -109,9 +109,17 @@ export interface CRMStore {
 
   // Messaging actions
   startConversation: (
-    leadId: string,
+    leadId: string | null | undefined,
     channel?: 'whatsapp' | 'sms' | 'email',
-    context?: { travelerName?: string; travelerEmail?: string; phone?: string; tenantId?: string }
+    context?: {
+      travelerId?: string | null;
+      inquiryId?: string | null;
+      bookingId?: string | null;
+      travelerName?: string;
+      travelerEmail?: string;
+      phone?: string;
+      tenantId?: string;
+    }
   ) => Promise<string>;
   sendMessage: (conversationId: string, content: string, senderType: 'user' | 'contact' | 'system', senderId: string, senderName: string) => Promise<void>;
   editMessage: (conversationId: string, messageId: string, newContent: string) => Promise<void>;

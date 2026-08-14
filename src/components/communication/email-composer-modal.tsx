@@ -15,7 +15,10 @@ export interface EmailComposerModalProps {
   travelerEmail: string;
   defaultSubject?: string;
   defaultContent?: string;
-  inquiryId?: string;
+  travelerId?: string | null;
+  inquiryId?: string | null;
+  legacyLeadId?: string | null;
+  conversationId?: string | null;
   onSuccess?: () => void;
 }
 
@@ -25,6 +28,10 @@ interface FormInnerProps {
   travelerEmail: string;
   defaultSubject: string;
   defaultContent: string;
+  travelerId?: string | null;
+  inquiryId?: string | null;
+  legacyLeadId?: string | null;
+  conversationId?: string | null;
   onSuccess?: () => void;
 }
 
@@ -34,6 +41,10 @@ function EmailComposerForm({
   travelerEmail,
   defaultSubject,
   defaultContent,
+  travelerId,
+  inquiryId,
+  legacyLeadId,
+  conversationId,
   onSuccess,
 }: FormInnerProps) {
   const [subject, setSubject] = useState(defaultSubject);
@@ -72,6 +83,10 @@ function EmailComposerForm({
           subject: subject.trim() || 'Message from your travel specialist',
           content: body.trim(),
           leadName: travelerName || 'Traveler',
+          travelerId: travelerId || undefined,
+          inquiryId: inquiryId || undefined,
+          legacyLeadId: legacyLeadId || undefined,
+          conversationId: conversationId || undefined,
         }),
       });
 
@@ -203,6 +218,10 @@ export function EmailComposerModal({
   travelerEmail,
   defaultSubject = 'Message regarding your travel inquiry',
   defaultContent = '',
+  travelerId,
+  inquiryId,
+  legacyLeadId,
+  conversationId,
   onSuccess,
 }: EmailComposerModalProps) {
   return (
@@ -215,6 +234,10 @@ export function EmailComposerModal({
             travelerEmail={travelerEmail}
             defaultSubject={defaultSubject}
             defaultContent={defaultContent}
+            travelerId={travelerId}
+            inquiryId={inquiryId}
+            legacyLeadId={legacyLeadId}
+            conversationId={conversationId}
             onSuccess={onSuccess}
           />
         )}
