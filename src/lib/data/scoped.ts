@@ -85,6 +85,9 @@ export interface TenantClient {
     list(): Promise<import('@/types').TravelerDirectoryItem[]>;
     getKPIs(): Promise<import('@/types').TravelerKPIs>;
   };
+  inquiries: {
+    list(): Promise<import('@/types').InquiryDirectoryItem[]>;
+  };
 }
 
 /**
@@ -344,5 +347,12 @@ export function scoped(tenantId: string): TenantClient {
         return getTenantTravelerKPIs(tenantId);
       },
     },
+
+    inquiries: {
+      async list() {
+        const { getTenantInquiries } = await import('./inquiries');
+        return getTenantInquiries(tenantId);
+      }
+    }
   };
 }

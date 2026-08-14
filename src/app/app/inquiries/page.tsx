@@ -1,7 +1,7 @@
-'use client';
-
 import { CrmShell } from '@/components/crm-shell';
+import { isNewInquiriesReadEnabled } from '@/lib/feature-flags';
 
 export default function InquiriesPage() {
-  return <CrmShell initialTab="inquiries" />;
+  const useNewRead = isNewInquiriesReadEnabled();
+  return <CrmShell initialTab="inquiries" useNewInquiriesRead={useNewRead} />;
 }

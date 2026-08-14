@@ -85,3 +85,24 @@ export interface TravelerKPIs {
   repeatTravelers: number;
   activeCustomers: number;
 }
+
+export interface InquiryDirectoryItem {
+  inquiryId: string;
+  legacyLeadId: string | null;
+  travelerId: string;
+  travelerDisplayName: string;
+  travelerEmail: string | null;
+  travelerPhone: string | null;
+  destination: string | null;
+  pipelineStage: string;
+  priority: string;
+  expectedValue: number | null;
+  currency: string;
+  leadSource: string;
+  assignedAgentId: string | null;
+  lastContactedAt: string | null;
+  nextFollowUpAt: string | null;
+  identityReviewRequired: boolean;
+  identityReviewReason: string | null;
+  createdAt: string;
+}
