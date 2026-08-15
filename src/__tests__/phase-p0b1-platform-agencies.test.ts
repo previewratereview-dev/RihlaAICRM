@@ -380,6 +380,14 @@ describe('Phase P0B-1: Transactional Agency Management Mutations', () => {
       expect(inquiriesIdx).toBeLessThan(travelersIdx);
       expect(travelersIdx).toBeLessThan(tenantsIdx);
 
+      // Auxiliary & integration tables
+      expect(content).toContain('secret_store');
+      expect(content).toContain('integration_credentials');
+      expect(content).toContain('invitations');
+      expect(content).toContain('roles');
+      expect(content).toContain('documents');
+      expect(content).toContain('files');
+
       // Audit scoping under global
       expect(content).toContain("'global'");
       expect(content).toContain("'agency.deleted'");

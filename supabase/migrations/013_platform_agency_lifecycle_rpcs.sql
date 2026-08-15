@@ -387,6 +387,30 @@ BEGIN
     EXECUTE 'DELETE FROM public.inbound_event_queue WHERE tenant_id = $1' USING p_tenant_id;
   END IF;
 
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'documents') THEN
+    EXECUTE 'DELETE FROM public.documents WHERE tenant_id = $1' USING p_tenant_id;
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'files') THEN
+    EXECUTE 'DELETE FROM public.files WHERE tenant_id = $1' USING p_tenant_id;
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'secret_store') THEN
+    EXECUTE 'DELETE FROM public.secret_store WHERE tenant_id = $1' USING p_tenant_id;
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'invitations') THEN
+    EXECUTE 'DELETE FROM public.invitations WHERE tenant_id = $1' USING p_tenant_id;
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'integration_credentials') THEN
+    EXECUTE 'DELETE FROM public.integration_credentials WHERE tenant_id = $1' USING p_tenant_id;
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'roles') THEN
+    EXECUTE 'DELETE FROM public.roles WHERE tenant_id = $1' USING p_tenant_id;
+  END IF;
+
   DELETE FROM public.ai_usage WHERE tenant_id = p_tenant_id;
   DELETE FROM public.faq_entries WHERE tenant_id = p_tenant_id;
   DELETE FROM public.knowledge_documents WHERE tenant_id = p_tenant_id;
