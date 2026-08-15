@@ -59,7 +59,6 @@ CURRENT CRM VIEW:
 - Traveler ID: ${trav.id}
 - Display Name: ${trav.displayName || 'Unknown'}
 - Preferred Language: ${trav.preferredLanguage || 'Not specified'}
-- Special Notes: ${trav.specialNotes || 'None'}
 - Contact: ${trav.hasEmail ? 'Email on file' : 'No email'}, ${trav.hasPhone ? 'Phone on file' : 'No phone'}
 - Profile Created: ${trav.createdAt || 'Unknown'}`;
     }

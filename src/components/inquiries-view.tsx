@@ -89,12 +89,12 @@ export function InquiriesView({ useNewReadOverride }: InquiriesViewProps = {}) {
   const [selectedInquiryId, setSelectedInquiryId] = useState<string | null>(null);
   const [refreshCounter, setRefreshCounter] = useState(0);
 
-  // Sync selection to activeContext for Global Copilot
+  // Sync selection to activeContext for Global Copilot (canonical public.inquiries.id only)
   useEffect(() => {
-    const id = isNewReadActive ? selectedInquiryId : selectedLeadId;
+    const id = isNewReadActive ? selectedInquiryId : null;
     setActiveContext({ type: id ? 'inquiry' : 'none', id: id || null });
     return () => setActiveContext({ type: 'none', id: null });
-  }, [selectedLeadId, selectedInquiryId, isNewReadActive, setActiveContext]);
+  }, [selectedInquiryId, isNewReadActive, setActiveContext]);
 
   // Common Selection state
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());

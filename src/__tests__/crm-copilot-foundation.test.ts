@@ -7,7 +7,7 @@
  * 3. RBAC-aware (fails closed for Super Admin and unauthenticated sessions)
  * 4. Tenant-isolated (cross-tenant IDs return unavailable and never leak data)
  * 5. Inquiry-aware (resolves canonical public.inquiries + linked traveler summary)
- * 6. Traveler-aware (resolves canonical public.traveler_profiles)
+ * 6. Traveler-aware (resolves canonical public.traveler_profiles, PII-minimized)
  * 7. Booking-aware (resolves canonical public.bookings and preserves null vs 0 finance truth)
  * 8. Conversation-aware (bounded recent message window)
  * 9. Read-only (zero write tools, zero read tools, no RAG)
@@ -69,6 +69,23 @@ const mockInquiryA = {
   created_at: '2026-08-01T10:00:00Z',
 };
 
+const mockInquiryB = {
+  id: 'inq-101',
+  tenant_id: 'tenant-a',
+  destination: 'Bali Tropical Escape',
+  pipeline_stage: 'customizing_package',
+  priority: 'medium',
+  expected_value: 280000,
+  currency: 'INR',
+  passenger_count: 3,
+  departure_date: '2026-11-01',
+  return_date: '2026-11-10',
+  special_requests: 'Private pool villa and scuba diving session',
+  assigned_agent_id: 'user-agent-a',
+  traveler_id: 'trav-201',
+  created_at: '2026-08-05T10:00:00Z',
+};
+
 const mockTravelerA = {
   id: 'trav-200',
   tenant_id: 'tenant-a',
@@ -128,13 +145,44 @@ const mockMessagesA = [
   { sender_type: 'contact', sender_name: 'Priya', content: 'Can we add Lucerne to the itinerary?', created_at: '2026-08-15T14:00:00Z' },
 ];
 
-// Foreign Tenant B record
+// Foreign Tenant B records
 const mockInquiryForeignB = {
   id: 'inq-foreign-999',
   tenant_id: 'tenant-b',
   destination: 'Serengeti Safari VIP',
   pipeline_stage: 'confirmed',
   expected_value: 1200000,
+  special_requests: 'Private game drives only',
+};
+
+const mockTravelerForeignB = {
+  id: 'trav-foreign-888',
+  tenant_id: 'tenant-b',
+  display_name: 'Lord John Safari',
+  preferred_language: 'French',
+  email: 'john@foreign.com',
+  phone: '+44123456789',
+  created_at: '2026-01-01T00:00:00Z',
+};
+
+const mockBookingForeignB = {
+  id: 'bk-foreign-777',
+  tenant_id: 'tenant-b',
+  booking_reference: 'SAF-2026-SECRET',
+  booking_status: 'confirmed',
+  payment_status: 'paid',
+  total_amount: 1500000,
+  paid_amount: 1500000,
+  balance_due: 0,
+  financial_data_complete: true,
+};
+
+const mockConversationForeignB = {
+  id: 'conv-foreign-666',
+  tenant_id: 'tenant-b',
+  channel: 'email',
+  status: 'closed',
+  last_message_at: '2026-08-01T00:00:00Z',
 };
 
 // ─── Mock Supabase Factory ───────────────────────────────────────
@@ -182,6 +230,9 @@ function createMockSupabaseClient(currentUserProfile = mockUserAgentA) {
             if (queryFilter['id'] === mockInquiryA.id && queryFilter['tenant_id'] === mockInquiryA.tenant_id) {
               return Promise.resolve({ data: mockInquiryA, error: null });
             }
+            if (queryFilter['id'] === mockInquiryB.id && queryFilter['tenant_id'] === mockInquiryB.tenant_id) {
+              return Promise.resolve({ data: mockInquiryB, error: null });
+            }
             if (queryFilter['id'] === mockInquiryForeignB.id && queryFilter['tenant_id'] === mockInquiryForeignB.tenant_id) {
               return Promise.resolve({ data: mockInquiryForeignB, error: null });
             }
@@ -190,6 +241,9 @@ function createMockSupabaseClient(currentUserProfile = mockUserAgentA) {
           if (table === 'traveler_profiles') {
             if (queryFilter['id'] === mockTravelerA.id && queryFilter['tenant_id'] === mockTravelerA.tenant_id) {
               return Promise.resolve({ data: mockTravelerA, error: null });
+            }
+            if (queryFilter['id'] === mockTravelerForeignB.id && queryFilter['tenant_id'] === mockTravelerForeignB.tenant_id) {
+              return Promise.resolve({ data: mockTravelerForeignB, error: null });
             }
             return Promise.resolve({ data: null, error: null });
           }
@@ -200,11 +254,17 @@ function createMockSupabaseClient(currentUserProfile = mockUserAgentA) {
             if (queryFilter['id'] === mockBookingNullFinance.id && queryFilter['tenant_id'] === mockBookingNullFinance.tenant_id) {
               return Promise.resolve({ data: mockBookingNullFinance, error: null });
             }
+            if (queryFilter['id'] === mockBookingForeignB.id && queryFilter['tenant_id'] === mockBookingForeignB.tenant_id) {
+              return Promise.resolve({ data: mockBookingForeignB, error: null });
+            }
             return Promise.resolve({ data: null, error: null });
           }
           if (table === 'conversations') {
             if (queryFilter['id'] === mockConversationA.id && queryFilter['tenant_id'] === mockConversationA.tenant_id) {
               return Promise.resolve({ data: mockConversationA, error: null });
+            }
+            if (queryFilter['id'] === mockConversationForeignB.id && queryFilter['tenant_id'] === mockConversationForeignB.tenant_id) {
+              return Promise.resolve({ data: mockConversationForeignB, error: null });
             }
             return Promise.resolve({ data: null, error: null });
           }
@@ -389,8 +449,8 @@ describe('Phase AI-1: CRM Copilot Foundation', () => {
     });
   });
 
-  describe('4. Traveler Context Awareness', () => {
-    it('resolves canonical traveler fields from public.traveler_profiles', async () => {
+  describe('4. Traveler Context Awareness (PII Minimized)', () => {
+    it('resolves canonical traveler fields and excludes unrestricted special notes', async () => {
       const context = await resolveCopilotContext(mockSupabase as never, {
         pathname: '/app/travelers',
         contextType: 'traveler',
@@ -404,7 +464,14 @@ describe('Phase AI-1: CRM Copilot Foundation', () => {
       expect(data.id).toBe('trav-200');
       expect(data.displayName).toBe('Priya Sharma');
       expect(data.preferredLanguage).toBe('English');
-      expect(data.specialNotes).toBe('Prefers 5-star boutique hotels');
+      expect(data.hasEmail).toBe(true);
+      expect(data.hasPhone).toBe(true);
+      // specialNotes must NOT be in DTO
+      expect((data as unknown as Record<string, unknown>).specialNotes).toBeUndefined();
+
+      const prompt = buildCrmCopilotPrompt('Who is this traveler?', context);
+      expect(prompt).toContain('Priya Sharma');
+      expect(prompt).not.toContain('Prefers 5-star boutique hotels');
     });
   });
 
@@ -447,9 +514,8 @@ describe('Phase AI-1: CRM Copilot Foundation', () => {
     });
   });
 
-  describe('7. Cross-Tenant Isolation (Security)', () => {
-    it('blocks access to Foreign Tenant B inquiry from Tenant A user and returns unavailable state', async () => {
-      // Tenant A user attempts to query Foreign Tenant B inquiry
+  describe('7. Cross-Tenant Isolation Matrix (Security)', () => {
+    it('blocks foreign Inquiry B from Tenant A user', async () => {
       const context = await resolveCopilotContext(mockSupabase as never, {
         pathname: '/app/inquiries',
         contextType: 'inquiry',
@@ -461,36 +527,155 @@ describe('Phase AI-1: CRM Copilot Foundation', () => {
       expect(context.entity?.data).toBeNull();
       expect((context.entity as { type: 'inquiry'; data: null; recordUnavailable?: boolean })?.recordUnavailable).toBe(true);
 
-      // Verify prompt does NOT leak Foreign Tenant B values
       const prompt = buildCrmCopilotPrompt('Tell me about this inquiry', context);
       expect(prompt).toContain('The selected inquiry is unavailable or not found');
       expect(prompt).not.toContain('Serengeti Safari VIP');
-      expect(prompt).not.toContain('1200000');
+    });
+
+    it('blocks foreign Traveler B from Tenant A user', async () => {
+      const context = await resolveCopilotContext(mockSupabase as never, {
+        pathname: '/app/travelers',
+        contextType: 'traveler',
+        contextId: 'trav-foreign-888',
+      });
+
+      expect(context.success).toBe(true);
+      expect(context.entity?.type).toBe('traveler');
+      expect(context.entity?.data).toBeNull();
+      expect((context.entity as { type: 'traveler'; data: null; recordUnavailable?: boolean })?.recordUnavailable).toBe(true);
+
+      const prompt = buildCrmCopilotPrompt('Tell me about this traveler', context);
+      expect(prompt).toContain('The selected traveler profile is unavailable or not found');
+      expect(prompt).not.toContain('Lord John Safari');
+    });
+
+    it('blocks foreign Booking B from Tenant A user', async () => {
+      const context = await resolveCopilotContext(mockSupabase as never, {
+        pathname: '/app/bookings',
+        contextType: 'booking',
+        contextId: 'bk-foreign-777',
+      });
+
+      expect(context.success).toBe(true);
+      expect(context.entity?.type).toBe('booking');
+      expect(context.entity?.data).toBeNull();
+      expect((context.entity as { type: 'booking'; data: null; recordUnavailable?: boolean })?.recordUnavailable).toBe(true);
+
+      const prompt = buildCrmCopilotPrompt('Tell me about this booking', context);
+      expect(prompt).toContain('The selected booking record is unavailable or not found');
+      expect(prompt).not.toContain('SAF-2026-SECRET');
+    });
+
+    it('blocks foreign Conversation B from Tenant A user', async () => {
+      const context = await resolveCopilotContext(mockSupabase as never, {
+        pathname: '/app/conversations',
+        contextType: 'conversation',
+        contextId: 'conv-foreign-666',
+      });
+
+      expect(context.success).toBe(true);
+      expect(context.entity?.type).toBe('conversation');
+      expect(context.entity?.data).toBeNull();
+      expect((context.entity as { type: 'conversation'; data: null; recordUnavailable?: boolean })?.recordUnavailable).toBe(true);
+
+      const prompt = buildCrmCopilotPrompt('Tell me about this conversation', context);
+      expect(prompt).toContain('The selected conversation is unavailable or not found');
     });
   });
 
-  describe('8. Context Switching & Stale State Elimination', () => {
-    it('switching to no selection generates page-level prompt without leaking previous entity', () => {
-      const noSelectionContext = {
-        success: true,
-        user: { userId: 'u-1', fullName: 'Agent', role: 'agent' },
-        agency: { tenantId: 't-1', agencyName: 'Agency' },
-        page: { pathname: '/app/dashboard', section: 'Dashboard' },
-        entity: { type: 'none' as const, data: null },
-        currentDate: '2026-08-16',
+  describe('8. Context Switching & Lifecycle State Matrix', () => {
+    it('Inquiry A -> A used in prompt', async () => {
+      const contextA = await resolveCopilotContext(mockSupabase as never, {
+        pathname: '/app/inquiries',
+        contextType: 'inquiry',
+        contextId: 'inq-100',
+      });
+      const promptA = buildCrmCopilotPrompt('What destination?', contextA);
+      expect(promptA).toContain('Switzerland Alps Tour');
+      expect(promptA).not.toContain('Bali Tropical Escape');
+    });
+
+    it('Inquiry B -> B used in prompt (no stale A leak)', async () => {
+      const contextB = await resolveCopilotContext(mockSupabase as never, {
+        pathname: '/app/inquiries',
+        contextType: 'inquiry',
+        contextId: 'inq-101',
+      });
+      const promptB = buildCrmCopilotPrompt('What destination?', contextB);
+      expect(promptB).toContain('Bali Tropical Escape');
+      expect(promptB).not.toContain('Switzerland Alps Tour');
+    });
+
+    it('Drawer close (none) -> no entity context survives', async () => {
+      const contextClosed = await resolveCopilotContext(mockSupabase as never, {
+        pathname: '/app/inquiries',
+        contextType: 'none',
+        contextId: null,
+      });
+      const promptClosed = buildCrmCopilotPrompt('What should I focus on?', contextClosed);
+      expect(promptClosed).toContain('No specific CRM record is currently open. You are viewing the Inquiries page.');
+      expect(promptClosed).not.toContain('inq-100');
+      expect(promptClosed).not.toContain('inq-101');
+    });
+
+    it('Traveler after Inquiry -> no Inquiry data in Traveler context', async () => {
+      const travelerCtx = await resolveCopilotContext(mockSupabase as never, {
+        pathname: '/app/travelers',
+        contextType: 'traveler',
+        contextId: 'trav-200',
+      });
+      const prompt = buildCrmCopilotPrompt('Summarize', travelerCtx);
+      expect(prompt).toContain('Priya Sharma');
+      expect(prompt).not.toContain('Switzerland Alps Tour');
+      expect(prompt).not.toContain('quoted');
+    });
+
+    it('Booking after Traveler -> no Traveler data in Booking context', async () => {
+      const bookingCtx = await resolveCopilotContext(mockSupabase as never, {
+        pathname: '/app/bookings',
+        contextType: 'booking',
+        contextId: 'bk-300',
+      });
+      const prompt = buildCrmCopilotPrompt('Summarize', bookingCtx);
+      expect(prompt).toContain('ALP-2026-089');
+      expect(prompt).not.toContain('English');
+    });
+
+    it('Route-only navigation (Dashboard) -> cleanly renders page context', async () => {
+      const dashCtx = await resolveCopilotContext(mockSupabase as never, {
+        pathname: '/app/dashboard',
+        contextType: 'none',
+        contextId: null,
+      });
+      const prompt = buildCrmCopilotPrompt('What is on my schedule?', dashCtx);
+      expect(prompt).toContain('You are viewing the Dashboard page.');
+      expect(prompt).not.toContain('ALP-2026-089');
+      expect(prompt).not.toContain('Priya Sharma');
+    });
+  });
+
+  describe('9. Client Payload Authority & Malicious Tampering', () => {
+    it('ignores client tampering in clientHint: server resolves authentic user/tenant/role', async () => {
+      // Attacker sends hints attempting to claim tenant-b or super_admin
+      const maliciousHint: ClientContextHint & { tenantId?: string; role?: string } = {
+        pathname: '/app/inquiries',
+        contextType: 'inquiry',
+        contextId: 'inq-100',
+        tenantId: 'tenant-b',
+        role: 'super_admin',
       };
 
-      const prompt = buildCrmCopilotPrompt('What is on my schedule today?', noSelectionContext);
+      const context = await resolveCopilotContext(mockSupabase as never, maliciousHint);
 
-      expect(prompt).toContain('No specific CRM record is currently open. You are viewing the Dashboard page.');
-      expect(prompt).not.toContain('inq-100');
-      expect(prompt).not.toContain('Switzerland Alps Tour');
+      expect(context.success).toBe(true);
+      // Authoritative tenant from session profile must be tenant-a
+      expect(context.agency?.tenantId).toBe('tenant-a');
+      expect(context.user?.role).toBe('agent');
     });
   });
 
-  describe('9. Invariant Verification: Zero Tools, Zero Writes, No RAG', () => {
+  describe('10. Invariant Verification: Zero Tools, Zero Writes, No RAG', () => {
     it('CRM Copilot has 0 registered tools and does not import or invoke RAG modules', () => {
-      // crm-actions.tsx exports submitCrmCopilotMessage and buildCrmCopilotPrompt without tools
       expect(submitCrmCopilotMessage).toBeDefined();
       expect(buildCrmCopilotPrompt).toBeDefined();
     });

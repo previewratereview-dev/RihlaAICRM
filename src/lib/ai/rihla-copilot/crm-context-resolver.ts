@@ -61,7 +61,6 @@ export interface TravelerSummaryDTO {
   id: string;
   displayName: string | null;
   preferredLanguage: string | null;
-  specialNotes: string | null;
   hasEmail: boolean;
   hasPhone: boolean;
   createdAt: string | null;
@@ -294,10 +293,10 @@ export async function resolveCopilotContext(
       };
     }
   } else if (contextType === 'traveler' && contextId) {
-    // Canonical public.traveler_profiles query, strictly tenant-scoped
+    // Canonical public.traveler_profiles query, strictly tenant-scoped (PII-minimized)
     const { data: traveler, error: travErr } = await supabase
       .from('traveler_profiles')
-      .select('id, display_name, preferred_language, special_notes, email, phone, created_at')
+      .select('id, display_name, preferred_language, email, phone, created_at')
       .eq('id', contextId)
       .eq('tenant_id', tenantId)
       .maybeSingle();
@@ -311,7 +310,6 @@ export async function resolveCopilotContext(
           id: traveler.id,
           displayName: traveler.display_name || null,
           preferredLanguage: traveler.preferred_language || null,
-          specialNotes: traveler.special_notes || null,
           hasEmail: !!traveler.email,
           hasPhone: !!traveler.phone,
           createdAt: traveler.created_at || null,

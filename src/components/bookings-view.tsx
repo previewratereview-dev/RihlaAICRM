@@ -68,11 +68,11 @@ export function BookingsView() {
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
-  // Sync selection to activeContext for Global Copilot
+  // Sync view context for Global Copilot (view-level context since legacy lead table is not public.bookings.id)
   useEffect(() => {
-    setActiveContext({ type: selectedLeadId ? 'booking' : 'none', id: selectedLeadId || null });
+    setActiveContext({ type: 'none', id: null });
     return () => setActiveContext({ type: 'none', id: null });
-  }, [selectedLeadId, setActiveContext]);
+  }, [setActiveContext]);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editingLead, setEditingLead] = useState<Lead | null>(null);
