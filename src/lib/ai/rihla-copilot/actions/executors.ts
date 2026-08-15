@@ -229,14 +229,14 @@ async function executeUpdateInquiryStage(
       actionType: proposal.actionType,
       entityId: currentInq.id,
       message: 'Database error updating inquiry stage.',
-      error: 'Update failed',
+      error: inqUpdateErr.message,
       errorCode: 'EXECUTION_FAILED',
     };
   }
 
   // 2. Dual-write to public.leads if legacy_lead_id is present
   if (currentInq.legacy_lead_id) {
-    await supabase
+    const { error: leadUpdateErr } = await supabase
       .from('leads')
       .update({
         status: targetStage,
@@ -244,13 +244,35 @@ async function executeUpdateInquiryStage(
       })
       .eq('id', currentInq.legacy_lead_id)
       .eq('tenant_id', actor.tenantId);
+
+    if (leadUpdateErr) {
+      console.error('[Copilot Dual-Write Error] Reverting inquiry update due to legacy lead failure:', leadUpdateErr.message);
+      // Compensating rollback on canonical inquiry
+      await supabase
+        .from('inquiries')
+        .update({
+          pipeline_stage: currentInq.pipeline_stage,
+          updated_at: currentInq.updated_at || now,
+        })
+        .eq('id', currentInq.id)
+        .eq('tenant_id', actor.tenantId);
+
+      return {
+        success: false,
+        actionType: proposal.actionType,
+        entityId: currentInq.id,
+        message: 'Database error updating legacy compatibility record. Changes were reverted.',
+        error: leadUpdateErr.message,
+        errorCode: 'EXECUTION_FAILED',
+      };
+    }
   }
 
   // 3. Insert audit activity log (Attributed to the authenticated HUMAN actor)
   const prevLabel = STAGE_LABELS[currentInq.pipeline_stage as ValidInquiryStage] || currentInq.pipeline_stage;
   const newLabel = STAGE_LABELS[targetStage] || targetStage;
 
-  await supabase.from('activities').insert({
+  const { error: actErr } = await supabase.from('activities').insert({
     id: `act-stage-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     lead_id: currentInq.legacy_lead_id || null,
     user_id: actor.userId,
@@ -261,6 +283,10 @@ async function executeUpdateInquiryStage(
     tenant_id: actor.tenantId,
     created_at: now,
   });
+
+  if (actErr) {
+    console.warn('[Copilot Activity Log Warning] Failed to insert stage activity log:', actErr.message);
+  }
 
   return {
     success: true,
@@ -360,14 +386,14 @@ async function executeAssignInquiry(
       actionType: proposal.actionType,
       entityId: currentInq.id,
       message: 'Database error reassigning inquiry.',
-      error: 'Update failed',
+      error: inqUpdateErr.message,
       errorCode: 'EXECUTION_FAILED',
     };
   }
 
   // 2. Dual-write to public.leads
   if (currentInq.legacy_lead_id) {
-    await supabase
+    const { error: leadUpdateErr } = await supabase
       .from('leads')
       .update({
         assigned_to: targetAssigneeId,
@@ -375,11 +401,33 @@ async function executeAssignInquiry(
       })
       .eq('id', currentInq.legacy_lead_id)
       .eq('tenant_id', actor.tenantId);
+
+    if (leadUpdateErr) {
+      console.error('[Copilot Dual-Write Error] Reverting inquiry assignment due to legacy lead failure:', leadUpdateErr.message);
+      // Compensating rollback on canonical inquiry
+      await supabase
+        .from('inquiries')
+        .update({
+          assigned_agent_id: currentInq.assigned_agent_id,
+          updated_at: currentInq.updated_at || now,
+        })
+        .eq('id', currentInq.id)
+        .eq('tenant_id', actor.tenantId);
+
+      return {
+        success: false,
+        actionType: proposal.actionType,
+        entityId: currentInq.id,
+        message: 'Database error updating legacy compatibility record. Changes were reverted.',
+        error: leadUpdateErr.message,
+        errorCode: 'EXECUTION_FAILED',
+      };
+    }
   }
 
   // 3. Insert audit activity log (Attributed to HUMAN actor)
   const assigneeName = assigneeProfile.full_name || 'Team Member';
-  await supabase.from('activities').insert({
+  const { error: actErr } = await supabase.from('activities').insert({
     id: `act-assign-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     lead_id: currentInq.legacy_lead_id || null,
     user_id: actor.userId,
@@ -390,6 +438,10 @@ async function executeAssignInquiry(
     tenant_id: actor.tenantId,
     created_at: now,
   });
+
+  if (actErr) {
+    console.warn('[Copilot Activity Log Warning] Failed to insert assign activity log:', actErr.message);
+  }
 
   return {
     success: true,
@@ -460,14 +512,14 @@ async function executeSetInquiryFollowUp(
       actionType: proposal.actionType,
       entityId: currentInq.id,
       message: 'Database error setting follow-up date.',
-      error: 'Update failed',
+      error: inqUpdateErr.message,
       errorCode: 'EXECUTION_FAILED',
     };
   }
 
   // 2. Dual-write to public.leads
   if (currentInq.legacy_lead_id) {
-    await supabase
+    const { error: leadUpdateErr } = await supabase
       .from('leads')
       .update({
         next_follow_up_at: targetFollowUpAt,
@@ -475,11 +527,33 @@ async function executeSetInquiryFollowUp(
       })
       .eq('id', currentInq.legacy_lead_id)
       .eq('tenant_id', actor.tenantId);
+
+    if (leadUpdateErr) {
+      console.error('[Copilot Dual-Write Error] Reverting inquiry follow-up due to legacy lead failure:', leadUpdateErr.message);
+      // Compensating rollback on canonical inquiry
+      await supabase
+        .from('inquiries')
+        .update({
+          next_follow_up_at: currentInq.next_follow_up_at,
+          updated_at: currentInq.updated_at || now,
+        })
+        .eq('id', currentInq.id)
+        .eq('tenant_id', actor.tenantId);
+
+      return {
+        success: false,
+        actionType: proposal.actionType,
+        entityId: currentInq.id,
+        message: 'Database error updating legacy compatibility record. Changes were reverted.',
+        error: leadUpdateErr.message,
+        errorCode: 'EXECUTION_FAILED',
+      };
+    }
   }
 
   // 3. Insert audit activity log (Attributed to HUMAN actor)
   const formattedDate = targetFollowUpAt ? new Date(targetFollowUpAt).toLocaleString() : 'Cleared';
-  await supabase.from('activities').insert({
+  const { error: actErr } = await supabase.from('activities').insert({
     id: `act-followup-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     lead_id: currentInq.legacy_lead_id || null,
     user_id: actor.userId,
@@ -490,6 +564,10 @@ async function executeSetInquiryFollowUp(
     tenant_id: actor.tenantId,
     created_at: now,
   });
+
+  if (actErr) {
+    console.warn('[Copilot Activity Log Warning] Failed to insert follow-up activity log:', actErr.message);
+  }
 
   return {
     success: true,

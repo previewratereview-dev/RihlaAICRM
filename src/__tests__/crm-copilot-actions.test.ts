@@ -847,4 +847,149 @@ describe('Phase AI-3: Governed Rihla Copilot Actions', () => {
       expect(result.errorCode).toBe('INVALID_ARGUMENT');
     });
   });
+
+  // ═══════════════════════════════════════════════════════════════════
+  // 7. Dual-Write Partial Failure & Compensating Rollback
+  // ═══════════════════════════════════════════════════════════════════
+  describe('7. Dual-Write Partial Failure & Consistency Protection', () => {
+    it('when legacy lead update fails on stage update, rolls back canonical inquiry and returns EXECUTION_FAILED', async () => {
+      const inqUpdateSpy = vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({
+          eq: vi.fn().mockResolvedValue({ error: null }),
+        }),
+      });
+      const leadUpdateSpy = vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({
+          eq: vi.fn().mockResolvedValue({
+            error: { message: 'Database connection dropped while updating legacy lead' },
+          }),
+        }),
+      });
+      const activityInsertSpy = vi.fn();
+
+      const mockSupabase = {
+        from: vi.fn((table: string) => {
+          if (table === 'inquiries') {
+            return {
+              select: vi.fn().mockReturnThis(),
+              eq: vi.fn().mockReturnThis(),
+              is: vi.fn().mockReturnThis(),
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: {
+                  id: 'inq-101',
+                  tenant_id: 'tenant-agency-a',
+                  pipeline_stage: 'initial_contact',
+                  assigned_agent_id: 'usr-agent-1',
+                  legacy_lead_id: 'lead-legacy-101',
+                  updated_at: '2026-08-15T12:00:00.000Z',
+                },
+                error: null,
+              }),
+              update: inqUpdateSpy,
+            };
+          }
+          if (table === 'leads') return { update: leadUpdateSpy };
+          if (table === 'activities') return { insert: activityInsertSpy };
+          return {};
+        }),
+      } as unknown as SupabaseClient;
+
+      const proposal = createSignedProposal({
+        proposalId: 'prop-fail-stage',
+        actionType: 'update_inquiry_stage',
+        entityType: 'inquiry',
+        entityId: 'inq-101',
+        title: 'Update Stage',
+        summary: 'Move stage',
+        currentState: { stage: 'initial_contact' },
+        proposedState: { stage: 'itinerary_sent' },
+        riskLevel: 'internal',
+        requiresConfirmation: true,
+        createdAt: new Date().toISOString(),
+      });
+
+      const result = await executeConfirmedAction(ACTOR_CONSULTANT, proposal, mockSupabase);
+
+      // Must fail closed with EXECUTION_FAILED and notify user of rollback
+      expect(result.success).toBe(false);
+      expect(result.errorCode).toBe('EXECUTION_FAILED');
+      expect(result.message).toContain('reverted');
+
+      // First call was updating to itinerary_sent, second call was compensating rollback to initial_contact
+      expect(inqUpdateSpy).toHaveBeenCalledTimes(2);
+      expect(inqUpdateSpy).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({ pipeline_stage: 'itinerary_sent' })
+      );
+      expect(inqUpdateSpy).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({ pipeline_stage: 'initial_contact' })
+      );
+
+      // Activity log must NOT be created on failed business mutation
+      expect(activityInsertSpy).not.toHaveBeenCalled();
+    });
+
+    it('when activity log insert fails, business mutation succeeds with warning', async () => {
+      const inqUpdateSpy = vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({
+          eq: vi.fn().mockResolvedValue({ error: null }),
+        }),
+      });
+      const leadUpdateSpy = vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({
+          eq: vi.fn().mockResolvedValue({ error: null }),
+        }),
+      });
+      const activityInsertSpy = vi.fn().mockResolvedValue({
+        error: { message: 'Audit partition disk full' },
+      });
+
+      const mockSupabase = {
+        from: vi.fn((table: string) => {
+          if (table === 'inquiries') {
+            return {
+              select: vi.fn().mockReturnThis(),
+              eq: vi.fn().mockReturnThis(),
+              is: vi.fn().mockReturnThis(),
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: {
+                  id: 'inq-101',
+                  tenant_id: 'tenant-agency-a',
+                  pipeline_stage: 'initial_contact',
+                  assigned_agent_id: 'usr-agent-1',
+                  legacy_lead_id: 'lead-legacy-101',
+                },
+                error: null,
+              }),
+              update: inqUpdateSpy,
+            };
+          }
+          if (table === 'leads') return { update: leadUpdateSpy };
+          if (table === 'activities') return { insert: activityInsertSpy };
+          return {};
+        }),
+      } as unknown as SupabaseClient;
+
+      const proposal = createSignedProposal({
+        proposalId: 'prop-act-fail',
+        actionType: 'update_inquiry_stage',
+        entityType: 'inquiry',
+        entityId: 'inq-101',
+        title: 'Update Stage',
+        summary: 'Move stage',
+        currentState: { stage: 'initial_contact' },
+        proposedState: { stage: 'itinerary_sent' },
+        riskLevel: 'internal',
+        requiresConfirmation: true,
+        createdAt: new Date().toISOString(),
+      });
+
+      const result = await executeConfirmedAction(ACTOR_CONSULTANT, proposal, mockSupabase);
+
+      // Business mutation succeeded
+      expect(result.success).toBe(true);
+      expect(result.newState?.stage).toBe('itinerary_sent');
+    });
+  });
 });
