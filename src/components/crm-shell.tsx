@@ -172,6 +172,13 @@ export function CrmShell({ initialTab, useNewTravelersRead, useNewInquiriesRead 
   }
 
   const renderActiveView = () => {
+    // Fail-closed UX guard: Non-super_admin users cannot render platform super_admin views
+    if (activeTab.startsWith('sa_') && currentUser?.role !== 'super_admin') {
+      return currentUser?.role === 'specialist' || currentUser?.role === 'setter'
+        ? <SetterDashboard />
+        : <DashboardView />;
+    }
+
     switch (activeTab) {
       case 'dashboard':
         return currentUser?.role === 'specialist' || currentUser?.role === 'setter'

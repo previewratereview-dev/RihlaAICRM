@@ -109,7 +109,7 @@ export async function guardRoute(
   // client/session mismatches become a 403 authorization error, never an
   // uncaught 500.
   try {
-    const isSuper = auth.user.role === 'super_admin' || (auth.user.role as string) === 'platform_super_admin' || auth.user.tenantId === 'global';
+    const isSuper = auth.user.role === 'super_admin';
     const context = getTenantContextFromRequest({
       host: request.headers.get('host'),
       header: request.headers.get('x-tenant-id'),

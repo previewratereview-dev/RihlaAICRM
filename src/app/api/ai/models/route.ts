@@ -14,7 +14,13 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'Unauthorized: Please log in.' }, { status: 401 });
       }
 
-      const isSuper = user.user_metadata?.role === 'super_admin' || user.user_metadata?.role === 'platform_super_admin' || user.user_metadata?.tenant_id === 'global';
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('role')
+        .eq('id', user.id)
+        .maybeSingle();
+
+      const isSuper = profile?.role === 'super_admin';
       if (!isSuper) {
         return NextResponse.json({ error: 'Model selection is restricted to platform administrators.' }, { status: 403 });
       }

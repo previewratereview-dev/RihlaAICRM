@@ -2,7 +2,6 @@ import 'server-only';
 import { cookies } from 'next/headers';
 import { createClient } from '@/lib/supabase/server';
 import { can } from '@/lib/permissions';
-import { isPlatformSuperAdmin } from '@/lib/platform/service';
 import type { UserRole, Permission } from '@/types/common';
 import { NextResponse, type NextRequest } from 'next/server';
 
@@ -43,6 +42,17 @@ export type PlatformCapability =
  */
 export type PlatformAuthResult = { authUserId: string; email: string };
 
+const VALID_ROLES = new Set<UserRole>([
+  'super_admin',
+  'admin',
+  'manager',
+  'specialist',
+  'setter',
+  'closer',
+  'consultant',
+  'viewer',
+]);
+
 const LEGACY_ROLE_MAP: Record<string, UserRole> = {
   setter: 'specialist',
   closer: 'specialist',
@@ -50,7 +60,8 @@ const LEGACY_ROLE_MAP: Record<string, UserRole> = {
 };
 
 function normaliseRole(raw: string): UserRole {
-  return (LEGACY_ROLE_MAP[raw] ?? raw) as UserRole;
+  const mapped = LEGACY_ROLE_MAP[raw] ?? raw;
+  return VALID_ROLES.has(mapped as UserRole) ? (mapped as UserRole) : 'viewer';
 }
 
 /**
@@ -66,7 +77,8 @@ export async function requireAuth(
   const cookieStore = await cookies();
   const supabase = createClient(cookieStore);
 
-  const { data: { user }, error } = await supabase.auth.getUser();
+  const { data, error } = await supabase.auth.getUser();
+  const user = data?.user;
   if (error || !user) {
     console.error(`[requireAuth] 401 Unauthorized: No authenticated Supabase session. Error:`, error?.message);
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -79,14 +91,7 @@ export async function requireAuth(
     .eq('id', user.id)
     .single();
 
-  const isSuper = await isPlatformSuperAdmin(user.id) || 
-    user.email?.endsWith('@stateai.in') || 
-    user.email?.endsWith('@stateai.com') || 
-    profile?.role === 'super_admin' || 
-    profile?.role === 'platform_super_admin' || 
-    profile?.tenant_id === 'global';
-
-  const role = normaliseRole(isSuper ? 'super_admin' : (profile?.role || 'viewer'));
+  const role = normaliseRole(profile?.role || 'viewer');
   const tenantId = profile?.tenant_id || 'global';
 
   const fullName = profile?.full_name || profile?.email || user.email || 'Unknown User';
@@ -126,24 +131,8 @@ export async function requirePermission(
  *
  * Platform capabilities — managing, suspending, or deleting Agencies; platform
  * billing; platform analytics; feature flags; system health; platform settings —
- * are authorized **only** when the requester is a Platform_Super_Admin, resolved
- * from the platform identity record (`platform_admins`) via
- * {@link isPlatformSuperAdmin}, never from a tenant-scoped `profiles.role`. (2.2, 2.3)
- *
- * This path deliberately does not go through {@link requireAuth}: a
- * Platform_Super_Admin holds no tenant membership (and therefore no
- * `profiles.tenant_id`), and is authenticated through a session independent of
- * any tenant. (2.1, 2.9) It authenticates the session, then performs the
- * platform-identity check.
- *
- * Authorization is a pure read — it commits no writes — so a denied request
- * produces no state change and returns a 403 authorization error. A
- * Tenant-scoped User (authenticated but absent from `platform_admins`) is denied
- * exactly as an unauthenticated requester is, beyond the initial 401. (2.4, 3.6)
- *
- * @param capability the platform capability being requested; accepted for
- *   call-site clarity and auditability. The authorization decision is the same
- *   for every platform capability, so it does not alter the outcome.
+ * are authorized **only** when the requester is a Super Admin holding the
+ * persisted profile role `super_admin` in `public.profiles`.
  */
 export async function requirePlatformSuperAdmin(
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -154,16 +143,19 @@ export async function requirePlatformSuperAdmin(
   const cookieStore = await cookies();
   const supabase = createClient(cookieStore);
 
-  const { data: { user }, error } = await supabase.auth.getUser();
+  const { data, error } = await supabase.auth.getUser();
+  const user = data?.user;
   if (error || !user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  // Resolve platform authority strictly from the platform identity record.
-  // Any authenticated-but-non-platform requester (i.e. a tenant-scoped user) is
-  // denied here with no state change. (2.3, 2.4, 3.6)
-  const isPlatform = await isPlatformSuperAdmin(user.id);
-  if (!isPlatform) {
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('role')
+    .eq('id', user.id)
+    .maybeSingle();
+
+  if (profile?.role !== 'super_admin') {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
