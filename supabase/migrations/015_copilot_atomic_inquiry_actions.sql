@@ -49,6 +49,7 @@ DECLARE
   v_now timestamptz := now();
   v_now_iso text := to_char(v_now AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
   v_activity_id text;
+  v_rows_affected integer;
 BEGIN
   -- 1. Actor Profile Resolution from trusted server-passed p_actor_user_id
   IF p_actor_user_id IS NULL OR trim(p_actor_user_id) = '' THEN
@@ -73,7 +74,7 @@ BEGIN
     RAISE EXCEPTION 'FORBIDDEN: Viewer role has read-only access and cannot perform CRM mutations.' USING ERRCODE = '42501';
   END IF;
 
-  -- Validate Writable CRM Role
+  -- Validate Writable CRM Role (exact parity with ordinary CRM authority: admin, manager, specialist, setter, closer, consultant)
   IF v_caller_profile.role NOT IN ('admin', 'manager', 'specialist', 'setter', 'closer', 'consultant') THEN
     RAISE EXCEPTION 'FORBIDDEN: Insufficient role permissions for CRM actions.' USING ERRCODE = '42501';
   END IF;
@@ -151,13 +152,18 @@ BEGIN
         updated_at = v_now
     WHERE id = v_inquiry.id;
 
-    -- 5b. Dual-Write Legacy Lead if linked
+    -- 5b. Dual-Write Legacy Lead if linked (MUST update exactly one row)
     IF v_inquiry.legacy_lead_id IS NOT NULL THEN
       UPDATE public.leads
       SET status = v_target_stage,
           updated_at = v_now
       WHERE id = v_inquiry.legacy_lead_id
         AND tenant_id = v_caller_profile.tenant_id;
+
+      GET DIAGNOSTICS v_rows_affected = ROW_COUNT;
+      IF v_rows_affected <> 1 THEN
+        RAISE EXCEPTION 'COMPATIBILITY_ERROR: Referenced legacy lead "%" was not found in agency workspace or update failed.', v_inquiry.legacy_lead_id USING ERRCODE = 'P0002';
+      END IF;
     END IF;
 
     -- 5c. Insert Business Activity Record (Rolls back whole tx if fails)
@@ -217,8 +223,9 @@ BEGIN
       RAISE EXCEPTION 'INVALID_ARGUMENT: Target assignee is not a valid team member in this agency workspace.' USING ERRCODE = '22023';
     END IF;
 
-    IF v_assignee_profile.role = 'super_admin' THEN
-      RAISE EXCEPTION 'INVALID_ARGUMENT: Cannot assign inquiry to platform super_admin.' USING ERRCODE = '22023';
+    -- Assignee Role Parity: Only active agency team roles can be assigned (viewer and super_admin are prohibited)
+    IF v_assignee_profile.role NOT IN ('admin', 'manager', 'specialist', 'setter', 'closer', 'consultant') THEN
+      RAISE EXCEPTION 'INVALID_ARGUMENT: Target assignee role "%" is not an eligible inquiry assignee.', v_assignee_profile.role USING ERRCODE = '22023';
     END IF;
 
     -- Stale State Check on assignee
@@ -232,13 +239,18 @@ BEGIN
         updated_at = v_now
     WHERE id = v_inquiry.id;
 
-    -- 5b. Dual-Write Legacy Lead if linked
+    -- 5b. Dual-Write Legacy Lead if linked (MUST update exactly one row)
     IF v_inquiry.legacy_lead_id IS NOT NULL THEN
       UPDATE public.leads
       SET assigned_to = v_target_assignee,
           updated_at = v_now
       WHERE id = v_inquiry.legacy_lead_id
         AND tenant_id = v_caller_profile.tenant_id;
+
+      GET DIAGNOSTICS v_rows_affected = ROW_COUNT;
+      IF v_rows_affected <> 1 THEN
+        RAISE EXCEPTION 'COMPATIBILITY_ERROR: Referenced legacy lead "%" was not found in agency workspace or update failed.', v_inquiry.legacy_lead_id USING ERRCODE = 'P0002';
+      END IF;
     END IF;
 
     -- 5c. Insert Business Activity Record (Rolls back whole tx if fails)
@@ -300,13 +312,18 @@ BEGIN
         updated_at = v_now
     WHERE id = v_inquiry.id;
 
-    -- 5b. Dual-Write Legacy Lead if linked
+    -- 5b. Dual-Write Legacy Lead if linked (MUST update exactly one row)
     IF v_inquiry.legacy_lead_id IS NOT NULL THEN
       UPDATE public.leads
       SET next_follow_up_at = v_target_follow_up,
           updated_at = v_now
       WHERE id = v_inquiry.legacy_lead_id
         AND tenant_id = v_caller_profile.tenant_id;
+
+      GET DIAGNOSTICS v_rows_affected = ROW_COUNT;
+      IF v_rows_affected <> 1 THEN
+        RAISE EXCEPTION 'COMPATIBILITY_ERROR: Referenced legacy lead "%" was not found in agency workspace or update failed.', v_inquiry.legacy_lead_id USING ERRCODE = 'P0002';
+      END IF;
     END IF;
 
     -- 5c. Insert Business Activity Record (Rolls back whole tx if fails)

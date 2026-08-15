@@ -10,10 +10,12 @@
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { TrustedExecutionContext, ToolResult, ToolDefinition } from '../tools/types';
+import type { UserRole } from '@/types/common';
 import {
   type ActionProposalDTO,
   type ValidInquiryStage,
   STAGE_LABELS,
+  WRITABLE_ROLES,
   ProposeUpdateInquiryStageSchema,
   ProposeAssignInquirySchema,
   ProposeSetInquiryFollowUpSchema,
@@ -165,6 +167,10 @@ export const proposeAssignInquiryTool: ToolDefinition<typeof ProposeAssignInquir
 
       if (userErr || !newAssignee) {
         return { success: false, error: 'Target assignee not found in current agency workspace.' };
+      }
+
+      if (!WRITABLE_ROLES.has(newAssignee.role as UserRole)) {
+        return { success: false, error: 'Target user role is not eligible for inquiry assignment.' };
       }
 
       // 3. Read current assignee profile if present

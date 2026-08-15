@@ -80,6 +80,17 @@ function mapRpcErrorToActionExecutionResult(
     };
   }
 
+  if (msg.includes('COMPATIBILITY_ERROR')) {
+    return {
+      success: false,
+      actionType,
+      entityId,
+      message: 'Referenced legacy record synchronization failed. Transaction was rolled back.',
+      error: 'Compatibility sync failed',
+      errorCode: 'EXECUTION_FAILED',
+    };
+  }
+
   if (msg.includes('NOT_FOUND') || code === 'P0002') {
     return {
       success: false,

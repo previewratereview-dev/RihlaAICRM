@@ -41,7 +41,8 @@ export const listTeamMembersTool: ToolDefinition<typeof ListTeamMembersSchema, T
         .from('profiles')
         .select('id, full_name, email, role')
         .eq('tenant_id', context.tenantId)
-        .neq('role', 'super_admin');
+        .neq('role', 'super_admin')
+        .neq('role', 'viewer');
 
       if (params.query) {
         query = query.ilike('full_name', `%${params.query.trim()}%`);

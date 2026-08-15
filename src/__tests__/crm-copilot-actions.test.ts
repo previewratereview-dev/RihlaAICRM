@@ -14,6 +14,8 @@
  * 10. Zero external messaging, zero finance / booking mutations.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import * as fs from 'fs';
+import * as path from 'path';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   proposeUpdateInquiryStageTool,
@@ -928,6 +930,106 @@ describe('Phase AI-3A: Governed Rihla Copilot Actions & Atomic Execution', () =>
       expect(result.success).toBe(false);
       expect(result.errorCode).toBe('INVALID_ARGUMENT');
       expect(rpcSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════
+  // 9. Static SQL Correctness & Role Parity Invariants
+  // ═══════════════════════════════════════════════════════════════════
+  describe('9. Static SQL Correctness & Compatibility Invariants', () => {
+    const migrationSqlPath = path.resolve(__dirname, '../../supabase/migrations/015_copilot_atomic_inquiry_actions.sql');
+    const migrationSql = fs.readFileSync(migrationSqlPath, 'utf8');
+
+    it('STATIC ASSERTION: migration 015 checks GET DIAGNOSTICS ROW_COUNT on all 3 legacy dual-writes and raises COMPATIBILITY_ERROR on zero rows', () => {
+      // Must contain GET DIAGNOSTICS v_rows_affected = ROW_COUNT in 3 places
+      const rowCountMatches = migrationSql.match(/GET DIAGNOSTICS v_rows_affected = ROW_COUNT;/g);
+      expect(rowCountMatches).toBeDefined();
+      expect(rowCountMatches?.length).toBe(3);
+
+      // Must raise COMPATIBILITY_ERROR when v_rows_affected <> 1
+      const compatCheckMatches = migrationSql.match(/IF v_rows_affected <> 1 THEN\s+RAISE EXCEPTION 'COMPATIBILITY_ERROR/g);
+      expect(compatCheckMatches).toBeDefined();
+      expect(compatCheckMatches?.length).toBe(3);
+    });
+
+    it('STATIC ASSERTION: migration 015 restricts assignee role to active CRM staff and rejects viewer and super_admin', () => {
+      expect(migrationSql).toContain(
+        "IF v_assignee_profile.role NOT IN ('admin', 'manager', 'specialist', 'setter', 'closer', 'consultant') THEN"
+      );
+      expect(migrationSql).toContain(
+        "RAISE EXCEPTION 'INVALID_ARGUMENT: Target assignee role \"%\" is not an eligible inquiry assignee.'"
+      );
+    });
+
+    it('STATIC ASSERTION: migration 015 actor role allowlist matches ordinary CRM mutation authority', () => {
+      expect(migrationSql).toContain(
+        "IF v_caller_profile.role NOT IN ('admin', 'manager', 'specialist', 'setter', 'closer', 'consultant') THEN"
+      );
+      expect(migrationSql).toContain(
+        "RAISE EXCEPTION 'FORBIDDEN: Insufficient role permissions for CRM actions.'"
+      );
+    });
+
+    it('proposeAssignInquiry rejects proposed assignee with role viewer', async () => {
+      const mockSupabase = {
+        from: vi.fn((table: string) => ({
+          select: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+          maybeSingle: vi.fn().mockImplementation(() => {
+            if (table === 'inquiries') {
+              return Promise.resolve({
+                data: { id: 'inq-102', destination: 'Dubai', assigned_agent_id: null },
+                error: null,
+              });
+            }
+            if (table === 'profiles') {
+              return Promise.resolve({
+                data: { id: 'usr-viewer-1', full_name: 'Bob Viewer', role: 'viewer' },
+                error: null,
+              });
+            }
+            return Promise.resolve({ data: null, error: null });
+          }),
+        })),
+      } as unknown as SupabaseClient;
+
+      const result = await proposeAssignInquiryTool.execute(
+        TENANT_A_CTX,
+        { inquiryId: 'inq-102', assigneeUserId: 'usr-viewer-1' },
+        mockSupabase
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('not eligible');
+    });
+
+    it('executeConfirmedAction maps COMPATIBILITY_ERROR from RPC to EXECUTION_FAILED', async () => {
+      const rpcSpy = vi.fn().mockResolvedValue({
+        data: null,
+        error: { message: 'COMPATIBILITY_ERROR: Referenced legacy lead was not found in agency workspace or update failed.', code: 'P0002' },
+      });
+
+      const mockSupabase = { rpc: rpcSpy } as unknown as SupabaseClient;
+
+      const proposal = createSignedProposal({
+        proposalId: 'prop-compat-err',
+        actionType: 'update_inquiry_stage',
+        entityType: 'inquiry',
+        entityId: 'inq-101',
+        title: 'Update Stage',
+        summary: 'Move stage',
+        currentState: { stage: 'initial_contact' },
+        proposedState: { stage: 'itinerary_sent' },
+        riskLevel: 'internal',
+        requiresConfirmation: true,
+        createdAt: new Date().toISOString(),
+      });
+
+      const result = await executeConfirmedAction(ACTOR_CONSULTANT, proposal, mockSupabase);
+
+      expect(result.success).toBe(false);
+      expect(result.errorCode).toBe('EXECUTION_FAILED');
+      expect(result.message).toContain('legacy record');
     });
   });
 });
