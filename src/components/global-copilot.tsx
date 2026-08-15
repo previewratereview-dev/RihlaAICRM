@@ -6,12 +6,25 @@ import { useCRMStore } from '@/hooks/use-crm-store';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { X, Send, Sparkles, BookOpen, ChevronDown, ChevronUp } from 'lucide-react';
+import {
+  X,
+  Send,
+  Sparkles,
+  BookOpen,
+  ChevronDown,
+  ChevronUp,
+  CheckCircle2,
+  AlertTriangle,
+  AlertCircle,
+  Loader2,
+  ArrowRight,
+} from 'lucide-react';
 import { cn } from '@/lib/utils';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { submitCrmCopilotMessage } from '@/lib/ai/rihla-copilot/crm-actions';
+import { submitCrmCopilotMessage, confirmCopilotAction } from '@/lib/ai/rihla-copilot/crm-actions';
 import type { KnowledgeSource } from '@/lib/ai/rihla-copilot/tools';
+import type { ActionProposalDTO, ActionExecutionResult } from '@/lib/ai/rihla-copilot/actions/index';
 
 interface CopilotMessage {
   id: string;
@@ -19,6 +32,7 @@ interface CopilotMessage {
   content: string;
   contextSummary?: string;
   sources?: KnowledgeSource[];
+  actionProposal?: ActionProposalDTO;
 }
 
 export function GlobalCopilot() {
@@ -30,7 +44,7 @@ export function GlobalCopilot() {
     {
       id: 'init-1',
       role: 'assistant',
-      content: "Hi! I'm Rihla Copilot. I can answer questions about the record you're viewing, search inquiries, check traveler history, or look up agency policies with citations.",
+      content: "Hi! I'm Rihla Copilot. I can answer questions about the record you're viewing, search inquiries, check traveler history, look up agency policies with citations, or prepare governed stage and assignment updates.",
     },
   ]);
 
@@ -43,68 +57,60 @@ export function GlobalCopilot() {
   // Compute context label for copilot header
   let contextLabel = activeTab || 'Dashboard';
   if (activeContext?.id) {
-    if (activeContext.type === 'inquiry') contextLabel = 'Inquiry Context';
-    else if (activeContext.type === 'traveler') contextLabel = 'Traveler Context';
-    else if (activeContext.type === 'booking') contextLabel = 'Booking Context';
-    else if (activeContext.type === 'conversation') contextLabel = 'Conversation Context';
+    contextLabel = `${activeContext.type}`;
   }
 
-  // Auto-scroll on new messages
+  const scrollToBottom = () => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  };
+
   useEffect(() => {
-    const chatEl = scrollRef.current;
-    if (!chatEl) return;
-
-    const viewport = chatEl.closest('[data-radix-scroll-area-viewport]') as HTMLElement;
-    if (!viewport) return;
-
-    viewport.scrollTo({
-      top: viewport.scrollHeight,
-      behavior: 'smooth',
-    });
+    scrollToBottom();
   }, [messages, loading]);
 
-  const send = async (textToSend?: string) => {
-    const text = (textToSend || input).trim();
-    if (!text || loading) return;
+  const send = async (overrideText?: string) => {
+    const textToSend = (overrideText || input).trim();
+    if (!textToSend || loading) return;
 
-    const nextId = messageIdRef.current++;
-    const userMsgId = `user-${nextId}`;
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: userMsgId,
-        role: 'user',
-        content: text,
-      },
-    ]);
-
-    if (!textToSend) setInput('');
+    setInput('');
+    const userMsgId = `usr-${messageIdRef.current++}`;
+    const newMessages: CopilotMessage[] = [
+      ...messages,
+      { id: userMsgId, role: 'user', content: textToSend },
+    ];
+    setMessages(newMessages);
     setLoading(true);
 
     try {
-      const response = await submitCrmCopilotMessage(text, {
+      // Pass client context hint from active Zustand selection & router
+      const clientHint = {
         pathname,
-        contextType: activeContext?.type || 'none',
-        contextId: activeContext?.id || null,
-      });
+        activeContextType: activeContext?.type,
+        activeContextId: activeContext?.id,
+      };
+
+      const result = await submitCrmCopilotMessage(textToSend, clientHint);
 
       setMessages((prev) => [
         ...prev,
         {
-          id: response.id || `resp-${nextId}`,
+          id: result.id || `asst-${messageIdRef.current++}`,
           role: 'assistant',
-          content: response.content,
-          contextSummary: response.contextSummary,
-          sources: response.sources,
+          content: result.content,
+          contextSummary: result.contextSummary,
+          sources: result.sources,
+          actionProposal: result.actionProposal,
         },
       ]);
     } catch {
       setMessages((prev) => [
         ...prev,
         {
-          id: `err-${nextId}`,
+          id: `err-${messageIdRef.current++}`,
           role: 'assistant',
-          content: 'Something went wrong. Please try again.',
+          content: 'Sorry, I encountered an issue connecting to the assistant. Please try again.',
         },
       ]);
     } finally {
@@ -112,40 +118,36 @@ export function GlobalCopilot() {
     }
   };
 
-  // Quick suggestion chips based on active context
   const getSuggestions = () => {
-    if (activeContext?.id && activeContext.type === 'inquiry') {
+    if (activeContext?.type === 'inquiry') {
+      return [
+        'Move this inquiry to itinerary sent',
+        'Who is this assigned to?',
+        'What tasks are pending?',
+      ];
+    }
+    if (activeContext?.type === 'traveler') {
       return [
         'Has this traveler booked with us before?',
-        'What tasks are pending for this inquiry?',
-        'What destination is this inquiry for?',
+        'What inquiries does this traveler have?',
       ];
     }
-    if (activeContext?.id && activeContext.type === 'traveler') {
+    if (activeContext?.type === 'booking') {
       return [
-        'Show this traveler booking history',
-        'What other inquiries does this traveler have?',
-        'What contact flags are on file?',
-      ];
-    }
-    if (activeContext?.id && activeContext.type === 'booking') {
-      return [
-        'What is the booking & payment status?',
-        'What are the travel dates?',
-        'What is our cancellation policy?',
+        'What is the payment status for this booking?',
+        'When is the departure date?',
       ];
     }
     return [
-      'Find inquiries for Dubai',
-      'Which inquiries need follow-up?',
-      'What is our cancellation policy?',
+      'What are our cancellation policies?',
+      'Show high priority inquiries in Dubai',
     ];
   };
 
   return (
     <>
       <Button
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => setOpen(!open)}
         className={cn(
           'fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-50 h-12 sm:h-14 rounded-full shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-primary/20 group transition-all duration-300 ease-in-out flex items-center overflow-hidden p-0',
           open
@@ -211,6 +213,11 @@ export function GlobalCopilot() {
                       </div>
                     ) : (
                       <div className="leading-relaxed whitespace-pre-wrap">{msg.content}</div>
+                    )}
+
+                    {/* Action Confirmation Card (Phase AI-3) */}
+                    {msg.actionProposal && (
+                      <ActionConfirmationCard proposal={msg.actionProposal} />
                     )}
 
                     {/* Structured Knowledge Citations Display */}
@@ -306,5 +313,167 @@ export function GlobalCopilot() {
         </div>
       )}
     </>
+  );
+}
+
+/**
+ * Action Confirmation Card (Phase AI-3)
+ * Renders structured proposed state, requires human confirmation,
+ * prevents double-submit, and revalidates on server before execution.
+ */
+function ActionConfirmationCard({ proposal }: { proposal: ActionProposalDTO }) {
+  const [status, setStatus] = useState<'proposed' | 'confirming' | 'success' | 'failed' | 'stale' | 'cancelled'>('proposed');
+  const [resultMessage, setResultMessage] = useState<string>('');
+
+  const handleConfirm = async () => {
+    if (status !== 'proposed') return;
+    setStatus('confirming');
+
+    try {
+      const res: ActionExecutionResult = await confirmCopilotAction(proposal);
+      if (res.success) {
+        setStatus('success');
+        setResultMessage(res.message || 'Action executed successfully.');
+      } else if (res.errorCode === 'STALE_STATE') {
+        setStatus('stale');
+        setResultMessage(res.message || 'This record changed after the action was prepared.');
+      } else {
+        setStatus('failed');
+        setResultMessage(res.message || res.error || 'Action failed.');
+      }
+    } catch {
+      setStatus('failed');
+      setResultMessage('Network error executing confirmed action. Please try again.');
+    }
+  };
+
+  const handleCancel = () => {
+    if (status !== 'proposed') return;
+    setStatus('cancelled');
+    setResultMessage('Action proposal cancelled.');
+  };
+
+  const getDetails = () => {
+    if (proposal.actionType === 'update_inquiry_stage') {
+      return (
+        <div className="grid grid-cols-2 gap-2 text-[11px] my-2 p-2 rounded-lg bg-background/80 border border-border/40">
+          <div>
+            <span className="text-muted-foreground block text-[10px]">Current Stage</span>
+            <span className="font-medium text-foreground">{proposal.currentState.stageLabel || proposal.currentState.stage || 'Unknown'}</span>
+          </div>
+          <div>
+            <span className="text-muted-foreground block text-[10px]">Proposed Stage</span>
+            <span className="font-semibold text-primary">{proposal.proposedState.stageLabel || proposal.proposedState.stage}</span>
+          </div>
+        </div>
+      );
+    }
+
+    if (proposal.actionType === 'assign_inquiry') {
+      return (
+        <div className="grid grid-cols-2 gap-2 text-[11px] my-2 p-2 rounded-lg bg-background/80 border border-border/40">
+          <div>
+            <span className="text-muted-foreground block text-[10px]">Current Assignee</span>
+            <span className="font-medium text-foreground">{proposal.currentState.assignedAgentName || 'Unassigned'}</span>
+          </div>
+          <div>
+            <span className="text-muted-foreground block text-[10px]">Proposed Assignee</span>
+            <span className="font-semibold text-primary">{proposal.proposedState.assignedAgentName || 'Assignee'}</span>
+          </div>
+        </div>
+      );
+    }
+
+    if (proposal.actionType === 'set_inquiry_follow_up') {
+      const cur = proposal.currentState.nextFollowUpAt ? new Date(proposal.currentState.nextFollowUpAt).toLocaleString() : 'Not scheduled';
+      const prop = proposal.proposedState.nextFollowUpAt ? new Date(proposal.proposedState.nextFollowUpAt).toLocaleString() : 'Clear follow-up';
+
+      return (
+        <div className="grid grid-cols-2 gap-2 text-[11px] my-2 p-2 rounded-lg bg-background/80 border border-border/40">
+          <div>
+            <span className="text-muted-foreground block text-[10px]">Current Follow-Up</span>
+            <span className="font-medium text-foreground">{cur}</span>
+          </div>
+          <div>
+            <span className="text-muted-foreground block text-[10px]">Proposed Follow-Up</span>
+            <span className="font-semibold text-primary">{prop}</span>
+          </div>
+        </div>
+      );
+    }
+
+    return null;
+  };
+
+  return (
+    <div className="mt-2.5 p-3 rounded-xl border border-primary/30 bg-primary/5 text-foreground">
+      <div className="flex items-center gap-1.5 text-xs font-semibold text-primary">
+        <Sparkles className="h-3.5 w-3.5" />
+        <span>{proposal.title}</span>
+      </div>
+
+      <p className="text-[11.5px] text-muted-foreground mt-1">{proposal.summary}</p>
+
+      {getDetails()}
+
+      {/* State Badges / Messages */}
+      {status === 'success' && (
+        <div className="mt-2 flex items-center gap-1.5 p-2 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-xs font-medium border border-emerald-500/20">
+          <CheckCircle2 className="h-4 w-4 shrink-0" />
+          <span>{resultMessage}</span>
+        </div>
+      )}
+
+      {status === 'stale' && (
+        <div className="mt-2 flex items-center gap-1.5 p-2 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400 text-xs font-medium border border-amber-500/20">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          <span>{resultMessage}</span>
+        </div>
+      )}
+
+      {status === 'failed' && (
+        <div className="mt-2 flex items-center gap-1.5 p-2 rounded-lg bg-destructive/10 text-destructive text-xs font-medium border border-destructive/20">
+          <AlertCircle className="h-4 w-4 shrink-0" />
+          <span>{resultMessage}</span>
+        </div>
+      )}
+
+      {status === 'cancelled' && (
+        <div className="mt-2 p-1.5 text-xs text-muted-foreground italic">
+          {resultMessage}
+        </div>
+      )}
+
+      {/* Buttons */}
+      {status === 'proposed' && (
+        <div className="mt-2.5 flex items-center justify-end gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={handleCancel}
+            className="h-7 text-xs px-2.5 bg-background"
+          >
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            onClick={handleConfirm}
+            className="h-7 text-xs px-3 bg-primary text-primary-foreground hover:bg-primary/90 flex items-center gap-1"
+          >
+            <span>Confirm</span>
+            <ArrowRight className="h-3 w-3" />
+          </Button>
+        </div>
+      )}
+
+      {status === 'confirming' && (
+        <div className="mt-2.5 flex items-center justify-end gap-1.5 text-xs text-muted-foreground">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          <span>Executing confirmed action...</span>
+        </div>
+      )}
+    </div>
   );
 }

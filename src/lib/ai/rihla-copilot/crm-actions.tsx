@@ -1,22 +1,24 @@
 'use server';
 
 /**
- * CRM Copilot Server Actions (Phase AI-2)
+ * CRM Copilot Server Actions (Phase AI-2 / AI-3)
  * 
- * Server-authoritative, read-only CRM Copilot handler with provider-native
+ * Server-authoritative CRM Copilot handler with provider-native
  * structured tool calling (OpenAI & Anthropic), bounded 2-round tool loop,
- * and validated tenant knowledge citations.
+ * validated tenant knowledge citations, and governed internal action proposals.
  * 
  * Invariants:
  * - Authenticates session server-side
  * - Resolves tenant-safe context via resolveCopilotContext
  * - Enforces trusted execution context (tenantId, userId, role derived on server)
- * - READ TOOLS: 8 (inquiries, travelers, bookings, tasks, activity, knowledge)
- * - WRITE TOOLS: 0
+ * - READ TOOLS: 9 (inquiries, travelers, bookings, tasks, activity, knowledge, team)
+ * - ACTION PROPOSAL TOOLS: 3 (update_stage, assign, set_followup) — PROPOSE ONLY
+ * - MODEL-VISIBLE WRITE TOOLS: 0
  * - EXTERNAL ACTIONS: 0
  * - Tool loop bounded by MAX_TOOL_ROUNDS (2) and MAX_TOOL_CALLS (4)
  * - Provider-native tool calling with fallback normalized adapter
  * - Validated citation handles (server owns source identity)
+ * - Deterministic Server Action for human action confirmation
  */
 import { cookies } from 'next/headers';
 import { createClient } from '@/lib/supabase/server';
@@ -33,12 +35,19 @@ import {
   type KnowledgeSource,
   type KnowledgeSearchResult,
 } from './tools';
+import {
+  type ActionProposalDTO,
+  type ActionExecutionResult,
+  executeConfirmedAction,
+  type AuthenticatedActor,
+} from './actions/index';
 
 export interface CrmCopilotResponse {
   id: string;
   content: string;
   contextSummary?: string;
   sources?: KnowledgeSource[];
+  actionProposal?: ActionProposalDTO;
   error?: string;
 }
 
@@ -126,13 +135,14 @@ export async function submitCrmCopilotMessage(
   };
 
   const collectedSources: KnowledgeSource[] = [];
+  let collectedProposal: ActionProposalDTO | undefined = undefined;
   let toolOutputContext = '';
   let toolCallsCount = 0;
 
   try {
     // ─── ROUND 1: Initial Inference with Provider-Native Tools ─────
     const initialPrompt = buildCrmCopilotPrompt(query, context);
-    const providerTools = getCrmCopilotProviderTools();
+    const providerTools = getCrmCopilotProviderTools(true);
 
     const initialResult = await executeAIRequest({
       supabase,
@@ -171,7 +181,7 @@ export async function submitCrmCopilotMessage(
       };
     }
 
-    // ─── EXECUTE REQUESTED READ TOOLS ─────────────────────────────
+    // ─── EXECUTE REQUESTED TOOLS (READ OR PROPOSE ONLY — 0 MUTATIONS) ───
     const toolResultsText: string[] = [];
 
     for (const call of rawToolCalls) {
@@ -186,8 +196,22 @@ export async function submitCrmCopilotMessage(
       if (!res.success) {
         toolResultsText.push(`[Tool: ${call.tool}] Error: ${res.error || 'Execution failed'}`);
       } else {
-        // Check if knowledge search returned structured sources
-        if (call.tool === 'searchAgencyKnowledge' && res.data) {
+        // Handle action proposal tools
+        if (
+          (call.tool === 'proposeUpdateInquiryStage' ||
+            call.tool === 'proposeAssignInquiry' ||
+            call.tool === 'proposeSetInquiryFollowUp') &&
+          res.data &&
+          typeof res.data === 'object' &&
+          'proposal' in res.data
+        ) {
+          const proposalData = res.data as { proposal: ActionProposalDTO; summaryText: string };
+          collectedProposal = proposalData.proposal;
+          toolResultsText.push(
+            `[Action Proposal Prepared]\nAction: ${collectedProposal.actionType}\nTarget: ${collectedProposal.entityId}\nConfirmation Card: Prepared for user approval.\nZero mutations executed.`
+          );
+        } else if (call.tool === 'searchAgencyKnowledge' && res.data) {
+          // Check if knowledge search returned structured sources
           const knowledgeData = res.data as KnowledgeSearchResult;
           if (knowledgeData.sources && knowledgeData.sources.length > 0) {
             for (const s of knowledgeData.sources) {
@@ -241,6 +265,7 @@ export async function submitCrmCopilotMessage(
       content: finalContent,
       contextSummary: formatContextSummary(context),
       sources: validatedSources.length > 0 ? validatedSources : undefined,
+      actionProposal: collectedProposal,
     };
   } catch (err: unknown) {
     const errorMsg = err instanceof Error ? err.message : 'Unknown error';
@@ -252,6 +277,41 @@ export async function submitCrmCopilotMessage(
       error: 'processing_error',
     };
   }
+}
+
+/**
+ * Server Action: Execute an Action Proposal after explicit human confirmation.
+ * Re-authenticates actor, revalidates tenant, re-reads record for stale state,
+ * and executes mutation safely.
+ */
+export async function confirmCopilotAction(
+  proposal: ActionProposalDTO
+): Promise<ActionExecutionResult> {
+  const cookieStore = await cookies();
+  const supabase = createClient(cookieStore);
+
+  // 1. Re-authenticate session server-side
+  const context = await resolveCopilotContext(supabase, {});
+  if (!context.success || !context.user || !context.agency) {
+    return {
+      success: false,
+      actionType: proposal.actionType,
+      entityId: proposal.entityId,
+      message: 'Authentication session expired. Please sign in again to confirm this action.',
+      error: 'Unauthenticated',
+      errorCode: 'UNAUTHORIZED',
+    };
+  }
+
+  const actor: AuthenticatedActor = {
+    userId: context.user.userId,
+    fullName: context.user.fullName,
+    role: (context.user.role as import('@/types/common').UserRole) || 'consultant',
+    tenantId: context.agency.tenantId,
+  };
+
+  // 2. Dispatch to deterministic executor
+  return await executeConfirmedAction(actor, proposal, supabase);
 }
 
 function formatContextSummary(context: import('./crm-context-resolver').CopilotContextResolution): string {

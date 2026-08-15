@@ -1,12 +1,14 @@
 /**
- * Central CRM Copilot Read Tool Registry (Phase AI-2)
+ * Central CRM Copilot Tool Registry (Phase AI-2 / AI-3)
  * 
- * Aggregates all approved read tools, enforces schema validation,
- * injects trusted server execution context, and dispatches tool execution.
+ * Aggregates all approved read tools and model-visible action proposal tools.
+ * Enforces schema validation, injects trusted server execution context, and dispatches tool execution.
  * 
- * CRM READ TOOLS: 8
- * CRM WRITE TOOLS: 0
+ * MODEL-VISIBLE READ TOOLS: 9
+ * MODEL-VISIBLE PROPOSAL TOOLS: 3
+ * MODEL-VISIBLE MUTATION TOOLS: 0 (Strict PROPOSE != EXECUTE separation)
  * EXTERNAL ACTION TOOLS: 0
+ * FINANCE / BOOKING MUTATION TOOLS: 0
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { ProviderToolDefinition } from '@/lib/ai/providers/openai';
@@ -21,6 +23,12 @@ import { getBookingDetailsTool } from './bookings';
 import { listTasksTool } from './tasks';
 import { getRecentActivityTool } from './activity';
 import { searchAgencyKnowledgeTool } from './knowledge';
+import {
+  proposeUpdateInquiryStageTool,
+  proposeAssignInquiryTool,
+  proposeSetInquiryFollowUpTool,
+  VALID_INQUIRY_STAGES,
+} from '../actions/index';
 
 export * from './types';
 export * from './inquiries';
@@ -29,6 +37,7 @@ export * from './bookings';
 export * from './tasks';
 export * from './activity';
 export * from './knowledge';
+export * from './team';
 
 export const CRM_READ_TOOLS: Record<string, ToolDefinition> = {
   searchInquiries: searchInquiriesTool,
@@ -41,11 +50,23 @@ export const CRM_READ_TOOLS: Record<string, ToolDefinition> = {
   searchAgencyKnowledge: searchAgencyKnowledgeTool,
 };
 
+export const CRM_PROPOSAL_TOOLS: Record<string, ToolDefinition> = {
+  proposeUpdateInquiryStage: proposeUpdateInquiryStageTool,
+  proposeAssignInquiry: proposeAssignInquiryTool,
+  proposeSetInquiryFollowUp: proposeSetInquiryFollowUpTool,
+};
+
+export const CRM_ALL_MODEL_TOOLS: Record<string, ToolDefinition> = {
+  ...CRM_READ_TOOLS,
+  ...CRM_PROPOSAL_TOOLS,
+};
+
 /**
  * Returns JSON Schema tool definitions for provider-native tool calling (OpenAI & Anthropic).
  */
-export function getCrmCopilotProviderTools(): ProviderToolDefinition[] {
-  return [
+export function getCrmCopilotProviderTools(includeProposals: boolean = false): ProviderToolDefinition[] {
+  const readTools: ProviderToolDefinition[] = [
+    // --- 9 READ TOOLS ---
     {
       name: 'searchInquiries',
       description: 'Search inquiries within the current agency by destination, stage, priority, traveler, or text query. Maximum 10 results returned.',
@@ -145,6 +166,62 @@ export function getCrmCopilotProviderTools(): ProviderToolDefinition[] {
       },
     },
   ];
+
+  if (!includeProposals) {
+    return readTools;
+  }
+
+  const proposalTools: ProviderToolDefinition[] = [
+    // --- 3 ACTION PROPOSAL TOOLS (PROPOSAL ONLY — ZERO MUTATION) ---
+    {
+      name: 'proposeUpdateInquiryStage',
+      description: 'Propose moving an inquiry to a new pipeline stage. Prepares a structured confirmation card. ZERO business mutations occur until the user confirms.',
+      parameters: {
+        type: 'object',
+        properties: {
+          inquiryId: { type: 'string', description: 'The canonical ID of the inquiry to update' },
+          proposedStage: {
+            type: 'string',
+            enum: [...VALID_INQUIRY_STAGES],
+            description: 'The target pipeline stage for the inquiry',
+          },
+          reason: { type: 'string', description: 'Optional explanation for why the stage should be updated' },
+        },
+        required: ['inquiryId', 'proposedStage'],
+      },
+    },
+    {
+      name: 'proposeAssignInquiry',
+      description: 'Propose assigning an inquiry to an eligible team member in the current agency. Prepares a confirmation card. ZERO mutations occur until the user confirms.',
+      parameters: {
+        type: 'object',
+        properties: {
+          inquiryId: { type: 'string', description: 'The canonical ID of the inquiry' },
+          assigneeUserId: { type: 'string', description: 'The profile ID of the team member to assign' },
+          reason: { type: 'string', description: 'Optional reason for the assignment' },
+        },
+        required: ['inquiryId', 'assigneeUserId'],
+      },
+    },
+    {
+      name: 'proposeSetInquiryFollowUp',
+      description: 'Propose setting, changing, or clearing the next follow-up date for an inquiry. Prepares a confirmation card. ZERO mutations occur until the user confirms.',
+      parameters: {
+        type: 'object',
+        properties: {
+          inquiryId: { type: 'string', description: 'The canonical ID of the inquiry' },
+          nextFollowUpAt: {
+            type: ['string', 'null'],
+            description: 'ISO 8601 formatted datetime string for the follow-up, or null to clear',
+          },
+          reason: { type: 'string', description: 'Optional note regarding the follow-up' },
+        },
+        required: ['inquiryId', 'nextFollowUpAt'],
+      },
+    },
+  ];
+
+  return [...readTools, ...proposalTools];
 }
 
 /**
@@ -174,14 +251,24 @@ export function extractToolCalls(text: string): Array<{ tool: string; params: Re
  * Builds the tool description documentation for the system prompt.
  */
 export function buildToolDescriptionsPrompt(): string {
-  const descriptions = Object.values(CRM_READ_TOOLS).map((tool) => {
+  const readDescriptions = Object.values(CRM_READ_TOOLS).map((tool) => {
+    return `- \`${tool.name}\`: ${tool.description}`;
+  });
+
+  const proposalDescriptions = Object.values(CRM_PROPOSAL_TOOLS).map((tool) => {
     return `- \`${tool.name}\`: ${tool.description}`;
   });
 
   return `AVAILABLE CRM READ TOOLS:
-${descriptions.join('\n')}
+${readDescriptions.join('\n')}
 
-If you need information beyond the CURRENT CRM CONTEXT to accurately answer the user's question, call one of the available structured tools. If you already have sufficient information, provide the final answer directly.`;
+AVAILABLE ACTION PROPOSAL TOOLS (PROPOSE ONLY — ZERO DIRECT MUTATION):
+${proposalDescriptions.join('\n')}
+
+INSTRUCTIONS FOR ACTION PROPOSALS:
+- If the user asks to move an inquiry, assign it, or schedule follow-up, invoke the appropriate \`propose*\` tool.
+- Propose at most ONE action per message.
+- Invoking a proposal tool does NOT mutate the database. Rihla CRM will render a confirmation card for human approval.`;
 }
 
 /**
@@ -194,7 +281,7 @@ export async function executeToolCall(
   rawParams: unknown,
   supabase: SupabaseClient
 ): Promise<ToolResult> {
-  const tool = CRM_READ_TOOLS[toolName];
+  const tool = CRM_ALL_MODEL_TOOLS[toolName];
   if (!tool) {
     return {
       success: false,
