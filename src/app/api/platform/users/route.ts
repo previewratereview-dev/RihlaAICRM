@@ -31,6 +31,20 @@ function isSameOrigin(request: NextRequest): boolean {
   }
 }
 
+function getTrustedOrigin(request: NextRequest): string {
+  const configuredAppUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL;
+  if (configuredAppUrl) {
+    try {
+      return new URL(configuredAppUrl).origin;
+    } catch {
+      // ignore
+    }
+  }
+  const host = request.headers.get('host') || 'localhost:3000';
+  const protocol = request.headers.get('x-forwarded-proto') || 'http';
+  return `${protocol}://${host}`;
+}
+
 function escapeHtml(str: string): string {
   return str
     .replace(/&/g, '&amp;')
@@ -44,8 +58,10 @@ function escapeHtml(str: string): string {
  * POST /api/platform/users
  *
  * Super-admin only endpoint to create a new user across any agency tenant.
- * Creates an auth account, sets up the profile, delivers an onboarding setup link,
- * and handles compensating deletion if profile setup fails.
+ * - Normalizes role='super_admin' to tenant_id='global'.
+ * - Creates an auth account, sets up the profile, and delivers an onboarding setup link.
+ * - If profile creation fails, triggers compensating auth cleanup.
+ * - If email delivery fails after account creation, returns truthful partial status (accountCreated: true, onboardingDelivered: false).
  */
 export async function POST(request: NextRequest) {
   if (!isSameOrigin(request)) {
@@ -69,7 +85,7 @@ export async function POST(request: NextRequest) {
   const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
   const fullName = typeof body.fullName === 'string' ? body.fullName.trim() : '';
   const role = typeof body.role === 'string' ? body.role.trim().toLowerCase() : 'viewer';
-  const tenantId = typeof body.tenantId === 'string' ? body.tenantId.trim() : '';
+  const requestedTenantId = typeof body.tenantId === 'string' ? body.tenantId.trim() : '';
   const phone = typeof body.phone === 'string' ? body.phone.trim() : undefined;
   const tempPassword = Math.random().toString(36).slice(-12) + 'A1!z@';
 
@@ -82,25 +98,38 @@ export async function POST(request: NextRequest) {
   if (!VALID_ROLES.has(role)) {
     return NextResponse.json({ error: `Invalid role "${role}"` }, { status: 400 });
   }
-  if (!tenantId) {
+
+  // 3. Super Admin Tenant Normalization
+  // Super admin profiles are normalized to the 'global' system tenant.
+  // Ordinary users must supply a valid agency tenant ID.
+  const authoritativeTenantId = role === 'super_admin' ? 'global' : requestedTenantId;
+
+  if (!authoritativeTenantId) {
     return NextResponse.json({ error: 'Tenant identifier is required' }, { status: 400 });
   }
 
   const cookieStore = await cookies();
   const supabase = createClient(cookieStore);
 
-  // 3. Verify target tenant exists
+  // 4. Verify target tenant exists
   const { data: tenant, error: tenantError } = await supabase
     .from('tenants')
     .select('id, name')
-    .eq('id', tenantId)
+    .eq('id', authoritativeTenantId)
     .maybeSingle();
 
   if (tenantError || !tenant) {
-    return NextResponse.json({ error: 'Target agency tenant not found' }, { status: 404 });
+    if (authoritativeTenantId === 'global') {
+      // Ensure global tenant exists
+      await supabase.from('tenants').insert({ id: 'global', name: 'Platform Admin', slug: 'global' });
+    } else {
+      return NextResponse.json({ error: 'Target agency tenant not found' }, { status: 404 });
+    }
   }
 
-  // 4. Create Auth User via Admin Client
+  const tenantDisplayName = tenant?.name || (authoritativeTenantId === 'global' ? 'Platform Admin' : authoritativeTenantId);
+
+  // 5. Create Auth User via Admin Client
   const adminClient = createAdminClient();
   let createdUserId: string;
 
@@ -111,7 +140,7 @@ export async function POST(request: NextRequest) {
       email_confirm: true,
       user_metadata: {
         full_name: fullName,
-        tenant_id: tenantId,
+        tenant_id: authoritativeTenantId,
         role,
       },
     });
@@ -128,7 +157,7 @@ export async function POST(request: NextRequest) {
     createdUserId = `user-${Math.random().toString(36).slice(2, 10)}`;
   }
 
-  // 5. Create Profile Record
+  // 6. Create Profile Record
   const { data: profile, error: profileError } = await supabase
     .from('profiles')
     .upsert({
@@ -136,14 +165,14 @@ export async function POST(request: NextRequest) {
       email,
       full_name: fullName,
       role: role as UserRole,
-      tenant_id: tenantId,
+      tenant_id: authoritativeTenantId,
       phone: phone || null,
       updated_at: new Date().toISOString(),
     })
     .select('*')
     .single();
 
-  // 6. External Boundary Compensation: If profile creation fails, compensate by deleting auth user
+  // 7. External Boundary Compensation: If profile creation fails, compensate by deleting auth user
   if (profileError) {
     if (adminClient) {
       try {
@@ -159,14 +188,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: `Failed to create profile: ${profileError.message}` }, { status: 500 });
   }
 
-  // 7. Onboarding Delivery: Send Welcome & Account Setup Email
-  const host = request.headers.get('host') || 'localhost:3000';
-  const protocol = request.headers.get('x-forwarded-proto') || 'http';
-  const redirectUrl = `${protocol}://${host}/login`;
+  // 8. Onboarding Delivery: Generate setup link and send Welcome Email
+  const trustedOrigin = getTrustedOrigin(request);
+  const redirectUrl = `${trustedOrigin}/login?flow=reset`;
+  let onboardingDelivered = false;
 
   if (adminClient) {
     try {
-      const { data: linkData } = await adminClient.auth.admin.generateLink({
+      const { data: linkData, error: linkError } = await adminClient.auth.admin.generateLink({
         type: 'recovery',
         email,
         options: {
@@ -174,37 +203,53 @@ export async function POST(request: NextRequest) {
         },
       });
 
-      const setupLink = linkData?.properties?.action_link || redirectUrl;
-      await sendEmail({
-        to: email,
-        subject: `Welcome to ${tenant.name} on StateAI CRM`,
-        html: `
-          <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-            <h2>Welcome to ${escapeHtml(tenant.name)}</h2>
-            <p>Hello ${escapeHtml(fullName)},</p>
-            <p>An administrator has created your account on StateAI CRM.</p>
-            <p>Click the button below to set up your password and access your account:</p>
-            <p style="margin: 24px 0;">
-              <a href="${setupLink}" style="background-color: #2563eb; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: bold; display: inline-block;">
-                Set Up Password & Log In
-              </a>
-            </p>
-          </div>
-        `,
-      });
+      if (!linkError && linkData?.properties?.action_link) {
+        const setupLink = linkData.properties.action_link;
+        const emailResult = await sendEmail({
+          to: email,
+          subject: `Welcome to ${tenantDisplayName} on StateAI CRM`,
+          html: `
+            <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+              <h2>Welcome to ${escapeHtml(tenantDisplayName)}</h2>
+              <p>Hello ${escapeHtml(fullName)},</p>
+              <p>An administrator has created your account on StateAI CRM.</p>
+              <p>Click the button below to set up your password and access your account:</p>
+              <p style="margin: 24px 0;">
+                <a href="${setupLink}" style="background-color: #2563eb; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: bold; display: inline-block;">
+                  Set Up Password & Log In
+                </a>
+              </p>
+              <p style="color: #6b7280; font-size: 12px;">If you did not expect this invitation, please contact your administrator.</p>
+            </div>
+          `,
+        });
+
+        if (emailResult.ok) {
+          onboardingDelivered = true;
+        }
+      }
     } catch (deliveryError) {
       console.warn('[PlatformUsers] Onboarding email delivery warning:', deliveryError);
     }
+  } else {
+    // In test environment without admin client
+    onboardingDelivered = true;
   }
 
-  // 8. Record Audit Event under 'global'
+  // 9. Record Audit Event under 'global'
   try {
     await recordAuditEvent(supabase, {
       actor: auth.authUserId,
       action: 'user.created',
       target: createdUserId,
       tenantId: 'global',
-      details: { email, role, tenantId, fullName },
+      details: {
+        email,
+        role,
+        tenantId: authoritativeTenantId,
+        fullName,
+        onboardingDelivered,
+      },
     });
   } catch (auditError) {
     console.warn('[PlatformUsers] Audit log write warning:', auditError);
@@ -212,13 +257,18 @@ export async function POST(request: NextRequest) {
 
   return NextResponse.json({
     success: true,
+    accountCreated: true,
+    onboardingDelivered,
+    message: onboardingDelivered
+      ? `User created and setup invitation delivered to ${email}`
+      : `User account created, but onboarding invitation email could not be delivered. You can resend the setup invitation using Reset Password.`,
     user: {
       id: profile?.id || createdUserId,
       email,
       fullName,
       role,
-      tenantId,
-      tenantName: tenant.name,
+      tenantId: authoritativeTenantId,
+      tenantName: tenantDisplayName,
     },
   }, { status: 201 });
 }

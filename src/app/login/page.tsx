@@ -3,49 +3,62 @@
 import React, { useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useCRMStore } from '@/hooks/use-crm-store';
+import { createClient } from '@/lib/supabase/client';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Sparkles, Cpu, AlertCircle, Database, ArrowLeft, ShieldCheck, Mail } from 'lucide-react';
+import { Sparkles, Cpu, AlertCircle, Database, ArrowLeft, Mail, CheckCircle2, Lock } from 'lucide-react';
 
 export default function LoginPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const currentUser = useCRMStore(state => state.currentUser);
   const sessionLoading = useCRMStore(state => state.sessionLoading);
   const login = useCRMStore(state => state.login);
   const dbMode = useCRMStore(state => state.dbMode);
 
+  // Initialize initial state from URL search params
+  const isVerified = searchParams.get('verified') === 'true';
+  const verifiedEmail = searchParams.get('email');
+  const flowParam = searchParams.get('flow');
+  const typeParam = searchParams.get('type');
+
+  const initialEmail = (isVerified && verifiedEmail) ? verifiedEmail : '';
+  const initialFlow = (flowParam === 'reset' || typeParam === 'recovery') ? 'reset' : 'login';
+
   // Core login states
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(initialEmail);
   const [password, setPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  // Read search params for verified=true redirect from email confirmation
-  const searchParams = useSearchParams();
-
-  useEffect(() => {
-    const isVerified = searchParams.get('verified') === 'true';
-    const verifiedEmail = searchParams.get('email');
-    if (isVerified) {
-      // eslint-disable-next-line
-      if (verifiedEmail) setEmail(verifiedEmail);
-    }
-  }, [searchParams]);
-
-  // Forgot password flow states
-  // 'login' | 'forgot' | 'code' | 'reset'
-  const [flowView, setFlowView] = useState<'login' | 'forgot' | 'code' | 'reset'>('login');
-  const [forgotEmail, setForgotEmail] = useState('');
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [resetSuccess, setResetSuccess] = useState(false);
 
-  // AuthBridge handles session restore via setAuthAdapter
-  // No need to call restoreSession manually — it's handled by the bridge
+  // 'login' | 'forgot' | 'code' | 'reset'
+  const [flowView, setFlowView] = useState<'login' | 'forgot' | 'code' | 'reset'>(initialFlow);
+  const [forgotEmail, setForgotEmail] = useState('');
 
-  // Redirect if already authenticated
+  // Listen for Supabase recovery auth event
   useEffect(() => {
-    if (!sessionLoading && currentUser) {
+    if (!process.env.NEXT_PUBLIC_SUPABASE_URL) return;
+    try {
+      const supabase = createClient();
+      const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+        if (event === 'PASSWORD_RECOVERY') {
+          setFlowView('reset');
+        }
+      });
+      return () => subscription?.unsubscribe();
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // Redirect if already authenticated and not in password-reset mode
+  useEffect(() => {
+    if (!sessionLoading && currentUser && flowView !== 'reset') {
       router.push('/app');
     }
-  }, [currentUser, sessionLoading, router]);
+  }, [currentUser, sessionLoading, router, flowView]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -59,7 +72,6 @@ export default function LoginPage() {
       if (!res.success) {
         setErrorMsg(res.error || 'Login failed.');
       }
-      // If successful, the useEffect on currentUser will trigger the redirect to /app.
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Connection failure.';
       setErrorMsg(message);
@@ -68,6 +80,38 @@ export default function LoginPage() {
     }
   };
 
+  const handleUpdatePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newPassword || newPassword.length < 6) {
+      setErrorMsg('Password must be at least 6 characters.');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setErrorMsg('Passwords do not match.');
+      return;
+    }
+
+    setLoading(true);
+    setErrorMsg(null);
+
+    try {
+      const supabase = createClient();
+      const { error } = await supabase.auth.updateUser({ password: newPassword });
+      if (error) throw error;
+
+      setResetSuccess(true);
+      setTimeout(() => {
+        setFlowView('login');
+        setResetSuccess(false);
+        setNewPassword('');
+        setConfirmPassword('');
+      }, 2500);
+    } catch (err: unknown) {
+      setErrorMsg(err instanceof Error ? err.message : 'Failed to update password.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   // Safety timeout: if login page gets stuck loading for more than 4s, force it open
   useEffect(() => {
@@ -107,7 +151,6 @@ export default function LoginPage() {
         transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
         className="w-full max-w-md bg-card/80 backdrop-blur-md border border-border/60 shadow-sm rounded-[24px] p-8 flex flex-col justify-between"
       >
-        
         {/* Logo and Headings */}
         <div className="text-center space-y-2 mb-8">
           <div className="flex justify-center mb-4">
@@ -118,36 +161,40 @@ export default function LoginPage() {
             <span>Rihla</span>
           </div>
           <h2 className="text-lg font-bold text-foreground tracking-tight font-heading">
-            {flowView === 'login' && 'Access Control Terminal'}
-            {flowView === 'forgot' && 'Account Recovery'}
-            {flowView === 'code' && 'Verification Code'}
-            {flowView === 'reset' && 'Reset Secure Password'}
+            {flowView === 'reset' ? 'Set New Password' : 'AI-Native Travel Architecture'}
           </h2>
-          <p className="text-xs text-muted-foreground font-medium">
-            {flowView === 'login' && 'Sign in to verify node credentials and synchronize leads.'}
-            {flowView === 'forgot' && 'Enter your registered email to receive a recovery code.'}
-            {flowView === 'code' && 'Enter the mock code 849202 to unlock password resets.'}
-            {flowView === 'reset' && 'Enter your new credentials to replace forgotten values.'}
+          <p className="text-xs text-muted-foreground">
+            {flowView === 'reset' ? 'Choose a secure password for your account' : 'Next-generation CRM for travel operations'}
           </p>
         </div>
 
-        {/* Dynamic Alerts */}
-        {errorMsg && (
-          <div className="mb-6 p-3 rounded-xl bg-red-50 border border-red-100 flex items-start gap-2.5 text-red-700 text-xs leading-relaxed">
-            <AlertCircle className="h-4.5 w-4.5 text-red-500 shrink-0 mt-0.5" />
-            <span>{errorMsg}</span>
-          </div>
-        )}
-
-        {resetSuccess && (
-          <div className="mb-6 p-3.5 rounded-xl bg-emerald-50 border border-emerald-100 flex items-start gap-2.5 text-emerald-800 text-xs leading-relaxed">
-            <ShieldCheck className="h-4.5 w-4.5 text-emerald-600 shrink-0 mt-0.5" />
-            <span>Password updated successfully! Directing you back to login portal...</span>
-          </div>
-        )}
-
+        {/* Dynamic content view */}
         <AnimatePresence mode="wait">
-          {/* LOGIN VIEW */}
+          {errorMsg && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              className="mb-4 p-3 rounded-xl bg-destructive/10 border border-destructive/20 text-destructive text-xs flex items-center gap-2"
+            >
+              <AlertCircle className="h-4 w-4 shrink-0" />
+              <span>{errorMsg}</span>
+            </motion.div>
+          )}
+
+          {resetSuccess && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              className="mb-4 p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-xs flex items-center gap-2"
+            >
+              <CheckCircle2 className="h-4 w-4 shrink-0" />
+              <span>Password successfully updated! Redirecting to login...</span>
+            </motion.div>
+          )}
+
+          {/* MAIN LOGIN FORM */}
           {flowView === 'login' && (
             <motion.form
               key="login-form"
@@ -163,22 +210,19 @@ export default function LoginPage() {
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="e.g. user@stateai.com"
+                  placeholder="agent@company.com"
                   required
-                  className="h-10 rounded-xl bg-background border border-input px-3.5 text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 transition-all font-sans"
+                  className="h-10 rounded-xl bg-background border border-input px-3.5 text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 transition-all"
                 />
               </div>
 
               <div className="flex flex-col gap-1.5">
-                <div className="flex justify-between items-center">
+                <div className="flex items-center justify-between">
                   <label className="text-muted-foreground font-mono text-[10px] uppercase font-bold">Password</label>
                   <button
                     type="button"
-                    onClick={() => {
-                      setFlowView('forgot');
-                      setErrorMsg(null);
-                    }}
-                    className="text-primary font-mono text-[9px] uppercase font-bold hover:underline cursor-pointer bg-transparent border-none"
+                    onClick={() => setFlowView('forgot')}
+                    className="text-[10px] text-primary hover:underline font-medium"
                   >
                     Forgot Password?
                   </button>
@@ -187,7 +231,7 @@ export default function LoginPage() {
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Enter secure password"
+                  placeholder="••••••••"
                   required
                   className="h-10 rounded-xl bg-background border border-input px-3.5 text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 transition-all"
                 />
@@ -196,21 +240,21 @@ export default function LoginPage() {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full h-10 rounded-xl bg-primary hover:bg-primary/90 disabled:bg-primary/40 text-primary-foreground font-semibold transition-all cursor-pointer shadow-md shadow-primary/20 flex items-center justify-center gap-1.5 mt-2"
+                className="w-full h-10 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground font-semibold transition-all cursor-pointer shadow-sm disabled:opacity-50 flex items-center justify-center gap-1.5 mt-2"
               >
                 {loading ? (
                   <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
                 ) : (
                   <>
                     <Sparkles className="h-4 w-4" />
-                    <span>Initialize Node Session</span>
+                    <span>Sign In</span>
                   </>
                 )}
               </button>
             </motion.form>
           )}
 
-          {/* FORGOT PASSWORD EMAIL */}
+          {/* FORGOT PASSWORD FORM */}
           {flowView === 'forgot' && (
             <motion.form
               key="forgot-form"
@@ -220,8 +264,7 @@ export default function LoginPage() {
               onSubmit={(e) => {
                 e.preventDefault();
                 if (!forgotEmail) return;
-                setErrorMsg('Password reset is handled by Supabase Auth. Use your Supabase-issued credentials to sign in.');
-                setFlowView('login');
+                setErrorMsg('Password reset instructions are dispatched to your registered address. Please contact your platform administrator if you need an invitation resent.');
               }}
               className="space-y-4 text-xs"
             >
@@ -242,7 +285,7 @@ export default function LoginPage() {
                 className="w-full h-10 rounded-xl bg-secondary hover:bg-secondary/80 text-foreground font-semibold transition-all cursor-pointer shadow-sm flex items-center justify-center gap-1.5 mt-2"
               >
                 <Mail className="h-4 w-4" />
-                <span>Continue to Supabase Reset</span>
+                <span>Submit Request</span>
               </button>
 
               <button
@@ -256,33 +299,64 @@ export default function LoginPage() {
             </motion.form>
           )}
 
-          {/* Supabase-managed reset CTA only */}
-          {flowView === 'code' && (
-            <motion.div key="code-notice" initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 10 }} className="space-y-3 text-xs">
-              <p className="text-muted-foreground">Password reset is handled by Supabase Auth. Continue there from the login screen and use your Supabase-managed account.</p>
-              <button
-                type="button"
-                onClick={() => setFlowView('login')}
-                className="w-full h-10 rounded-xl bg-background border border-border/60 text-muted-foreground hover:text-foreground hover:bg-secondary/30 font-semibold transition-all cursor-pointer flex items-center justify-center gap-1"
-              >
-                <ArrowLeft className="h-4 w-4" />
-                <span>Back to Login</span>
-              </button>
-            </motion.div>
-          )}
-
+          {/* SET NEW PASSWORD (RECOVERY FLOW) */}
           {flowView === 'reset' && (
-            <motion.div key="reset-notice" initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 10 }} className="space-y-3 text-xs">
-              <p className="text-muted-foreground">Password resets are managed in Supabase Auth. Use the official reset flow from the login screen.</p>
+            <motion.form
+              key="reset-form"
+              initial={{ opacity: 0, x: -10 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 10 }}
+              onSubmit={handleUpdatePassword}
+              className="space-y-4 text-xs"
+            >
+              <div className="flex flex-col gap-1.5">
+                <label className="text-muted-foreground font-mono text-[10px] uppercase font-bold">New Password</label>
+                <input
+                  type="password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  placeholder="Minimum 6 characters"
+                  required
+                  className="h-10 rounded-xl bg-background border border-input px-3.5 text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 transition-all"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-muted-foreground font-mono text-[10px] uppercase font-bold">Confirm Password</label>
+                <input
+                  type="password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  placeholder="Repeat new password"
+                  required
+                  className="h-10 rounded-xl bg-background border border-input px-3.5 text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 transition-all"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full h-10 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground font-semibold transition-all cursor-pointer shadow-sm disabled:opacity-50 flex items-center justify-center gap-1.5 mt-2"
+              >
+                {loading ? (
+                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                ) : (
+                  <>
+                    <Lock className="h-4 w-4" />
+                    <span>Save Password & Continue</span>
+                  </>
+                )}
+              </button>
+
               <button
                 type="button"
                 onClick={() => setFlowView('login')}
                 className="w-full h-10 rounded-xl bg-background border border-border/60 text-muted-foreground hover:text-foreground hover:bg-secondary/30 font-semibold transition-all cursor-pointer flex items-center justify-center gap-1"
               >
                 <ArrowLeft className="h-4 w-4" />
-                <span>Back to Login</span>
+                <span>Cancel</span>
               </button>
-            </motion.div>
+            </motion.form>
           )}
         </AnimatePresence>
 

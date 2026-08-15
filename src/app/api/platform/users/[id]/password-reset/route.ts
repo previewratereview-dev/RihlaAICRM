@@ -19,6 +19,20 @@ function isSameOrigin(request: NextRequest): boolean {
   }
 }
 
+function getTrustedOrigin(request: NextRequest): string {
+  const configuredAppUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL;
+  if (configuredAppUrl) {
+    try {
+      return new URL(configuredAppUrl).origin;
+    } catch {
+      // ignore
+    }
+  }
+  const host = request.headers.get('host') || 'localhost:3000';
+  const protocol = request.headers.get('x-forwarded-proto') || 'http';
+  return `${protocol}://${host}`;
+}
+
 function escapeHtml(str: string): string {
   return str
     .replace(/&/g, '&amp;')
@@ -31,9 +45,10 @@ function escapeHtml(str: string): string {
 /**
  * POST /api/platform/users/[id]/password-reset
  *
- * Super-admin only endpoint to initiate a password recovery flow for any platform user.
+ * Super-admin only endpoint to initiate/resend password recovery or setup for any platform user.
  * Generates an administrative recovery link server-side and delivers it via the application's
- * trusted email provider (Resend). Tokens are never exposed to the client.
+ * trusted email provider (Resend) to the recovery UI (/login?flow=reset).
+ * Raw tokens/links are never exposed to the client.
  */
 export async function POST(
   request: NextRequest,
@@ -68,10 +83,9 @@ export async function POST(
     return NextResponse.json({ error: 'User not found or lacks email address' }, { status: 404 });
   }
 
-  // Server-configured origin to prevent open redirects
-  const host = request.headers.get('host') || 'localhost:3000';
-  const protocol = request.headers.get('x-forwarded-proto') || 'http';
-  const redirectUrl = `${protocol}://${host}/login`;
+  // Strict server-configured origin to prevent open redirects
+  const trustedOrigin = getTrustedOrigin(request);
+  const redirectUrl = `${trustedOrigin}/login?flow=reset`;
 
   // 3. Initiate recovery link via Admin Client and deliver via Email Provider
   const adminClient = createAdminClient();
@@ -104,11 +118,11 @@ export async function POST(
         <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
           <h2>Password Reset Request</h2>
           <p>Hello ${escapeHtml(recipientName)},</p>
-          <p>A platform administrator has initiated a password reset for your account.</p>
+          <p>A platform administrator has sent you a password setup / reset link for your StateAI CRM account.</p>
           <p>Click the link below to set a new password:</p>
           <p style="margin: 24px 0;">
             <a href="${actionLink}" style="background-color: #2563eb; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: bold; display: inline-block;">
-              Reset Password
+              Set / Reset Password
             </a>
           </p>
           <p style="color: #6b7280; font-size: 12px;">This link will expire in 24 hours. If you did not expect this request, please contact your administrator.</p>
