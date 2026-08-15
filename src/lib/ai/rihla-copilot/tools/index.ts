@@ -9,6 +9,7 @@
  * EXTERNAL ACTION TOOLS: 0
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
+import type { ProviderToolDefinition } from '@/lib/ai/providers/openai';
 import {
   type TrustedExecutionContext,
   type ToolResult,
@@ -41,7 +42,113 @@ export const CRM_READ_TOOLS: Record<string, ToolDefinition> = {
 };
 
 /**
- * Extracts structured tool calls from model output lines starting with `TOOL_CALL:`.
+ * Returns JSON Schema tool definitions for provider-native tool calling (OpenAI & Anthropic).
+ */
+export function getCrmCopilotProviderTools(): ProviderToolDefinition[] {
+  return [
+    {
+      name: 'searchInquiries',
+      description: 'Search inquiries within the current agency by destination, stage, priority, traveler, or text query. Maximum 10 results returned.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Text search across destination or inquiry metadata' },
+          destination: { type: 'string', description: 'Filter by travel destination, e.g. "Dubai", "Switzerland"' },
+          stage: { type: 'string', description: 'Filter by pipeline stage, e.g. "new", "quoted"' },
+          priority: { type: 'string', description: 'Filter by priority, e.g. "low", "medium", "high", "urgent"' },
+          assignedAgentId: { type: 'string', description: 'Filter by assigned agent ID' },
+          travelerId: { type: 'string', description: 'Filter by canonical traveler ID' },
+          limit: { type: 'integer', description: 'Max results to return (max 10)' },
+        },
+      },
+    },
+    {
+      name: 'getInquiryDetails',
+      description: 'Retrieve full canonical details for a specific inquiry by ID within the current workspace.',
+      parameters: {
+        type: 'object',
+        properties: {
+          inquiryId: { type: 'string', description: 'The canonical ID of the inquiry to retrieve' },
+        },
+        required: ['inquiryId'],
+      },
+    },
+    {
+      name: 'searchTravelers',
+      description: 'Search for travelers/clients in the agency workspace by name or search term. Maximum 5 results. Returns PII-minimized identity.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Name, email handle, or search term for the traveler' },
+          limit: { type: 'integer', description: 'Max results to return (max 5)' },
+        },
+        required: ['query'],
+      },
+    },
+    {
+      name: 'getTravelerHistory',
+      description: 'Retrieve full travel history for a specific traveler, including past inquiries, confirmed/cancelled bookings, and booking counts.',
+      parameters: {
+        type: 'object',
+        properties: {
+          travelerId: { type: 'string', description: 'The canonical traveler profile ID' },
+        },
+        required: ['travelerId'],
+      },
+    },
+    {
+      name: 'getBookingDetails',
+      description: 'Retrieve details for a specific booking by booking ID or booking reference code in the current agency.',
+      parameters: {
+        type: 'object',
+        properties: {
+          bookingId: { type: 'string', description: 'The canonical booking ID' },
+          bookingReference: { type: 'string', description: 'The alphanumeric booking reference code' },
+        },
+      },
+    },
+    {
+      name: 'listTasks',
+      description: 'List CRM tasks/follow-ups in the current agency. Filter by inquiry ID, status (pending/in_progress/completed/all), or assigned user.',
+      parameters: {
+        type: 'object',
+        properties: {
+          inquiryId: { type: 'string', description: 'Filter tasks linked to a specific inquiry/lead' },
+          status: { type: 'string', enum: ['pending', 'in_progress', 'completed', 'overdue', 'all'], description: 'Filter by task status' },
+          assignedTo: { type: 'string', description: 'Filter by assigned user ID' },
+          limit: { type: 'integer', description: 'Max results to return (max 10)' },
+        },
+      },
+    },
+    {
+      name: 'getRecentActivity',
+      description: 'Retrieve recent timeline activity events (calls, notes, stage changes, emails) for an inquiry. Maximum 15 events.',
+      parameters: {
+        type: 'object',
+        properties: {
+          inquiryId: { type: 'string', description: 'Inquiry/lead ID to fetch activity timeline for' },
+          limit: { type: 'integer', description: 'Max timeline events to return (max 15)' },
+        },
+        required: ['inquiryId'],
+      },
+    },
+    {
+      name: 'searchAgencyKnowledge',
+      description: 'Search the agency knowledge base for official policies (cancellation, refunds, baggage, visas), destination guides, supplier contacts, and FAQs. Returns structured source citations.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'The question or topic to search within agency policies, FAQs, and guides' },
+          limit: { type: 'integer', description: 'Max source passages to return (max 5)' },
+        },
+        required: ['query'],
+      },
+    },
+  ];
+}
+
+/**
+ * Extracts structured tool calls from text if model output fallback is needed.
  */
 export function extractToolCalls(text: string): Array<{ tool: string; params: Record<string, unknown> }> {
   const calls: Array<{ tool: string; params: Record<string, unknown> }> = [];
@@ -74,25 +181,12 @@ export function buildToolDescriptionsPrompt(): string {
   return `AVAILABLE CRM READ TOOLS:
 ${descriptions.join('\n')}
 
-TOOL CALLING SYNTAX:
-If you need information not present in the CURRENT CRM CONTEXT to accurately answer the user's question, output a tool call on its own line using this exact format:
-TOOL_CALL: {"tool": "toolName", "params": { ... }}
-
-EXAMPLES:
-- To check traveler booking history:
-  TOOL_CALL: {"tool": "getTravelerHistory", "params": {"travelerId": "uuid-here"}}
-- To search agency cancellation policy or FAQs:
-  TOOL_CALL: {"tool": "searchAgencyKnowledge", "params": {"query": "cancellation policy"}}
-- To find inquiries for a destination:
-  TOOL_CALL: {"tool": "searchInquiries", "params": {"destination": "Dubai"}}
-- To list pending tasks for the current inquiry:
-  TOOL_CALL: {"tool": "listTasks", "params": {"inquiryId": "uuid-here", "status": "pending"}}
-
-If you already have enough information in the CURRENT CRM CONTEXT or after reviewing tool results, provide the final answer directly without outputting TOOL_CALL.`;
+If you need information beyond the CURRENT CRM CONTEXT to accurately answer the user's question, call one of the available structured tools. If you already have sufficient information, provide the final answer directly.`;
 }
 
 /**
  * Dispatches a tool execution with server-authoritative context and schema validation.
+ * Sanitizes all error messages so no internal SQL or database details leak to the model.
  */
 export async function executeToolCall(
   context: TrustedExecutionContext,
@@ -104,7 +198,7 @@ export async function executeToolCall(
   if (!tool) {
     return {
       success: false,
-      error: `Unknown tool: ${toolName}. Available tools: ${Object.keys(CRM_READ_TOOLS).join(', ')}`,
+      error: `Unknown tool requested: ${toolName}`,
     };
   }
 
@@ -126,7 +220,7 @@ export async function executeToolCall(
     console.error(`[Copilot Tool Dispatch Error] ${toolName}:`, msg);
     return {
       success: false,
-      error: `Tool execution failed for ${toolName}`,
+      error: `Tool execution failed for ${toolName}.`,
     };
   }
 }

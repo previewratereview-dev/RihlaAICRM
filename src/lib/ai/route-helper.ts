@@ -167,6 +167,7 @@ export function injectSystemPrompt(systemPrompt: string, userPrompt: string): st
 
 export interface AIRequestResult {
   content: string;
+  toolCalls?: import('@/lib/ai/providers/openai').NormalizedToolCall[];
   usage: AIResponse | null;
   blocked: boolean;
   /** Why the request was blocked, when `blocked` is true. */
@@ -184,6 +185,7 @@ export async function executeAIRequest({
   model,
   maxTokens = 150,
   userId,
+  tools,
 }: {
   supabase: SupabaseClient;
   tenantId: string;
@@ -192,6 +194,7 @@ export async function executeAIRequest({
   model?: string;
   maxTokens?: number;
   userId?: string | null;
+  tools?: import('@/lib/ai/providers/openai').ProviderToolDefinition[];
 }): Promise<AIRequestResult> {
   const ctx = await resolveTenantAIContext(supabase, tenantId);
   const { customBaseUrl, customApiKey, useAnthropicFormat } = ctx;
@@ -326,6 +329,7 @@ export async function executeAIRequest({
       tenantAISettings: aiSettings,
       currentSpend: { daily: 0, monthly: ctx.currentMonthlySpend },
       timeoutMs: 120000,
+      tools,
     });
 
     // 4. Record usage in the durable shared store: one call + its cost
@@ -360,7 +364,7 @@ export async function executeAIRequest({
     console.log(`Generated Response:\n${result.text}`);
     console.log(`=============================================================\n`);
 
-    return { content: result.text, usage: result, blocked: false };
+    return { content: result.text, toolCalls: result.toolCalls, usage: result, blocked: false };
   } catch (aiError) {
     const message = aiError instanceof Error ? aiError.message : 'AI request failed';
     const blocked = message.toLowerCase().includes('budget');

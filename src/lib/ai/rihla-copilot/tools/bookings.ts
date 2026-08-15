@@ -3,6 +3,7 @@
  * 
  * Bounded booking lookup strictly scoped by server tenant context.
  * Strictly preserves null vs 0 financial truth and avoids calling booking totals platform revenue.
+ * Sanitizes all error messages to prevent database/SQL leakage.
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
@@ -25,7 +26,7 @@ export const getBookingDetailsTool: ToolDefinition<typeof GetBookingDetailsSchem
     try {
       const { bookingId, bookingReference } = params;
       if (!bookingId && !bookingReference) {
-        return { success: false, error: 'Must provide either bookingId or bookingReference' };
+        return { success: false, error: 'Must provide either bookingId or bookingReference.' };
       }
 
       let query = supabase
@@ -57,12 +58,12 @@ export const getBookingDetailsTool: ToolDefinition<typeof GetBookingDetailsSchem
       const { data: booking, error } = await query.maybeSingle();
 
       if (error) {
-        console.error('[Copilot Tool Error] getBookingDetails failed:', error.message);
-        return { success: false, error: 'Failed to retrieve booking details' };
+        console.error('[Copilot Tool Internal Error] getBookingDetails:', error.message);
+        return { success: false, error: 'Unable to retrieve booking details.' };
       }
 
       if (!booking) {
-        return { success: false, error: 'Booking not found in current workspace' };
+        return { success: false, error: 'Booking not found in current workspace.' };
       }
 
       const dto: BookingSummaryDTO = {
@@ -83,9 +84,9 @@ export const getBookingDetailsTool: ToolDefinition<typeof GetBookingDetailsSchem
 
       return { success: true, data: dto };
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Unknown error';
-      console.error('[Copilot Tool Exception] getBookingDetails:', msg);
-      return { success: false, error: 'Error fetching booking details' };
+      const msg = err instanceof Error ? err.message : 'Internal error';
+      console.error('[Copilot Tool Internal Exception] getBookingDetails:', msg);
+      return { success: false, error: 'Unable to retrieve booking details.' };
     }
   },
 };

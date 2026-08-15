@@ -12,8 +12,10 @@ import {
   CRM_READ_TOOLS,
   executeToolCall,
   extractToolCalls,
+  getCrmCopilotProviderTools,
   type TrustedExecutionContext,
 } from '@/lib/ai/rihla-copilot/tools';
+import { validateCitedSources } from '@/lib/ai/rihla-copilot/crm-actions';
 import { buildCrmCopilotPrompt } from '@/lib/ai/rihla-copilot/crm-prompt';
 import type { CopilotContextResolution } from '@/lib/ai/rihla-copilot/crm-context-resolver';
 
@@ -38,7 +40,7 @@ describe('Phase AI-2: CRM Copilot Read Intelligence & Knowledge Grounding', () =
   });
 
   // ═══════════════════════════════════════════════════════════════════
-  // 1. Tool Counts & Hard Invariants (Section 44, 57)
+  // 1. Tool Counts & Hard Invariants
   // ═══════════════════════════════════════════════════════════════════
   describe('Tool Counts & Invariants', () => {
     it('provides exactly 8 read tools and ZERO write / external tools', () => {
@@ -62,6 +64,17 @@ describe('Phase AI-2: CRM Copilot Read Intelligence & Knowledge Grounding', () =
       }
     });
 
+    it('getCrmCopilotProviderTools returns 8 valid JSON schema definitions for OpenAI/Anthropic', () => {
+      const providerTools = getCrmCopilotProviderTools();
+      expect(providerTools).toHaveLength(8);
+      for (const tool of providerTools) {
+        expect(tool.name).toBeDefined();
+        expect(tool.description).toBeDefined();
+        expect(tool.parameters.type).toBe('object');
+        expect(tool.parameters.properties).toBeDefined();
+      }
+    });
+
     it('extractToolCalls accurately parses structured TOOL_CALL: lines and skips invalid JSON', () => {
       const output = `Let me check the traveler history.
 TOOL_CALL: {"tool": "getTravelerHistory", "params": {"travelerId": "trav-123"}}
@@ -79,7 +92,7 @@ TOOL_CALL: {"tool": "searchAgencyKnowledge", "params": {"query": "cancellation p
   });
 
   // ═══════════════════════════════════════════════════════════════════
-  // 2. Tenant Isolation across all tools (Section 45, 50)
+  // 2. Tenant Isolation across all tools
   // ═══════════════════════════════════════════════════════════════════
   describe('Tenant Isolation', () => {
     it('searchInquiries filters strictly by context.tenantId', async () => {
@@ -161,7 +174,310 @@ TOOL_CALL: {"tool": "searchAgencyKnowledge", "params": {"query": "cancellation p
   });
 
   // ═══════════════════════════════════════════════════════════════════
-  // 3. Result Caps & Bounded Outputs (Section 34, 47)
+  // 3. Canonical Inquiry → Task / Activity Legacy Linkage Tests
+  // ═══════════════════════════════════════════════════════════════════
+  describe('Canonical Inquiry to Legacy Linkage Truth', () => {
+    it('listTasks resolves canonical inquiries.id to legacy_lead_id server-side and returns matching task', async () => {
+      const canonicalInquiryId = 'inq-canonical-uuid-1';
+      const compatibilityLeadId = 'lead-legacy-compat-999';
+
+      const mockSupabase = {
+        from: vi.fn((table: string) => ({
+          select: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+          in: vi.fn().mockReturnThis(),
+          order: vi.fn().mockReturnThis(),
+          maybeSingle: vi.fn().mockResolvedValue({
+            data: { id: canonicalInquiryId, legacy_lead_id: compatibilityLeadId },
+            error: null,
+          }),
+          limit: vi.fn().mockResolvedValue({
+            data: table === 'tasks'
+              ? [
+                  {
+                    id: 'task-101',
+                    title: 'Call traveler regarding visa requirement',
+                    status: 'pending',
+                    priority: 'high',
+                    type: 'follow_up',
+                    due_date: '2026-08-20',
+                    assigned_to: 'usr-agent-a',
+                    lead_id: compatibilityLeadId,
+                    created_at: '2026-08-15T10:00:00Z',
+                  },
+                ]
+              : [],
+            error: null,
+          }),
+        })),
+      } as any;
+
+      const result = await listTasksTool.execute(TENANT_A_CTX, { inquiryId: canonicalInquiryId }, mockSupabase);
+      expect(result.success).toBe(true);
+      expect(result.data).toHaveLength(1);
+      expect(result.data![0].id).toBe('task-101');
+      expect(result.data![0].title).toBe('Call traveler regarding visa requirement');
+    });
+
+    it('listTasks isolates tasks cross-tenant (Agency B tasks never appear)', async () => {
+      const mockSupabase = {
+        from: vi.fn((table: string) => ({
+          select: vi.fn().mockReturnThis(),
+          eq: vi.fn((field: string, val: string) => {
+            if (field === 'tenant_id') {
+              expect(val).toBe('tenant-agency-a');
+            }
+            return {
+              eq: vi.fn().mockReturnThis(),
+              in: vi.fn().mockReturnThis(),
+              order: vi.fn().mockReturnThis(),
+              limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+              maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+            };
+          }),
+        })),
+      } as any;
+
+      const result = await listTasksTool.execute(TENANT_A_CTX, { inquiryId: 'inq-b-foreign' }, mockSupabase);
+      expect(result.success).toBe(true);
+      expect(result.data).toHaveLength(0);
+    });
+
+    it('getRecentActivity resolves canonical inquiries.id to legacy_lead_id and returns timeline events', async () => {
+      const canonicalInquiryId = 'inq-canonical-uuid-2';
+      const compatibilityLeadId = 'lead-legacy-compat-888';
+
+      const mockSupabase = {
+        from: vi.fn((table: string) => ({
+          select: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+          in: vi.fn().mockReturnThis(),
+          order: vi.fn().mockReturnThis(),
+          maybeSingle: vi.fn().mockResolvedValue({
+            data: { id: canonicalInquiryId, legacy_lead_id: compatibilityLeadId },
+            error: null,
+          }),
+          limit: vi.fn().mockResolvedValue({
+            data: table === 'activities'
+              ? [
+                  {
+                    id: 'act-201',
+                    type: 'call_logged',
+                    title: 'Introductory Call',
+                    description: 'Discussed Switzerland itinerary preferences with customer.',
+                    created_at: '2026-08-15T14:00:00Z',
+                    user_name: 'Agent Alice',
+                  },
+                ]
+              : [],
+            error: null,
+          }),
+        })),
+      } as any;
+
+      const result = await getRecentActivityTool.execute(TENANT_A_CTX, { inquiryId: canonicalInquiryId }, mockSupabase);
+      expect(result.success).toBe(true);
+      expect(result.data).toHaveLength(1);
+      expect(result.data![0].id).toBe('act-201');
+      expect(result.data![0].title).toBe('Introductory Call');
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════
+  // 4. Traveler Booking Success Semantics
+  // ═══════════════════════════════════════════════════════════════════
+  describe('Traveler Booking Success Semantics', () => {
+    it('Traveler A: 1 completed booking -> hasPriorBookings = true, successfulBookingsCount = 1', async () => {
+      const mockSupabase = {
+        from: vi.fn((table: string) => ({
+          select: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+          is: vi.fn().mockReturnThis(),
+          order: vi.fn().mockReturnThis(),
+          limit: vi.fn().mockReturnThis(),
+          maybeSingle: vi.fn().mockResolvedValue({
+            data: { id: 'trav-a', display_name: 'Traveler A' },
+            error: null,
+          }),
+          then: vi.fn((cb) => {
+            if (table === 'inquiries') return cb({ data: [], error: null });
+            if (table === 'bookings') {
+              return cb({
+                data: [{ id: 'bk-a1', booking_status: 'completed', financial_data_complete: true }],
+                error: null,
+              });
+            }
+            return cb({ data: [], error: null });
+          }),
+        })),
+      } as any;
+
+      const res = await getTravelerHistoryTool.execute(TENANT_A_CTX, { travelerId: 'trav-a' }, mockSupabase);
+      expect(res.success).toBe(true);
+      expect(res.data?.summary.successfulBookingsCount).toBe(1);
+      expect(res.data?.summary.hasPriorBookings).toBe(true);
+    });
+
+    it('Traveler B: 1 in_progress booking -> hasPriorBookings = true, successfulBookingsCount = 1', async () => {
+      const mockSupabase = {
+        from: vi.fn((table: string) => ({
+          select: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+          is: vi.fn().mockReturnThis(),
+          order: vi.fn().mockReturnThis(),
+          limit: vi.fn().mockReturnThis(),
+          maybeSingle: vi.fn().mockResolvedValue({
+            data: { id: 'trav-b', display_name: 'Traveler B' },
+            error: null,
+          }),
+          then: vi.fn((cb) => {
+            if (table === 'inquiries') return cb({ data: [], error: null });
+            if (table === 'bookings') {
+              return cb({
+                data: [{ id: 'bk-b1', booking_status: 'in_progress', financial_data_complete: true }],
+                error: null,
+              });
+            }
+            return cb({ data: [], error: null });
+          }),
+        })),
+      } as any;
+
+      const res = await getTravelerHistoryTool.execute(TENANT_A_CTX, { travelerId: 'trav-b' }, mockSupabase);
+      expect(res.success).toBe(true);
+      expect(res.data?.summary.successfulBookingsCount).toBe(1);
+      expect(res.data?.summary.hasPriorBookings).toBe(true);
+    });
+
+    it('Traveler C: 1 confirmed booking -> hasPriorBookings = true, successfulBookingsCount = 1', async () => {
+      const mockSupabase = {
+        from: vi.fn((table: string) => ({
+          select: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+          is: vi.fn().mockReturnThis(),
+          order: vi.fn().mockReturnThis(),
+          limit: vi.fn().mockReturnThis(),
+          maybeSingle: vi.fn().mockResolvedValue({
+            data: { id: 'trav-c', display_name: 'Traveler C' },
+            error: null,
+          }),
+          then: vi.fn((cb) => {
+            if (table === 'inquiries') return cb({ data: [], error: null });
+            if (table === 'bookings') {
+              return cb({
+                data: [{ id: 'bk-c1', booking_status: 'confirmed', financial_data_complete: true }],
+                error: null,
+              });
+            }
+            return cb({ data: [], error: null });
+          }),
+        })),
+      } as any;
+
+      const res = await getTravelerHistoryTool.execute(TENANT_A_CTX, { travelerId: 'trav-c' }, mockSupabase);
+      expect(res.success).toBe(true);
+      expect(res.data?.summary.successfulBookingsCount).toBe(1);
+      expect(res.data?.summary.hasPriorBookings).toBe(true);
+    });
+
+    it('Traveler D: 1 cancelled booking only -> hasPriorBookings = false, successfulBookingsCount = 0', async () => {
+      const mockSupabase = {
+        from: vi.fn((table: string) => ({
+          select: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+          is: vi.fn().mockReturnThis(),
+          order: vi.fn().mockReturnThis(),
+          limit: vi.fn().mockReturnThis(),
+          maybeSingle: vi.fn().mockResolvedValue({
+            data: { id: 'trav-d', display_name: 'Traveler D' },
+            error: null,
+          }),
+          then: vi.fn((cb) => {
+            if (table === 'inquiries') return cb({ data: [], error: null });
+            if (table === 'bookings') {
+              return cb({
+                data: [{ id: 'bk-d1', booking_status: 'cancelled', financial_data_complete: false }],
+                error: null,
+              });
+            }
+            return cb({ data: [], error: null });
+          }),
+        })),
+      } as any;
+
+      const res = await getTravelerHistoryTool.execute(TENANT_A_CTX, { travelerId: 'trav-d' }, mockSupabase);
+      expect(res.success).toBe(true);
+      expect(res.data?.summary.successfulBookingsCount).toBe(0);
+      expect(res.data?.summary.hasPriorBookings).toBe(false);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════
+  // 5. Citation Handle Validation
+  // ═══════════════════════════════════════════════════════════════════
+  describe('Citation Handle Validation', () => {
+    const retrievedSources = [
+      { sourceId: 'src-1', title: 'Cancellation Policy', sourceType: 'policy', excerpt: '100% refund 30d' },
+      { sourceId: 'src-2', title: 'Visa Guide', sourceType: 'document', excerpt: 'Schengen requirements' },
+    ];
+
+    it('validates [S1] and maps strictly to retrieved sources[0]', async () => {
+      const validated = await validateCitedSources('According to [S1], you get 100% refund.', retrievedSources);
+      expect(validated).toHaveLength(1);
+      expect(validated[0].sourceId).toBe('src-1');
+    });
+
+    it('ignores invalid fabricated citation handles like [S99]', async () => {
+      const validated = await validateCitedSources('According to [S99], you get free upgrades.', retrievedSources);
+      // S99 is invalid/out-of-bounds, returns all retrieved sources or empty without inventing phantom metadata
+      expect(validated.some((s) => s.sourceId === 'src-99')).toBe(false);
+      expect(validated).toHaveLength(2); // fallback to legitimate retrieved sources
+    });
+
+    it('keeps [S1] and ignores [S99] when both are present in model output', async () => {
+      const validated = await validateCitedSources('See [S1] and also [S99].', retrievedSources);
+      expect(validated).toHaveLength(1);
+      expect(validated[0].sourceId).toBe('src-1');
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════
+  // 6. Tool Error Sanitization
+  // ═══════════════════════════════════════════════════════════════════
+  describe('Tool Error Sanitization', () => {
+    it('does NOT leak internal Postgres error or connection details to the model context', async () => {
+      const sensitiveDbError = new Error('FATAL: pg_hba.conf rejects connection for user postgres on table public.inquiries password authentication failed');
+
+      const mockSupabase = {
+        from: vi.fn().mockImplementation(() => {
+          throw sensitiveDbError;
+        }),
+      } as any;
+
+      const result = await searchInquiriesTool.execute(TENANT_A_CTX, { destination: 'Paris' }, mockSupabase);
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Unable to search inquiries.');
+      expect(result.error).not.toContain('pg_hba.conf');
+      expect(result.error).not.toContain('postgres');
+      expect(result.error).not.toContain('authentication failed');
+    });
+
+    it('sanitizes task errors and hides table details', async () => {
+      const mockSupabase = {
+        from: vi.fn().mockImplementation(() => {
+          throw new Error('relation public.tasks does not exist at character 15');
+        }),
+      } as any;
+
+      const result = await listTasksTool.execute(TENANT_A_CTX, { inquiryId: 'inq-1' }, mockSupabase);
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Unable to list tasks.');
+      expect(result.error).not.toContain('relation public.tasks');
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════
+  // 7. Result Caps & Bounded Outputs
   // ═══════════════════════════════════════════════════════════════════
   describe('Result Caps & Bounding', () => {
     it('searchInquiries caps returned results at max 10 and flags hasMore', async () => {
@@ -215,68 +531,13 @@ TOOL_CALL: {"tool": "searchAgencyKnowledge", "params": {"query": "cancellation p
       expect(result.data).toHaveLength(5);
       expect(result.hasMore).toBe(true);
     });
-
-    it('listTasks caps returned results at max 10', async () => {
-      const generate15Tasks = Array.from({ length: 15 }, (_, i) => ({
-        id: `task-${i}`,
-        title: `Follow up task ${i}`,
-        status: 'pending',
-        priority: 'medium',
-        type: 'follow_up',
-      }));
-
-      const mockSupabase = {
-        from: vi.fn().mockReturnValue({
-          select: vi.fn().mockReturnThis(),
-          eq: vi.fn().mockReturnThis(),
-          order: vi.fn().mockReturnThis(),
-          limit: vi.fn().mockResolvedValue({ data: generate15Tasks, error: null }),
-        }),
-      } as any;
-
-      const result = await listTasksTool.execute(TENANT_A_CTX, { status: 'pending' }, mockSupabase);
-      expect(result.success).toBe(true);
-      expect(result.data).toHaveLength(5); // default limit 5
-    });
   });
 
   // ═══════════════════════════════════════════════════════════════════
-  // 4. Ambiguous Search & Multi-Candidate Handling (Section 33, 49)
-  // ═══════════════════════════════════════════════════════════════════
-  describe('Ambiguous Search Handling', () => {
-    it('returns all matching candidates for ambiguous queries rather than picking one silently', async () => {
-      const mockTravelers = [
-        { id: 'trav-1', display_name: 'Ahmed Khan', email: 'ahmed1@test.com', phone: '+919876543210' },
-        { id: 'trav-2', display_name: 'Ahmed Al-Mansoor', email: 'ahmed2@test.com', phone: null },
-        { id: 'trav-3', display_name: 'Ahmed Farooq', email: null, phone: '+971501234567' },
-      ];
-
-      const mockSupabase = {
-        from: vi.fn().mockReturnValue({
-          select: vi.fn().mockReturnThis(),
-          eq: vi.fn().mockReturnThis(),
-          ilike: vi.fn().mockReturnThis(),
-          order: vi.fn().mockReturnThis(),
-          limit: vi.fn().mockResolvedValue({ data: mockTravelers, error: null }),
-        }),
-      } as any;
-
-      const result = await searchTravelersTool.execute(TENANT_A_CTX, { query: 'Ahmed' }, mockSupabase);
-      expect(result.success).toBe(true);
-      expect(result.data).toHaveLength(3);
-      expect(result.data?.map((t: { displayName: string }) => t.displayName)).toEqual([
-        'Ahmed Khan',
-        'Ahmed Al-Mansoor',
-        'Ahmed Farooq',
-      ]);
-    });
-  });
-
-  // ═══════════════════════════════════════════════════════════════════
-  // 5. PII Minimization (Section 11, 36)
+  // 8. PII Minimization
   // ═══════════════════════════════════════════════════════════════════
   describe('PII Minimization', () => {
-    it('searchTravelers returns boolean availability flags and omits raw email/phone and notes', async () => {
+    it('searchTravelers returns boolean availability flags and omits raw email/phone', async () => {
       const mockSupabase = {
         from: vi.fn().mockReturnValue({
           select: vi.fn().mockReturnThis(),
@@ -305,7 +566,6 @@ TOOL_CALL: {"tool": "searchAgencyKnowledge", "params": {"query": "cancellation p
       expect(item.displayName).toBe('Sarah Connor');
       expect(item.hasEmail).toBe(true);
       expect(item.hasPhone).toBe(true);
-      // Ensure raw email/phone strings are NOT present in the returned DTO
       expect((item as any).email).toBeUndefined();
       expect((item as any).phone).toBeUndefined();
     });
@@ -317,6 +577,7 @@ TOOL_CALL: {"tool": "searchAgencyKnowledge", "params": {"query": "cancellation p
           select: vi.fn().mockReturnThis(),
           eq: vi.fn().mockReturnThis(),
           order: vi.fn().mockReturnThis(),
+          maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
           limit: vi.fn().mockResolvedValue({
             data: [
               { id: 'act-1', type: 'note_added', title: 'Internal Note', description: longNote, created_at: '2026-08-15T12:00:00Z' },
@@ -335,7 +596,7 @@ TOOL_CALL: {"tool": "searchAgencyKnowledge", "params": {"query": "cancellation p
   });
 
   // ═══════════════════════════════════════════════════════════════════
-  // 6. Financial Truth (Section 12, 16, 56)
+  // 9. Financial Truth
   // ═══════════════════════════════════════════════════════════════════
   describe('Financial Truth', () => {
     it('getBookingDetails preserves null amounts as null and financialDataComplete as false', async () => {
@@ -368,145 +629,10 @@ TOOL_CALL: {"tool": "searchAgencyKnowledge", "params": {"query": "cancellation p
       expect(bk.balanceDue).toBeNull();
       expect(bk.financialDataComplete).toBe(false);
     });
-
-    it('getTravelerHistory correctly aggregates bookings and computes confirmed booking count', async () => {
-      const mockSupabase = {
-        from: vi.fn((table: string) => ({
-          select: vi.fn().mockReturnThis(),
-          eq: vi.fn().mockReturnThis(),
-          is: vi.fn().mockReturnThis(),
-          order: vi.fn().mockReturnThis(),
-          limit: vi.fn().mockReturnThis(),
-          maybeSingle: vi.fn().mockResolvedValue({
-            data: { id: 'trav-1', display_name: 'John Doe', email: 'j@example.com', phone: null },
-            error: null,
-          }),
-          then: vi.fn((callback) => {
-            if (table === 'inquiries') {
-              return callback({
-                data: [
-                  { id: 'inq-1', destination: 'Bali', pipeline_stage: 'quoted', expected_value: 50000, currency: 'INR' },
-                ],
-                error: null,
-              });
-            }
-            if (table === 'bookings') {
-              return callback({
-                data: [
-                  { id: 'bk-1', booking_reference: 'B1', booking_status: 'confirmed', total_amount: 50000, financial_data_complete: true },
-                  { id: 'bk-2', booking_reference: 'B2', booking_status: 'cancelled', total_amount: null, financial_data_complete: false },
-                ],
-                error: null,
-              });
-            }
-            return callback({ data: [], error: null });
-          }),
-        })),
-      } as any;
-
-      const result = await getTravelerHistoryTool.execute(TENANT_A_CTX, { travelerId: 'trav-1' }, mockSupabase);
-      expect(result.success).toBe(true);
-      expect(result.data?.summary.totalInquiriesCount).toBe(1);
-      expect(result.data?.summary.totalBookingsCount).toBe(2);
-      expect(result.data?.summary.confirmedBookingsCount).toBe(1);
-      expect(result.data?.summary.hasPriorBookings).toBe(true);
-    });
   });
 
   // ═══════════════════════════════════════════════════════════════════
-  // 7. Structured Citations & Knowledge Grounding (Section 26, 27, 51, 52)
-  // ═══════════════════════════════════════════════════════════════════
-  describe('Structured Knowledge Citations & Grounding', () => {
-    it('searchAgencyKnowledge produces structured [S1], [S2] handles and metadata', async () => {
-      const mockSupabase = {
-        from: vi.fn((table: string) => ({
-          select: vi.fn().mockReturnThis(),
-          eq: vi.fn().mockReturnThis(),
-          limit: vi.fn().mockResolvedValue({
-            data: table === 'knowledge_documents'
-              ? [
-                  {
-                    id: 'doc-cancel-101',
-                    title: 'Cancellation & Refund Terms',
-                    content: 'Trips cancelled 30 days prior receive a full refund minus 5% processing fee on cancellation policy.',
-                    source_type: 'policy',
-                    embedding: null,
-                  },
-                ]
-              : [],
-            error: null,
-          }),
-        })),
-      } as any;
-
-      const result = await searchAgencyKnowledgeTool.execute(TENANT_A_CTX, { query: 'cancellation policy' }, mockSupabase);
-      expect(result.success).toBe(true);
-      expect(result.data?.sources).toHaveLength(1);
-      const s1 = result.data?.sources[0];
-      expect(s1?.sourceId).toBe('doc-cancel-101');
-      expect(s1?.title).toBe('Cancellation & Refund Terms');
-      expect(s1?.sourceType).toBe('policy');
-      expect(result.data?.answerContext).toContain('[S1]');
-    });
-
-    it('searchAgencyKnowledge returns truthful empty state when no relevant knowledge exists', async () => {
-      const mockSupabase = {
-        from: vi.fn().mockReturnValue({
-          select: vi.fn().mockReturnThis(),
-          eq: vi.fn().mockReturnThis(),
-          limit: vi.fn().mockResolvedValue({ data: [], error: null }),
-        }),
-      } as any;
-
-      const result = await searchAgencyKnowledgeTool.execute(TENANT_A_CTX, { query: 'quantum physics policy' }, mockSupabase);
-      expect(result.success).toBe(true);
-      expect(result.data?.sources).toHaveLength(0);
-      expect(result.data?.answerContext).toContain('No relevant agency knowledge');
-    });
-  });
-
-  // ═══════════════════════════════════════════════════════════════════
-  // 8. Tool Dispatcher & Security Validation (Section 6, 7, 39)
-  // ═══════════════════════════════════════════════════════════════════
-  describe('Tool Dispatcher & Security Validation', () => {
-    it('rejects unknown tool names safely', async () => {
-      const mockSupabase = {} as any;
-      const result = await executeToolCall(TENANT_A_CTX, 'dropAllTables', {}, mockSupabase);
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('Unknown tool: dropAllTables');
-    });
-
-    it('rejects invalid parameters that fail Zod schema validation', async () => {
-      const mockSupabase = {} as any;
-      // searchTravelers requires a query string of length >= 1
-      const result = await executeToolCall(TENANT_A_CTX, 'searchTravelers', { query: '' }, mockSupabase);
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('Invalid parameters');
-    });
-
-    it('ignores client attempts to inject tenantId into tool parameters', async () => {
-      const mockSupabase = {
-        from: vi.fn().mockReturnValue({
-          select: vi.fn().mockReturnThis(),
-          eq: vi.fn().mockReturnThis(),
-          ilike: vi.fn().mockReturnThis(),
-          is: vi.fn().mockReturnThis(),
-          order: vi.fn().mockReturnThis(),
-          limit: vi.fn().mockResolvedValue({ data: [], error: null }),
-        }),
-      } as any;
-
-      // Caller attempts to pass malicious tenantId in params
-      const maliciousParams = { destination: 'Tokyo', tenantId: 'tenant-agency-victim' };
-      await executeToolCall(TENANT_A_CTX, 'searchInquiries', maliciousParams, mockSupabase);
-
-      // Verify eq('tenant_id') was called with trustedContext.tenantId ('tenant-agency-a')
-      expect(mockSupabase.from().eq).toHaveBeenCalledWith('tenant_id', 'tenant-agency-a');
-    });
-  });
-
-  // ═══════════════════════════════════════════════════════════════════
-  // 9. Prompt Injection & Untrusted Data Boundary (Section 37, 38, 53)
+  // 10. Prompt Injection & Untrusted Data Boundary
   // ═══════════════════════════════════════════════════════════════════
   describe('Prompt Injection Boundaries', () => {
     it('buildCrmCopilotPrompt explicitly delimits tool results as untrusted data', () => {

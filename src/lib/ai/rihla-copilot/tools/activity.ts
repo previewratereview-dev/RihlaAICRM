@@ -2,7 +2,9 @@
  * CRM Copilot Activity & Timeline Read Tools (Phase AI-2)
  * 
  * Bounded activity timeline lookup strictly scoped by server tenant context.
+ * Resolves canonical inquiry ID to compatibility legacy lead ID server-side.
  * PII minimized: truncates long text bodies and returns concise timeline entries.
+ * Sanitizes all error messages to prevent database/SQL leakage.
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
@@ -35,20 +37,38 @@ export const getRecentActivityTool: ToolDefinition<typeof GetRecentActivitySchem
       const inquiryId = params.inquiryId?.trim();
 
       if (!inquiryId) {
-        return { success: false, error: 'Inquiry ID is required to fetch timeline activity' };
+        return { success: false, error: 'Inquiry ID is required to fetch timeline activity.' };
       }
 
-      const { data: activities, error } = await supabase
+      // Resolve canonical inquiry to determine if there is a linked legacy_lead_id
+      const { data: inq } = await supabase
+        .from('inquiries')
+        .select('id, legacy_lead_id')
+        .eq('id', inquiryId)
+        .eq('tenant_id', context.tenantId)
+        .maybeSingle();
+
+      const candidateLeadIds = inq
+        ? (Array.from(new Set([inq.id, inq.legacy_lead_id].filter(Boolean))) as string[])
+        : [inquiryId];
+
+      let query = supabase
         .from('activities')
         .select('id, type, title, description, created_at, user_name')
-        .eq('tenant_id', context.tenantId)
-        .eq('lead_id', inquiryId)
-        .order('created_at', { ascending: false })
-        .limit(limit + 1);
+        .eq('tenant_id', context.tenantId);
 
+      if (candidateLeadIds.length === 1) {
+        query = query.eq('lead_id', candidateLeadIds[0]);
+      } else {
+        query = query.in('lead_id', candidateLeadIds);
+      }
+
+      query = query.order('created_at', { ascending: false }).limit(limit + 1);
+
+      const { data: activities, error } = await query;
       if (error) {
-        console.error('[Copilot Tool Error] getRecentActivity failed:', error.message);
-        return { success: false, error: 'Failed to retrieve timeline activity' };
+        console.error('[Copilot Tool Internal Error] getRecentActivity:', error.message);
+        return { success: false, error: 'Unable to retrieve timeline activity.' };
       }
 
       const rows = activities || [];
@@ -56,7 +76,6 @@ export const getRecentActivityTool: ToolDefinition<typeof GetRecentActivitySchem
       const results = rows.slice(0, limit);
 
       const items: TimelineEventItem[] = results.map((a) => {
-        // Truncate long descriptions to minimize PII and payload size
         const rawDesc = a.description || '';
         const summary = rawDesc.length > 150 ? `${rawDesc.slice(0, 147)}...` : rawDesc;
 
@@ -77,9 +96,9 @@ export const getRecentActivityTool: ToolDefinition<typeof GetRecentActivitySchem
         hasMore,
       };
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Unknown error';
-      console.error('[Copilot Tool Exception] getRecentActivity:', msg);
-      return { success: false, error: 'Error fetching recent activity' };
+      const msg = err instanceof Error ? err.message : 'Internal error';
+      console.error('[Copilot Tool Internal Exception] getRecentActivity:', msg);
+      return { success: false, error: 'Unable to retrieve timeline activity.' };
     }
   },
 };

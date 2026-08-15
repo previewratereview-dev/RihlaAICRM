@@ -4,6 +4,7 @@
  * Bounded, tenant-scoped knowledge search across agency documents and FAQs.
  * Returns structured source citations [S1], [S2] with inspectable metadata.
  * Strictly treats knowledge content as UNTRUSTED DATA (prompt injection boundary).
+ * Sanitizes all error messages to prevent database/SQL leakage.
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
@@ -40,7 +41,7 @@ export const searchAgencyKnowledgeTool: ToolDefinition<typeof SearchAgencyKnowle
         .limit(30);
 
       if (docErr) {
-        console.error('[Copilot Tool Error] searchAgencyKnowledge docs query failed:', docErr.message);
+        console.error('[Copilot Tool Internal Error] searchAgencyKnowledge docs query:', docErr.message);
       }
 
       // 3. Fetch tenant FAQs (max 30)
@@ -51,7 +52,7 @@ export const searchAgencyKnowledgeTool: ToolDefinition<typeof SearchAgencyKnowle
         .limit(30);
 
       if (faqErr) {
-        console.error('[Copilot Tool Error] searchAgencyKnowledge faqs query failed:', faqErr.message);
+        console.error('[Copilot Tool Internal Error] searchAgencyKnowledge faqs query:', faqErr.message);
       }
 
       const allCandidates: Array<{
@@ -78,7 +79,7 @@ export const searchAgencyKnowledgeTool: ToolDefinition<typeof SearchAgencyKnowle
           title: f.question || 'FAQ',
           content: f.answer || '',
           sourceType: 'faq',
-          embedding: null, // will compute on the fly if needed
+          embedding: null,
         });
       }
 
@@ -95,7 +96,6 @@ export const searchAgencyKnowledgeTool: ToolDefinition<typeof SearchAgencyKnowle
           ...item,
           score: item.embedding ? cosineSimilarity(queryEmbedding, item.embedding) : 0,
         }))
-        // Relevance threshold: 0.10 to filter out unrelated noise
         .filter((item) => item.score >= 0.10)
         .sort((a, b) => b.score - a.score)
         .slice(0, limit);
@@ -126,7 +126,6 @@ export const searchAgencyKnowledgeTool: ToolDefinition<typeof SearchAgencyKnowle
 
       const contextLines = ranked.map((item, index) => {
         const handle = `[S${index + 1}]`;
-        // Delimit document content clearly as UNTRUSTED DATA
         return `${handle} Title: "${item.title}" (Type: ${item.sourceType}):\n--- BEGIN SOURCE CONTENT ---\n${item.content}\n--- END SOURCE CONTENT ---`;
       });
 
@@ -140,9 +139,9 @@ export const searchAgencyKnowledgeTool: ToolDefinition<typeof SearchAgencyKnowle
         },
       };
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Unknown error';
-      console.error('[Copilot Tool Exception] searchAgencyKnowledge:', msg);
-      return { success: false, error: 'Error searching agency knowledge base' };
+      const msg = err instanceof Error ? err.message : 'Internal error';
+      console.error('[Copilot Tool Internal Exception] searchAgencyKnowledge:', msg);
+      return { success: false, error: 'Unable to search agency knowledge.' };
     }
   },
 };

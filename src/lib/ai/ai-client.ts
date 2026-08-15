@@ -1,10 +1,13 @@
-import { callOpenAI } from '@/lib/ai/providers/openai';
+import { callOpenAI, type NormalizedToolCall, type ProviderToolDefinition } from '@/lib/ai/providers/openai';
 import { callAnthropic } from '@/lib/ai/providers/anthropic';
 import { estimateCost } from './pricing';
 import { checkAIBudget, type BudgetDecision } from './guard';
 
+export type { NormalizedToolCall, ProviderToolDefinition };
+
 export interface AIResponse {
   text: string;
+  toolCalls?: NormalizedToolCall[];
   provider: string;
   model: string;
   tokensIn: number;
@@ -20,6 +23,7 @@ export interface AICallOptions {
   currentSpend?: { daily: number; monthly: number };
   prompt: string;
   timeoutMs?: number;
+  tools?: ProviderToolDefinition[];
 }
 
 export async function callAI(options: AICallOptions): Promise<AIResponse> {
@@ -31,6 +35,7 @@ export async function callAI(options: AICallOptions): Promise<AIResponse> {
     currentSpend,
     prompt,
     timeoutMs,
+    tools,
   } = options;
 
   const resolvedModel = model || tenantAISettings?.defaultModel || 'gpt-4o-mini';
@@ -69,9 +74,9 @@ export async function callAI(options: AICallOptions): Promise<AIResponse> {
 
   let result;
   if (useAnthropicFormat) {
-    result = await callAnthropic({ apiKey, model: resolvedModel, prompt, maxTokens, timeoutMs });
+    result = await callAnthropic({ apiKey, model: resolvedModel, prompt, maxTokens, timeoutMs, tools });
   } else {
-    result = await callOpenAI({ apiKey, model: resolvedModel, prompt, maxTokens, baseUrl, timeoutMs });
+    result = await callOpenAI({ apiKey, model: resolvedModel, prompt, maxTokens, baseUrl, timeoutMs, tools });
   }
 
   const costEstimate = estimateCost(result.model, result.tokensIn, result.tokensOut);
@@ -79,6 +84,7 @@ export async function callAI(options: AICallOptions): Promise<AIResponse> {
 
   return {
     text: result.text,
+    toolCalls: result.toolCalls,
     provider: useAnthropicFormat ? 'anthropic' : result.provider,
     model: result.model,
     tokensIn: result.tokensIn,

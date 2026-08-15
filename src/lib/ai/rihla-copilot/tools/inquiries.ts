@@ -3,6 +3,7 @@
  * 
  * Bounded, canonical inquiry reads strictly scoped by server tenant context.
  * Opportunities are always labeled as estimates, not recognized revenue.
+ * Sanitizes all error messages to prevent database/SQL leakage.
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
@@ -79,8 +80,8 @@ export const searchInquiriesTool: ToolDefinition<typeof SearchInquiriesSchema, I
 
       const { data: inqs, error } = await query;
       if (error) {
-        console.error('[Copilot Tool Error] searchInquiries failed:', error.message);
-        return { success: false, error: 'Failed to search inquiries' };
+        console.error('[Copilot Tool Internal Error] searchInquiries:', error.message);
+        return { success: false, error: 'Unable to search inquiries.' };
       }
 
       const rows = inqs || [];
@@ -129,9 +130,9 @@ export const searchInquiriesTool: ToolDefinition<typeof SearchInquiriesSchema, I
         hasMore,
       };
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Unknown error';
-      console.error('[Copilot Tool Exception] searchInquiries:', msg);
-      return { success: false, error: 'Error processing inquiry search' };
+      const msg = err instanceof Error ? err.message : 'Internal error';
+      console.error('[Copilot Tool Internal Exception] searchInquiries:', msg);
+      return { success: false, error: 'Unable to search inquiries.' };
     }
   },
 };
@@ -170,12 +171,12 @@ export const getInquiryDetailsTool: ToolDefinition<typeof GetInquiryDetailsSchem
         .maybeSingle();
 
       if (error) {
-        console.error('[Copilot Tool Error] getInquiryDetails failed:', error.message);
-        return { success: false, error: 'Failed to retrieve inquiry details' };
+        console.error('[Copilot Tool Internal Error] getInquiryDetails:', error.message);
+        return { success: false, error: 'Unable to retrieve inquiry details.' };
       }
 
       if (!inquiry) {
-        return { success: false, error: `Inquiry not found in current workspace: ${inquiryId}` };
+        return { success: false, error: 'Inquiry not found in current workspace.' };
       }
 
       let linkedTraveler: InquirySummaryDTO['linkedTraveler'] = null;
@@ -215,9 +216,9 @@ export const getInquiryDetailsTool: ToolDefinition<typeof GetInquiryDetailsSchem
 
       return { success: true, data: dto };
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Unknown error';
-      console.error('[Copilot Tool Exception] getInquiryDetails:', msg);
-      return { success: false, error: 'Error fetching inquiry details' };
+      const msg = err instanceof Error ? err.message : 'Internal error';
+      console.error('[Copilot Tool Internal Exception] getInquiryDetails:', msg);
+      return { success: false, error: 'Unable to retrieve inquiry details.' };
     }
   },
 };

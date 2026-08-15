@@ -3,8 +3,9 @@
 /**
  * CRM Copilot Server Actions (Phase AI-2)
  * 
- * Server-authoritative, read-only CRM Copilot handler with bounded tool loop
- * and structured tenant knowledge citations.
+ * Server-authoritative, read-only CRM Copilot handler with provider-native
+ * structured tool calling (OpenAI & Anthropic), bounded 2-round tool loop,
+ * and validated tenant knowledge citations.
  * 
  * Invariants:
  * - Authenticates session server-side
@@ -14,6 +15,8 @@
  * - WRITE TOOLS: 0
  * - EXTERNAL ACTIONS: 0
  * - Tool loop bounded by MAX_TOOL_ROUNDS (2) and MAX_TOOL_CALLS (4)
+ * - Provider-native tool calling with fallback normalized adapter
+ * - Validated citation handles (server owns source identity)
  */
 import { cookies } from 'next/headers';
 import { createClient } from '@/lib/supabase/server';
@@ -26,6 +29,7 @@ import { buildCrmCopilotPrompt } from './crm-prompt';
 import {
   executeToolCall,
   extractToolCalls,
+  getCrmCopilotProviderTools,
   type TrustedExecutionContext,
   type KnowledgeSource,
   type KnowledgeSearchResult,
@@ -41,6 +45,44 @@ export interface CrmCopilotResponse {
 
 const MAX_TOOL_ROUNDS = 2;
 const MAX_TOOL_CALLS = 4;
+
+/**
+ * Validates citation handles in model response against actually retrieved sources.
+ * Server owns source identity: model cannot invent valid citation handles.
+ */
+export async function validateCitedSources(
+  responseText: string,
+  retrievedSources: KnowledgeSource[]
+): Promise<KnowledgeSource[]> {
+  if (retrievedSources.length === 0) return [];
+
+  // Match [S1], [S2] ... in response
+  const matches = responseText.match(/\[S(\d+)\]/g);
+  if (!matches || matches.length === 0) {
+    // If no explicit inline handles cited but sources were retrieved, return all retrieved sources
+    return retrievedSources;
+  }
+
+  const validSources: KnowledgeSource[] = [];
+  const seenIds = new Set<string>();
+
+  for (const match of matches) {
+    const numMatch = match.match(/\d+/);
+    if (numMatch) {
+      const idx = parseInt(numMatch[0], 10) - 1; // 1-indexed [S1] -> 0
+      if (idx >= 0 && idx < retrievedSources.length) {
+        const source = retrievedSources[idx];
+        if (!seenIds.has(source.sourceId)) {
+          seenIds.add(source.sourceId);
+          validSources.push(source);
+        }
+      }
+      // Out-of-bounds indices (e.g. [S99]) are intentionally ignored/unverified
+    }
+  }
+
+  return validSources.length > 0 ? validSources : retrievedSources;
+}
 
 /**
  * Server Action: Submit a user query to CRM Copilot with bounded tool execution.
@@ -89,8 +131,9 @@ export async function submitCrmCopilotMessage(
   let toolCallsCount = 0;
 
   try {
-    // ─── ROUND 1: Initial Inference (Prompt + Context + Tools) ─────
+    // ─── ROUND 1: Initial Inference with Provider-Native Tools ─────
     const initialPrompt = buildCrmCopilotPrompt(query, context);
+    const providerTools = getCrmCopilotProviderTools();
 
     const initialResult = await executeAIRequest({
       supabase,
@@ -99,6 +142,7 @@ export async function submitCrmCopilotMessage(
       prompt: initialPrompt,
       maxTokens: 600,
       userId,
+      tools: providerTools,
     });
 
     if (initialResult.blocked) {
@@ -110,10 +154,20 @@ export async function submitCrmCopilotMessage(
     }
 
     const firstOutput = initialResult.content || '';
-    const toolCalls = extractToolCalls(firstOutput);
+    
+    // Check for provider-native structured tool calls first, with fallback extraction
+    const rawToolCalls: Array<{ tool: string; params: Record<string, unknown> }> = [];
+    if (initialResult.toolCalls && initialResult.toolCalls.length > 0) {
+      for (const tc of initialResult.toolCalls) {
+        rawToolCalls.push({ tool: tc.name, params: tc.arguments });
+      }
+    } else {
+      const fallbackCalls = extractToolCalls(firstOutput);
+      rawToolCalls.push(...fallbackCalls);
+    }
 
     // If no tool calls requested, return the direct answer
-    if (toolCalls.length === 0 || MAX_TOOL_ROUNDS <= 1) {
+    if (rawToolCalls.length === 0 || MAX_TOOL_ROUNDS <= 1) {
       return {
         id: `resp-${Date.now()}`,
         content: firstOutput,
@@ -124,7 +178,7 @@ export async function submitCrmCopilotMessage(
     // ─── EXECUTE REQUESTED READ TOOLS ─────────────────────────────
     const toolResultsText: string[] = [];
 
-    for (const call of toolCalls) {
+    for (const call of rawToolCalls) {
       if (toolCallsCount >= MAX_TOOL_CALLS) {
         toolResultsText.push(`[Tool Notice] Maximum tool limit (${MAX_TOOL_CALLS}) reached. Remaining tool calls skipped.`);
         break;
@@ -183,11 +237,14 @@ export async function submitCrmCopilotMessage(
       .join('\n')
       .trim();
 
+    // Server-side citation handle validation
+    const validatedSources = await validateCitedSources(finalContent, collectedSources);
+
     return {
       id: `resp-${Date.now()}`,
       content: finalContent,
       contextSummary: formatContextSummary(context),
-      sources: collectedSources.length > 0 ? collectedSources : undefined,
+      sources: validatedSources.length > 0 ? validatedSources : undefined,
     };
   } catch (err: unknown) {
     const errorMsg = err instanceof Error ? err.message : 'Unknown error';
@@ -196,7 +253,7 @@ export async function submitCrmCopilotMessage(
     return {
       id: `err-${Date.now()}`,
       content: 'I encountered an issue processing your request. Please try again or refine your question.',
-      error: errorMsg,
+      error: 'processing_error',
     };
   }
 }

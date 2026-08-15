@@ -3,6 +3,8 @@
  * 
  * Bounded traveler lookup and traveler history read tools.
  * Enforces PII minimization (no passport/unrestricted notes) and financial truth.
+ * Successful booking statuses: confirmed, in_progress, completed.
+ * Sanitizes all error messages to prevent database/SQL leakage.
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
@@ -49,10 +51,12 @@ export interface TravelerHistoryDTO {
   summary: {
     totalInquiriesCount: number;
     totalBookingsCount: number;
-    confirmedBookingsCount: number;
+    successfulBookingsCount: number;
     hasPriorBookings: boolean;
   };
 }
+
+const SUCCESSFUL_BOOKING_STATUSES = new Set(['confirmed', 'in_progress', 'completed', 'closed_won']);
 
 export const searchTravelersTool: ToolDefinition<typeof SearchTravelersSchema, TravelerSearchResultItem[]> = {
   name: 'searchTravelers',
@@ -76,8 +80,8 @@ export const searchTravelersTool: ToolDefinition<typeof SearchTravelersSchema, T
         .limit(limit + 1);
 
       if (error) {
-        console.error('[Copilot Tool Error] searchTravelers failed:', error.message);
-        return { success: false, error: 'Failed to search travelers' };
+        console.error('[Copilot Tool Internal Error] searchTravelers:', error.message);
+        return { success: false, error: 'Unable to search travelers.' };
       }
 
       const rows = travelers || [];
@@ -100,9 +104,9 @@ export const searchTravelersTool: ToolDefinition<typeof SearchTravelersSchema, T
         hasMore,
       };
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Unknown error';
-      console.error('[Copilot Tool Exception] searchTravelers:', msg);
-      return { success: false, error: 'Error processing traveler search' };
+      const msg = err instanceof Error ? err.message : 'Internal error';
+      console.error('[Copilot Tool Internal Exception] searchTravelers:', msg);
+      return { success: false, error: 'Unable to search travelers.' };
     }
   },
 };
@@ -127,8 +131,13 @@ export const getTravelerHistoryTool: ToolDefinition<typeof GetTravelerHistorySch
         .eq('tenant_id', context.tenantId)
         .maybeSingle();
 
-      if (travErr || !traveler) {
-        return { success: false, error: `Traveler not found in current workspace: ${travelerId}` };
+      if (travErr) {
+        console.error('[Copilot Tool Internal Error] getTravelerHistory profile query:', travErr.message);
+        return { success: false, error: 'Unable to retrieve traveler history.' };
+      }
+
+      if (!traveler) {
+        return { success: false, error: 'Traveler not found in current workspace.' };
       }
 
       const travelerDto: TravelerSummaryDTO = {
@@ -140,8 +149,8 @@ export const getTravelerHistoryTool: ToolDefinition<typeof GetTravelerHistorySch
         createdAt: traveler.created_at || null,
       };
 
-      // 2. Fetch Inquiries for this traveler (max 10, ordered by created_at DESC)
-      const { data: inqs } = await supabase
+      // 2. Fetch Inquiries for this traveler
+      const { data: inqs, error: inqsErr } = await supabase
         .from('inquiries')
         .select('id, destination, pipeline_stage, expected_value, currency, departure_date, created_at')
         .eq('traveler_id', travelerId)
@@ -149,6 +158,10 @@ export const getTravelerHistoryTool: ToolDefinition<typeof GetTravelerHistorySch
         .is('archived_at', null)
         .order('created_at', { ascending: false })
         .limit(10);
+
+      if (inqsErr) {
+        console.error('[Copilot Tool Internal Error] getTravelerHistory inquiries query:', inqsErr.message);
+      }
 
       const inquiryItems = (inqs || []).map((i) => ({
         id: i.id,
@@ -161,8 +174,8 @@ export const getTravelerHistoryTool: ToolDefinition<typeof GetTravelerHistorySch
         createdAt: i.created_at || null,
       }));
 
-      // 3. Fetch Bookings for this traveler (max 10, ordered by departure_date DESC)
-      const { data: bookings } = await supabase
+      // 3. Fetch Bookings for this traveler
+      const { data: bookings, error: bkErr } = await supabase
         .from('bookings')
         .select(`
           id,
@@ -183,6 +196,10 @@ export const getTravelerHistoryTool: ToolDefinition<typeof GetTravelerHistorySch
         .order('created_at', { ascending: false })
         .limit(10);
 
+      if (bkErr) {
+        console.error('[Copilot Tool Internal Error] getTravelerHistory bookings query:', bkErr.message);
+      }
+
       const bookingItems = (bookings || []).map((b) => ({
         id: b.id,
         bookingReference: b.booking_reference || null,
@@ -197,8 +214,9 @@ export const getTravelerHistoryTool: ToolDefinition<typeof GetTravelerHistorySch
         financialDataComplete: Boolean(b.financial_data_complete),
       }));
 
-      const confirmedCount = bookingItems.filter(
-        (b) => b.bookingStatus === 'confirmed' || b.bookingStatus === 'completed' || b.bookingStatus === 'closed_won'
+      // Successful booking statuses: confirmed, in_progress, completed
+      const successfulCount = bookingItems.filter(
+        (b) => b.bookingStatus && SUCCESSFUL_BOOKING_STATUSES.has(b.bookingStatus.toLowerCase())
       ).length;
 
       const historyDto: TravelerHistoryDTO = {
@@ -208,16 +226,16 @@ export const getTravelerHistoryTool: ToolDefinition<typeof GetTravelerHistorySch
         summary: {
           totalInquiriesCount: inquiryItems.length,
           totalBookingsCount: bookingItems.length,
-          confirmedBookingsCount: confirmedCount,
-          hasPriorBookings: confirmedCount > 0,
+          successfulBookingsCount: successfulCount,
+          hasPriorBookings: successfulCount > 0,
         },
       };
 
       return { success: true, data: historyDto };
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Unknown error';
-      console.error('[Copilot Tool Exception] getTravelerHistory:', msg);
-      return { success: false, error: 'Error fetching traveler history' };
+      const msg = err instanceof Error ? err.message : 'Internal error';
+      console.error('[Copilot Tool Internal Exception] getTravelerHistory:', msg);
+      return { success: false, error: 'Unable to retrieve traveler history.' };
     }
   },
 };

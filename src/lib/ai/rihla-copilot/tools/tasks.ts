@@ -2,7 +2,9 @@
  * CRM Copilot Task Read Tools (Phase AI-2)
  * 
  * Bounded task lookup strictly scoped by server tenant context.
+ * Resolves canonical inquiry ID to compatibility legacy lead ID server-side.
  * Strictly read-only (zero task creation, updates, or status changes).
+ * Sanitizes all error messages to prevent database/SQL leakage.
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
@@ -35,6 +37,26 @@ export const listTasksTool: ToolDefinition<typeof ListTasksSchema, TaskSummaryIt
   ): Promise<ToolResult<TaskSummaryItem[]>> => {
     try {
       const limit = Math.min(params.limit || 5, 10);
+      let candidateLeadIds: string[] = [];
+
+      if (params.inquiryId) {
+        const inquiryId = params.inquiryId.trim();
+        // Resolve canonical inquiry to determine if there is a linked legacy_lead_id
+        const { data: inq } = await supabase
+          .from('inquiries')
+          .select('id, legacy_lead_id')
+          .eq('id', inquiryId)
+          .eq('tenant_id', context.tenantId)
+          .maybeSingle();
+
+        if (inq) {
+          candidateLeadIds = Array.from(new Set([inq.id, inq.legacy_lead_id].filter(Boolean) as string[]));
+        } else {
+          // Check if passed ID is itself a direct legacy lead ID
+          candidateLeadIds = [inquiryId];
+        }
+      }
+
       let query = supabase
         .from('tasks')
         .select(`
@@ -50,8 +72,12 @@ export const listTasksTool: ToolDefinition<typeof ListTasksSchema, TaskSummaryIt
         `)
         .eq('tenant_id', context.tenantId);
 
-      if (params.inquiryId) {
-        query = query.eq('lead_id', params.inquiryId.trim());
+      if (candidateLeadIds.length > 0) {
+        if (candidateLeadIds.length === 1) {
+          query = query.eq('lead_id', candidateLeadIds[0]);
+        } else {
+          query = query.in('lead_id', candidateLeadIds);
+        }
       }
 
       if (params.status && params.status !== 'all') {
@@ -66,8 +92,8 @@ export const listTasksTool: ToolDefinition<typeof ListTasksSchema, TaskSummaryIt
 
       const { data: tasks, error } = await query;
       if (error) {
-        console.error('[Copilot Tool Error] listTasks failed:', error.message);
-        return { success: false, error: 'Failed to list tasks' };
+        console.error('[Copilot Tool Internal Error] listTasks:', error.message);
+        return { success: false, error: 'Unable to list tasks.' };
       }
 
       const rows = tasks || [];
@@ -93,9 +119,9 @@ export const listTasksTool: ToolDefinition<typeof ListTasksSchema, TaskSummaryIt
         hasMore,
       };
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Unknown error';
-      console.error('[Copilot Tool Exception] listTasks:', msg);
-      return { success: false, error: 'Error listing tasks' };
+      const msg = err instanceof Error ? err.message : 'Internal error';
+      console.error('[Copilot Tool Internal Exception] listTasks:', msg);
+      return { success: false, error: 'Unable to list tasks.' };
     }
   },
 };
