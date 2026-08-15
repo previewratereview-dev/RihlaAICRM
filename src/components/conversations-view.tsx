@@ -20,6 +20,7 @@ export function ConversationsView() {
   const editMessage = useCRMStore((state) => state.editMessage);
   const deleteMessage = useCRMStore((state) => state.deleteMessage);
   const clearUnreadCount = useCRMStore((state) => state.clearUnreadCount);
+  const setActiveContext = useCRMStore((state) => state.setActiveContext);
   const [editingMsgId, setEditingMsgId] = useState<string | null>(null);
   const [editContent, setEditContent] = useState('');
 
@@ -31,6 +32,13 @@ export function ConversationsView() {
 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  // Sync selection to activeContext for Global Copilot
+  useEffect(() => {
+    setActiveContext({ type: selectedId ? 'conversation' : 'none', id: selectedId || null });
+    return () => setActiveContext({ type: 'none', id: null });
+  }, [selectedId, setActiveContext]);
+
   const [messageInput, setMessageInput] = useState('');
   const [aiInput, setAiInput] = useState('');
   const [threadSummary, setThreadSummary] = useState<string | null>(null);

@@ -69,6 +69,7 @@ export function InquiriesView({ useNewReadOverride }: InquiriesViewProps = {}) {
   const globalSearchQuery = useCRMStore((s) => s.globalSearchQuery);
   const setGlobalSearchQuery = useCRMStore((s) => s.setGlobalSearchQuery);
   const dataLoading = useCRMStore((s) => s.dataLoading);
+  const setActiveContext = useCRMStore((s) => s.setActiveContext);
 
   const [searchTerm, setSearchTerm] = useState('');
   const canWrite = can(currentUser?.role ?? 'viewer', 'leads:write');
@@ -87,6 +88,13 @@ export function InquiriesView({ useNewReadOverride }: InquiriesViewProps = {}) {
   const [errorNew, setErrorNew] = useState<string | null>(null);
   const [selectedInquiryId, setSelectedInquiryId] = useState<string | null>(null);
   const [refreshCounter, setRefreshCounter] = useState(0);
+
+  // Sync selection to activeContext for Global Copilot
+  useEffect(() => {
+    const id = isNewReadActive ? selectedInquiryId : selectedLeadId;
+    setActiveContext({ type: id ? 'inquiry' : 'none', id: id || null });
+    return () => setActiveContext({ type: 'none', id: null });
+  }, [selectedLeadId, selectedInquiryId, isNewReadActive, setActiveContext]);
 
   // Common Selection state
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());

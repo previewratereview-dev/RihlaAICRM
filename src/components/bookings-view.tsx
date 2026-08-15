@@ -56,6 +56,7 @@ export function BookingsView() {
   const globalSearchQuery = useCRMStore((s) => s.globalSearchQuery);
   const setGlobalSearchQuery = useCRMStore((s) => s.setGlobalSearchQuery);
   const dataLoading = useCRMStore((s) => s.dataLoading);
+  const setActiveContext = useCRMStore((s) => s.setActiveContext);
 
   const [searchTerm, setSearchTerm] = useState('');
   const canWrite = can(currentUser?.role ?? 'viewer', 'leads:write');
@@ -66,6 +67,12 @@ export function BookingsView() {
   const [pageSize, setPageSize] = useState(25);
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  // Sync selection to activeContext for Global Copilot
+  useEffect(() => {
+    setActiveContext({ type: selectedLeadId ? 'booking' : 'none', id: selectedLeadId || null });
+    return () => setActiveContext({ type: 'none', id: null });
+  }, [selectedLeadId, setActiveContext]);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editingLead, setEditingLead] = useState<Lead | null>(null);

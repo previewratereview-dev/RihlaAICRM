@@ -61,6 +61,14 @@ export interface CRMStore {
   tenantFeatures: TenantFeatures;
   tenantId: string | null;
 
+  // Active CRM Selection Context for Global Copilot
+  activeContext: {
+    type: 'none' | 'inquiry' | 'traveler' | 'booking' | 'conversation';
+    id: string | null;
+  };
+  setActiveContext: (context: { type: 'none' | 'inquiry' | 'traveler' | 'booking' | 'conversation'; id: string | null }) => void;
+  clearActiveContext: () => void;
+
   // Auth actions
   login: (email: string, password: string) => Promise<{ success: boolean; error: string | null }>;
   startDemoSession: () => Promise<{ success: boolean; error: string | null; code?: string }>;

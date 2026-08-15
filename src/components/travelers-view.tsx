@@ -42,6 +42,7 @@ export function TravelersView({ useNewReadOverride }: TravelersViewProps = {}) {
   const currentUser = useCRMStore((state) => state.currentUser);
   const addLead = useCRMStore((state) => state.addLead);
   const startConversation = useCRMStore((state) => state.startConversation);
+  const setActiveContext = useCRMStore((state) => state.setActiveContext);
 
   const [rebookingId, setRebookingId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -60,6 +61,13 @@ export function TravelersView({ useNewReadOverride }: TravelersViewProps = {}) {
   const [isInquiryModalOpen, setIsInquiryModalOpen] = useState(false);
   const [inquiryFormError, setInquiryFormError] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // Sync selection to activeContext for Global Copilot
+  useEffect(() => {
+    const id = selectedTravelerForInquiry?.id || selectedTravelerForEmail?.travelerId || null;
+    setActiveContext({ type: id ? 'traveler' : 'none', id });
+    return () => setActiveContext({ type: 'none', id: null });
+  }, [selectedTravelerForInquiry, selectedTravelerForEmail, setActiveContext]);
 
   // New Entity Read State
   const [newTravelers, setNewTravelers] = useState<TravelerDirectoryItem[]>([]);

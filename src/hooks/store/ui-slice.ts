@@ -4,6 +4,7 @@ import { CRMDatabaseService } from '@/lib/db-service';
 export function createUiSlice(set: SetState, _get: GetState) {
   return {
     activeTab: 'dashboard' as string,
+    activeContext: { type: 'none', id: null } as { type: 'none' | 'inquiry' | 'traveler' | 'booking' | 'conversation'; id: string | null },
     sidebarExpanded: true,
     density: 'comfortable' as 'comfortable' | 'compact',
     dataLoading: false,
@@ -30,6 +31,8 @@ export function createUiSlice(set: SetState, _get: GetState) {
     },
 
     setActiveTab: (tab: string) => set({ activeTab: tab }),
+    setActiveContext: (context: { type: 'none' | 'inquiry' | 'traveler' | 'booking' | 'conversation'; id: string | null }) => set({ activeContext: context }),
+    clearActiveContext: () => set({ activeContext: { type: 'none', id: null } }),
     toggleSidebar: () => set((state) => ({ sidebarExpanded: !state.sidebarExpanded })),
     setDensity: (density: 'comfortable' | 'compact') => {
       set({ density });
