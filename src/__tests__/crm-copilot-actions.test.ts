@@ -268,12 +268,39 @@ describe('Phase AI-3A: Governed Rihla Copilot Actions & Atomic Execution', () =>
       expect(result.success).toBe(true);
       expect(result.newState?.stage).toBe('itinerary_sent');
       expect(rpcSpy).toHaveBeenCalledWith('execute_copilot_inquiry_action_atomic', {
+        p_actor_user_id: 'usr-agent-1',
         p_proposal_id: 'prop-1',
         p_inquiry_id: 'inq-101',
         p_action_type: 'update_inquiry_stage',
         p_expected_current_state: { stage: 'initial_contact' },
         p_proposed_state: { stage: 'itinerary_sent' },
       });
+    });
+
+    it('direct authenticated browser RPC invocation is blocked (PERMISSION DENIED)', async () => {
+      // Simulates an authenticated browser client attempting to call the internal RPC directly
+      const authenticatedBrowserClient = {
+        rpc: vi.fn().mockResolvedValue({
+          data: null,
+          error: {
+            message: 'permission denied for function execute_copilot_inquiry_action_atomic',
+            code: '42501',
+          },
+        }),
+      } as unknown as SupabaseClient;
+
+      const directRpcResult = await authenticatedBrowserClient.rpc('execute_copilot_inquiry_action_atomic', {
+        p_actor_user_id: 'usr-agent-1',
+        p_proposal_id: 'prop-direct-bypass',
+        p_inquiry_id: 'inq-101',
+        p_action_type: 'update_inquiry_stage',
+        p_expected_current_state: { stage: 'initial_contact' },
+        p_proposed_state: { stage: 'itinerary_sent' },
+      });
+
+      expect(directRpcResult.error).toBeDefined();
+      expect(directRpcResult.error?.code).toBe('42501');
+      expect(directRpcResult.error?.message).toContain('permission denied');
     });
 
     it('rejects an unsigned proposal with INVALID_SIGNATURE', async () => {
@@ -678,6 +705,7 @@ describe('Phase AI-3A: Governed Rihla Copilot Actions & Atomic Execution', () =>
       expect(result.success).toBe(true);
       expect(result.newState?.stage).toBe('consultation_booked');
       expect(rpcSpy).toHaveBeenCalledWith('execute_copilot_inquiry_action_atomic', expect.objectContaining({
+        p_actor_user_id: 'usr-admin-1',
         p_action_type: 'update_inquiry_stage',
       }));
     });
@@ -714,6 +742,10 @@ describe('Phase AI-3A: Governed Rihla Copilot Actions & Atomic Execution', () =>
 
       expect(result.success).toBe(true);
       expect(result.newState?.assignedAgentId).toBe('usr-agent-2');
+      expect(rpcSpy).toHaveBeenCalledWith('execute_copilot_inquiry_action_atomic', expect.objectContaining({
+        p_actor_user_id: 'usr-admin-1',
+        p_action_type: 'assign_inquiry',
+      }));
     });
 
     it('executeSetInquiryFollowUp dispatches atomic RPC', async () => {
@@ -748,6 +780,10 @@ describe('Phase AI-3A: Governed Rihla Copilot Actions & Atomic Execution', () =>
 
       expect(result.success).toBe(true);
       expect(result.newState?.nextFollowUpAt).toBe('2026-08-25T10:00:00.000Z');
+      expect(rpcSpy).toHaveBeenCalledWith('execute_copilot_inquiry_action_atomic', expect.objectContaining({
+        p_actor_user_id: 'usr-admin-1',
+        p_action_type: 'set_inquiry_follow_up',
+      }));
     });
   });
 

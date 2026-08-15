@@ -3,8 +3,8 @@
 -- Description: Creates the copilot_action_executions single-use receipt table and
 --              the server-authoritative, atomic SECURITY DEFINER RPC
 --              execute_copilot_inquiry_action_atomic.
---              Guarantees all-or-nothing atomicity across canonical inquiries,
---              legacy leads dual-writes, single-use receipts, and activity logs.
+--              Callable ONLY by trusted backend service_role transport after
+--              server-side HMAC, TTL, and session verification.
 -- ============================================================================
 
 BEGIN;
@@ -19,16 +19,15 @@ CREATE TABLE IF NOT EXISTS public.copilot_action_executions (
   executed_at timestamptz NOT NULL DEFAULT now()
 );
 
--- Enable RLS on receipt table
+-- Enable RLS and restrict table access to server-only service_role
 ALTER TABLE public.copilot_action_executions ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY copilot_executions_tenant_isolation ON public.copilot_action_executions
-  FOR ALL
-  TO authenticated
-  USING (tenant_id = (SELECT tenant_id FROM public.profiles WHERE id = auth.uid()::text));
+REVOKE ALL ON public.copilot_action_executions FROM PUBLIC, anon, authenticated;
+GRANT ALL ON public.copilot_action_executions TO service_role, postgres;
 
 -- 2. Atomic Transactional RPC for Copilot Inquiry Actions
 CREATE OR REPLACE FUNCTION public.execute_copilot_inquiry_action_atomic(
+  p_actor_user_id text,
   p_proposal_id text,
   p_inquiry_id uuid,
   p_action_type text,
@@ -41,7 +40,6 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 DECLARE
-  v_caller_id uuid := auth.uid();
   v_caller_profile record;
   v_inquiry record;
   v_assignee_profile record;
@@ -52,14 +50,14 @@ DECLARE
   v_now_iso text := to_char(v_now AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
   v_activity_id text;
 BEGIN
-  -- 1. Actor Authentication & Profile Resolution
-  IF v_caller_id IS NULL THEN
-    RAISE EXCEPTION 'UNAUTHORIZED: No active authentication session.' USING ERRCODE = '42501';
+  -- 1. Actor Profile Resolution from trusted server-passed p_actor_user_id
+  IF p_actor_user_id IS NULL OR trim(p_actor_user_id) = '' THEN
+    RAISE EXCEPTION 'UNAUTHORIZED: Actor user ID is required.' USING ERRCODE = '42501';
   END IF;
 
   SELECT id, full_name, role, tenant_id INTO v_caller_profile
   FROM public.profiles
-  WHERE id = v_caller_id::text;
+  WHERE id = p_actor_user_id;
 
   IF v_caller_profile.id IS NULL OR v_caller_profile.tenant_id IS NULL THEN
     RAISE EXCEPTION 'FORBIDDEN: Authenticated profile record not found.' USING ERRCODE = '42501';
@@ -162,7 +160,7 @@ BEGIN
         AND tenant_id = v_caller_profile.tenant_id;
     END IF;
 
-    -- 5c. Insert Business Activity Record (Rolls back if fails)
+    -- 5c. Insert Business Activity Record (Rolls back whole tx if fails)
     v_activity_id := 'act-stage-' || floor(extract(epoch from v_now) * 1000)::text || '-' || substr(md5(random()::text), 1, 6);
     INSERT INTO public.activities (
       id,
@@ -243,7 +241,7 @@ BEGIN
         AND tenant_id = v_caller_profile.tenant_id;
     END IF;
 
-    -- 5c. Insert Business Activity Record (Rolls back if fails)
+    -- 5c. Insert Business Activity Record (Rolls back whole tx if fails)
     v_activity_id := 'act-assign-' || floor(extract(epoch from v_now) * 1000)::text || '-' || substr(md5(random()::text), 1, 6);
     INSERT INTO public.activities (
       id,
@@ -311,7 +309,7 @@ BEGIN
         AND tenant_id = v_caller_profile.tenant_id;
     END IF;
 
-    -- 5c. Insert Business Activity Record (Rolls back if fails)
+    -- 5c. Insert Business Activity Record (Rolls back whole tx if fails)
     v_activity_id := 'act-followup-' || floor(extract(epoch from v_now) * 1000)::text || '-' || substr(md5(random()::text), 1, 6);
     INSERT INTO public.activities (
       id,
@@ -353,8 +351,10 @@ BEGIN
 END;
 $$;
 
--- Security & Permissions Hardening
-REVOKE ALL ON FUNCTION public.execute_copilot_inquiry_action_atomic FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.execute_copilot_inquiry_action_atomic TO authenticated;
+-- Security & Permissions Hardening:
+-- Callable EXCLUSIVELY by server-only backend role (service_role)
+-- Revoked from PUBLIC, anon, and authenticated
+REVOKE ALL ON FUNCTION public.execute_copilot_inquiry_action_atomic FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.execute_copilot_inquiry_action_atomic TO service_role, postgres;
 
 COMMIT;

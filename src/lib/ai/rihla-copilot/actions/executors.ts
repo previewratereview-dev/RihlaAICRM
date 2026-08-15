@@ -2,20 +2,22 @@
  * CRM Copilot Action Mutation Executors (Phase AI-3A)
  * 
  * Deterministic, server-only mutation executors invoked ONLY upon explicit human confirmation.
- * Delegates execution to the atomic database RPC: public.execute_copilot_inquiry_action_atomic.
+ * Delegates execution to the atomic database RPC: public.execute_copilot_inquiry_action_atomic
+ * using a server-only service_role transport client.
  * 
  * INVARIANTS:
  * - NOT exposed as model tools.
  * - Single atomic database transaction covers canonical Inquiry update, legacy Lead dual-write,
  *   single-use proposal execution receipt, and activity log insert.
- * - Proposal execution is transactionally single-use (duplicate proposal_id rejected with ALREADY_EXECUTED).
- * - Re-authenticates actor session, tenant boundary, and RBAC write permissions.
- * - Re-reads authoritative DB record and aborts on stale state (optimistic concurrency).
- * - Attributes audit log / activity to the authenticated human user.
+ * - RPC execution privilege is restricted to service_role (REVOKED from authenticated and anon).
+ * - Direct browser invocation of the RPC is impossible and fails with permission denied.
+ * - Server Action derives actor.userId from verified session and passes it as p_actor_user_id.
+ * - Database independently validates actor profile, role, tenant, and inquiry ownership.
  * - Zero external messaging (no email, WhatsApp, SMS).
  * - Zero financial or booking mutations.
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { createAdminClient } from '@/lib/supabase/admin';
 import type { UserRole } from '@/types/common';
 import {
   type ActionProposalDTO,
@@ -111,12 +113,20 @@ function mapRpcErrorToActionExecutionResult(
 }
 
 /**
+ * Resolves the server-only admin/service_role Supabase client.
+ */
+function resolveExecutionClient(customClient?: SupabaseClient): SupabaseClient | null {
+  if (customClient) return customClient;
+  return createAdminClient();
+}
+
+/**
  * Executes an action proposal after explicit human confirmation and full server revalidation.
  */
 export async function executeConfirmedAction(
   actor: AuthenticatedActor,
   proposal: ActionProposalDTO,
-  supabase: SupabaseClient
+  adminSupabase?: SupabaseClient
 ): Promise<ActionExecutionResult> {
   // 1. Revalidate Actor & Tenant
   if (!actor || !actor.userId || !actor.tenantId) {
@@ -177,14 +187,26 @@ export async function executeConfirmedAction(
     };
   }
 
+  const client = resolveExecutionClient(adminSupabase);
+  if (!client) {
+    return {
+      success: false,
+      actionType: proposal.actionType,
+      entityId: proposal.entityId,
+      message: 'Internal server configuration error: execution client unavailable.',
+      error: 'Admin client unavailable',
+      errorCode: 'EXECUTION_FAILED',
+    };
+  }
+
   // 5. Dispatch specific atomic server action executor
   switch (proposal.actionType) {
     case 'update_inquiry_stage':
-      return await executeUpdateInquiryStage(actor, proposal, supabase);
+      return await executeUpdateInquiryStage(actor, proposal, client);
     case 'assign_inquiry':
-      return await executeAssignInquiry(actor, proposal, supabase);
+      return await executeAssignInquiry(actor, proposal, client);
     case 'set_inquiry_follow_up':
-      return await executeSetInquiryFollowUp(actor, proposal, supabase);
+      return await executeSetInquiryFollowUp(actor, proposal, client);
     default:
       return {
         success: false,
@@ -201,7 +223,7 @@ export async function executeConfirmedAction(
  * Server Executor 1: Atomic Update Inquiry Stage
  */
 export async function executeUpdateInquiryStage(
-  _actor: AuthenticatedActor,
+  actor: AuthenticatedActor,
   proposal: ActionProposalDTO,
   supabase: SupabaseClient
 ): Promise<ActionExecutionResult> {
@@ -218,6 +240,7 @@ export async function executeUpdateInquiryStage(
   }
 
   const { data: rpcResult, error: rpcErr } = await supabase.rpc('execute_copilot_inquiry_action_atomic', {
+    p_actor_user_id: actor.userId,
     p_proposal_id: proposal.proposalId,
     p_inquiry_id: proposal.entityId,
     p_action_type: 'update_inquiry_stage',
@@ -258,7 +281,7 @@ export async function executeUpdateInquiryStage(
  * Server Executor 2: Atomic Assign Inquiry
  */
 export async function executeAssignInquiry(
-  _actor: AuthenticatedActor,
+  actor: AuthenticatedActor,
   proposal: ActionProposalDTO,
   supabase: SupabaseClient
 ): Promise<ActionExecutionResult> {
@@ -275,6 +298,7 @@ export async function executeAssignInquiry(
   }
 
   const { data: rpcResult, error: rpcErr } = await supabase.rpc('execute_copilot_inquiry_action_atomic', {
+    p_actor_user_id: actor.userId,
     p_proposal_id: proposal.proposalId,
     p_inquiry_id: proposal.entityId,
     p_action_type: 'assign_inquiry',
@@ -315,13 +339,14 @@ export async function executeAssignInquiry(
  * Server Executor 3: Atomic Set Inquiry Next Follow-Up
  */
 export async function executeSetInquiryFollowUp(
-  _actor: AuthenticatedActor,
+  actor: AuthenticatedActor,
   proposal: ActionProposalDTO,
   supabase: SupabaseClient
 ): Promise<ActionExecutionResult> {
   const targetFollowUpAt = proposal.proposedState.nextFollowUpAt || null;
 
   const { data: rpcResult, error: rpcErr } = await supabase.rpc('execute_copilot_inquiry_action_atomic', {
+    p_actor_user_id: actor.userId,
     p_proposal_id: proposal.proposalId,
     p_inquiry_id: proposal.entityId,
     p_action_type: 'set_inquiry_follow_up',
