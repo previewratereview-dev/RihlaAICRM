@@ -56,7 +56,7 @@ export interface TravelerHistoryDTO {
   };
 }
 
-const SUCCESSFUL_BOOKING_STATUSES = new Set(['confirmed', 'in_progress', 'completed', 'closed_won']);
+const SUCCESSFUL_BOOKING_STATUSES = new Set(['confirmed', 'in_progress', 'completed']);
 
 export const searchTravelersTool: ToolDefinition<typeof SearchTravelersSchema, TravelerSearchResultItem[]> = {
   name: 'searchTravelers',

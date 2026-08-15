@@ -40,7 +40,7 @@ export const getRecentActivityTool: ToolDefinition<typeof GetRecentActivitySchem
         return { success: false, error: 'Inquiry ID is required to fetch timeline activity.' };
       }
 
-      // Resolve canonical inquiry to determine if there is a linked legacy_lead_id
+      // Resolve canonical inquiry to determine its linked legacy_lead_id
       const { data: inq } = await supabase
         .from('inquiries')
         .select('id, legacy_lead_id')
@@ -48,22 +48,23 @@ export const getRecentActivityTool: ToolDefinition<typeof GetRecentActivitySchem
         .eq('tenant_id', context.tenantId)
         .maybeSingle();
 
-      const candidateLeadIds = inq
-        ? (Array.from(new Set([inq.id, inq.legacy_lead_id].filter(Boolean))) as string[])
-        : [inquiryId];
-
-      let query = supabase
-        .from('activities')
-        .select('id, type, title, description, created_at, user_name')
-        .eq('tenant_id', context.tenantId);
-
-      if (candidateLeadIds.length === 1) {
-        query = query.eq('lead_id', candidateLeadIds[0]);
-      } else {
-        query = query.in('lead_id', candidateLeadIds);
+      // If inquiry not found or has no legacy_lead_id linked, no legacy child activities exist
+      if (!inq || !inq.legacy_lead_id) {
+        return {
+          success: true,
+          data: [],
+          count: 0,
+          hasMore: false,
+        };
       }
 
-      query = query.order('created_at', { ascending: false }).limit(limit + 1);
+      const query = supabase
+        .from('activities')
+        .select('id, type, title, description, created_at, user_name')
+        .eq('tenant_id', context.tenantId)
+        .eq('lead_id', inq.legacy_lead_id)
+        .order('created_at', { ascending: false })
+        .limit(limit + 1);
 
       const { data: activities, error } = await query;
       if (error) {

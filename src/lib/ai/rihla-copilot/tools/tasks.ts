@@ -37,11 +37,11 @@ export const listTasksTool: ToolDefinition<typeof ListTasksSchema, TaskSummaryIt
   ): Promise<ToolResult<TaskSummaryItem[]>> => {
     try {
       const limit = Math.min(params.limit || 5, 10);
-      let candidateLeadIds: string[] = [];
+      let targetLegacyLeadId: string | null = null;
 
       if (params.inquiryId) {
         const inquiryId = params.inquiryId.trim();
-        // Resolve canonical inquiry to determine if there is a linked legacy_lead_id
+        // Resolve canonical inquiry to determine its linked legacy_lead_id
         const { data: inq } = await supabase
           .from('inquiries')
           .select('id, legacy_lead_id')
@@ -49,12 +49,17 @@ export const listTasksTool: ToolDefinition<typeof ListTasksSchema, TaskSummaryIt
           .eq('tenant_id', context.tenantId)
           .maybeSingle();
 
-        if (inq) {
-          candidateLeadIds = Array.from(new Set([inq.id, inq.legacy_lead_id].filter(Boolean) as string[]));
-        } else {
-          // Check if passed ID is itself a direct legacy lead ID
-          candidateLeadIds = [inquiryId];
+        // If inquiry not found or has no legacy_lead_id linked, no legacy child tasks exist
+        if (!inq || !inq.legacy_lead_id) {
+          return {
+            success: true,
+            data: [],
+            count: 0,
+            hasMore: false,
+          };
         }
+
+        targetLegacyLeadId = inq.legacy_lead_id;
       }
 
       let query = supabase
@@ -72,12 +77,8 @@ export const listTasksTool: ToolDefinition<typeof ListTasksSchema, TaskSummaryIt
         `)
         .eq('tenant_id', context.tenantId);
 
-      if (candidateLeadIds.length > 0) {
-        if (candidateLeadIds.length === 1) {
-          query = query.eq('lead_id', candidateLeadIds[0]);
-        } else {
-          query = query.in('lead_id', candidateLeadIds);
-        }
+      if (targetLegacyLeadId) {
+        query = query.eq('lead_id', targetLegacyLeadId);
       }
 
       if (params.status && params.status !== 'all') {

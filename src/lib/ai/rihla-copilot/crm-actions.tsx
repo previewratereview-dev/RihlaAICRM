@@ -28,7 +28,6 @@ import {
 import { buildCrmCopilotPrompt } from './crm-prompt';
 import {
   executeToolCall,
-  extractToolCalls,
   getCrmCopilotProviderTools,
   type TrustedExecutionContext,
   type KnowledgeSource,
@@ -154,16 +153,13 @@ export async function submitCrmCopilotMessage(
     }
 
     const firstOutput = initialResult.content || '';
-    
-    // Check for provider-native structured tool calls first, with fallback extraction
+
+    // Strict provider-native structured tool calls ONLY (no free-text TOOL_CALL parsing fallback)
     const rawToolCalls: Array<{ tool: string; params: Record<string, unknown> }> = [];
     if (initialResult.toolCalls && initialResult.toolCalls.length > 0) {
       for (const tc of initialResult.toolCalls) {
         rawToolCalls.push({ tool: tc.name, params: tc.arguments });
       }
-    } else {
-      const fallbackCalls = extractToolCalls(firstOutput);
-      rawToolCalls.push(...fallbackCalls);
     }
 
     // If no tool calls requested, return the direct answer
