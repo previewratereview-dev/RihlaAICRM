@@ -26,11 +26,19 @@ function resolveStoredApiKey(stored: unknown): string | null {
       return open(parsed) || null;
     }
   } catch {
-    // Plaintext legacy fallback
+    // Legacy plaintext string
   }
   return stored;
 }
 
+/**
+ * POST /api/platform/settings/models
+ *
+ * Super-admin only model discovery endpoint for OpenAI-compatible and custom providers.
+ * - Validates provider endpoint against SSRF (no localhost/internal network in prod).
+ * - Resolves API key server-side: uses candidate key if supplied, or stored sealed key.
+ * - Makes outbound request server-side; credentials never exposed to client.
+ */
 export async function POST(request: NextRequest) {
   if (!isSameOrigin(request)) {
     return NextResponse.json({ error: 'Cross-origin request forbidden' }, { status: 403 });

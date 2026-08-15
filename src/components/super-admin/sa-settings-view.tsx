@@ -1,7 +1,6 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { CRMDatabaseService } from '@/lib/db-service';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Settings,
@@ -53,8 +52,12 @@ export function SuperAdminSettingsView() {
     supportEmail: '',
   });
 
+  const [apiKeyConfigured, setApiKeyConfigured] = useState(false);
+  const [apiKeyMasked, setApiKeyMasked] = useState<string | null>(null);
+
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // Model Fetching States for OpenAI-Compatible
   const [fetchingModels, setFetchingModels] = useState(false);
@@ -63,34 +66,47 @@ export function SuperAdminSettingsView() {
   const [fetchSuccess, setFetchSuccess] = useState<string | null>(null);
 
   useEffect(() => {
-    CRMDatabaseService.getPlatformSettings().then((s) => {
-      const extra = (s.settings as Record<string, unknown>) || {};
-      const baseUrl = String(extra.defaultAiBaseUrl || 'https://api.openai.com/v1');
-      const useAnthropic = Boolean(extra.aiUseAnthropicFormat);
-      const savedPlatform = String(extra.aiPlatform || '');
+    fetch('/api/platform/settings')
+      .then((res) => {
+        if (!res.ok) throw new Error('Failed to load settings');
+        return res.json();
+      })
+      .then((data) => {
+        if (data.success && data.settings) {
+          const s = data.settings;
+          const baseUrl = String(s.defaultAiBaseUrl || 'https://api.openai.com/v1');
+          const useAnthropic = Boolean(s.aiUseAnthropicFormat);
+          const savedPlatform = String(s.aiPlatform || '');
 
-      let platform: AIPlatform = 'openai';
-      if (savedPlatform === 'openai' || savedPlatform === 'anthropic' || savedPlatform === 'openai-compatible') {
-        platform = savedPlatform as AIPlatform;
-      } else if (useAnthropic || baseUrl.includes('anthropic')) {
-        platform = 'anthropic';
-      } else if (baseUrl && baseUrl !== 'https://api.openai.com/v1') {
-        platform = 'openai-compatible';
-      }
+          let platform: AIPlatform = 'openai';
+          if (savedPlatform === 'openai' || savedPlatform === 'anthropic' || savedPlatform === 'openai-compatible') {
+            platform = savedPlatform as AIPlatform;
+          } else if (useAnthropic || baseUrl.includes('anthropic')) {
+            platform = 'anthropic';
+          } else if (baseUrl && baseUrl !== 'https://api.openai.com/v1') {
+            platform = 'openai-compatible';
+          }
 
-      setForm({
-        aiPlatform: platform,
-        defaultAiBaseUrl: baseUrl,
-        defaultAiApiKey: String(extra.defaultAiApiKey || ''),
-        defaultAiModel: String(s.defaultAiModel || 'gpt-4o-mini'),
-        aiUseAnthropicFormat: useAnthropic,
-        platformMonthlyAiCap: Number(s.platformMonthlyAiCap) || 500,
-        maintenanceMode: Boolean(s.maintenanceMode),
-        allowNewTenants: extra.allowNewTenants !== false,
-        defaultAiBudget: Number(extra.defaultAiBudget) || 100,
-        supportEmail: String(extra.supportEmail || ''),
+          setForm({
+            aiPlatform: platform,
+            defaultAiBaseUrl: baseUrl,
+            defaultAiApiKey: '', // Write-only: never populate secret into browser input
+            defaultAiModel: String(s.defaultAiModel || 'gpt-4o-mini'),
+            aiUseAnthropicFormat: useAnthropic,
+            platformMonthlyAiCap: Number(s.platformMonthlyAiCap) || 500,
+            maintenanceMode: Boolean(s.maintenanceMode),
+            allowNewTenants: s.allowNewTenants !== false,
+            defaultAiBudget: Number(s.defaultAiBudget) || 100,
+            supportEmail: String(s.supportEmail || ''),
+          });
+
+          setApiKeyConfigured(Boolean(s.apiKeyConfigured));
+          setApiKeyMasked(s.apiKeyMasked || null);
+        }
+      })
+      .catch((err) => {
+        console.warn('Failed to load platform settings:', err);
       });
-    });
   }, []);
 
   const handlePlatformChange = (newPlatform: AIPlatform) => {
@@ -131,76 +147,35 @@ export function SuperAdminSettingsView() {
   };
 
   const handleFetchModels = async () => {
-    if (!form.defaultAiBaseUrl || !form.defaultAiApiKey) {
-      setFetchError('Please enter both Endpoint URL and API Key first.');
-      return;
-    }
-
     setFetchingModels(true);
     setFetchError(null);
     setFetchSuccess(null);
 
     try {
-      // First try server proxy API route
-      const res = await fetch('/api/ai/models', {
+      // Execute through guarded server discovery endpoint
+      const res = await fetch('/api/platform/settings/models', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           endpoint: form.defaultAiBaseUrl,
-          apiKey: form.defaultAiApiKey,
+          apiKey: form.defaultAiApiKey || undefined,
+          platform: form.aiPlatform,
         }),
       });
 
-      if (res.ok) {
-        const data = await res.json();
-        if (data.models && data.models.length > 0) {
-          setFetchedModels(data.models);
-          setFetchSuccess(`Successfully fetched ${data.models.length} models!`);
-          if (!form.defaultAiModel || !data.models.includes(form.defaultAiModel)) {
-            setForm((prev) => ({ ...prev, defaultAiModel: data.models[0] }));
-          }
-          setFetchingModels(false);
-          return;
-        }
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        setFetchError(data.error || 'Could not fetch models. Verify your endpoint URL and API Key.');
+        return;
       }
 
-      // If server returned an error, extract it
-      const errData = await res.json().catch(() => null);
-
-      // Only try direct client fetch if the endpoint is a local address (e.g. Ollama localhost)
-      const isLocal = /localhost|127\.0\.0\.1|0\.0\.0\.0/i.test(form.defaultAiBaseUrl);
-      if (isLocal) {
-        let baseUrl = form.defaultAiBaseUrl.trim().replace(/\/+$/, '');
-        if (!baseUrl.startsWith('http://') && !baseUrl.startsWith('https://')) {
-          baseUrl = `http://${baseUrl}`;
-        }
-        if (baseUrl.endsWith('/chat/completions')) baseUrl = baseUrl.replace(/\/chat\/completions$/, '');
-        const modelsUrl = baseUrl.endsWith('/models') ? baseUrl : `${baseUrl}/models`;
-
-        try {
-          const clientRes = await fetch(modelsUrl, {
-            headers: { Authorization: `Bearer ${form.defaultAiApiKey.trim()}` },
-          });
-
-          if (clientRes.ok) {
-            const data = await clientRes.json();
-            const list = Array.isArray(data.data) ? data.data.map((m: Record<string, unknown>) => String(m.id || '')) : [];
-            if (list.length > 0) {
-              setFetchedModels(list);
-              setFetchSuccess(`Successfully fetched ${list.length} models locally!`);
-              if (!form.defaultAiModel || !list.includes(form.defaultAiModel)) {
-                setForm((prev) => ({ ...prev, defaultAiModel: list[0] }));
-              }
-              setFetchingModels(false);
-              return;
-            }
-          }
-        } catch {
-          // Fall through to error reporting below
+      if (data.models && data.models.length > 0) {
+        setFetchedModels(data.models);
+        setFetchSuccess(`Successfully discovered ${data.models.length} models!`);
+        if (!form.defaultAiModel || !data.models.includes(form.defaultAiModel)) {
+          setForm((prev) => ({ ...prev, defaultAiModel: data.models[0] }));
         }
       }
-
-      setFetchError(errData?.error || 'Could not fetch models. Verify your endpoint URL and API Key.');
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setFetchError(`Connection error: ${msg}`);
@@ -212,6 +187,8 @@ export function SuperAdminSettingsView() {
   const handleSave = async () => {
     setSaving(true);
     setMessage(null);
+    setErrorMessage(null);
+
     try {
       const finalBaseUrl =
         form.aiPlatform === 'openai'
@@ -222,23 +199,43 @@ export function SuperAdminSettingsView() {
 
       const finalUseAnthropic = form.aiPlatform === 'anthropic';
 
-      await CRMDatabaseService.updatePlatformSettings({
+      const payload: Record<string, unknown> = {
+        aiPlatform: form.aiPlatform,
+        defaultAiBaseUrl: finalBaseUrl,
         defaultAiModel: form.defaultAiModel,
+        aiUseAnthropicFormat: finalUseAnthropic,
         platformMonthlyAiCap: form.platformMonthlyAiCap,
         maintenanceMode: form.maintenanceMode,
-        settings: {
-          aiPlatform: form.aiPlatform,
-          defaultAiBaseUrl: finalBaseUrl,
-          defaultAiApiKey: form.defaultAiApiKey,
-          aiUseAnthropicFormat: finalUseAnthropic,
-          allowNewTenants: form.allowNewTenants,
-          defaultAiBudget: form.defaultAiBudget,
-          supportEmail: form.supportEmail,
-        },
+        allowNewTenants: form.allowNewTenants,
+        defaultAiBudget: form.defaultAiBudget,
+        supportEmail: form.supportEmail,
+      };
+
+      // Only send apiKey if user typed a new key in the field
+      if (form.defaultAiApiKey && form.defaultAiApiKey.trim().length > 0) {
+        payload.apiKey = form.defaultAiApiKey.trim();
+      }
+
+      const res = await fetch('/api/platform/settings', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
       });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        setErrorMessage(data.error || 'Failed to save platform settings.');
+        return;
+      }
+
       setMessage('Platform settings saved successfully.');
-    } catch {
-      setMessage('Failed to save platform settings.');
+      if (data.settings) {
+        setApiKeyConfigured(Boolean(data.settings.apiKeyConfigured));
+        setApiKeyMasked(data.settings.apiKeyMasked || null);
+        setForm((prev) => ({ ...prev, defaultAiApiKey: '' })); // clear candidate key from memory
+      }
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : 'Failed to save platform settings.');
     } finally {
       setSaving(false);
     }
@@ -259,6 +256,13 @@ export function SuperAdminSettingsView() {
           <div className="p-3 rounded-xl bg-primary/10 text-primary text-sm font-medium border border-primary/20 flex items-center gap-2">
             <CheckCircle2 className="h-4 w-4 shrink-0" />
             {message}
+          </div>
+        )}
+
+        {errorMessage && (
+          <div className="p-3 rounded-xl bg-destructive/10 text-destructive text-sm font-medium border border-destructive/20 flex items-center gap-2">
+            <AlertCircle className="h-4 w-4 shrink-0" />
+            {errorMessage}
           </div>
         )}
 
@@ -353,15 +357,23 @@ export function SuperAdminSettingsView() {
                   </div>
 
                   <div>
-                    <label className="text-xs font-mono uppercase text-muted-foreground flex items-center gap-1.5">
-                      <Key className="h-3.5 w-3.5 text-primary" />
-                      OpenAI API Key
-                    </label>
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-mono uppercase text-muted-foreground flex items-center gap-1.5">
+                        <Key className="h-3.5 w-3.5 text-primary" />
+                        OpenAI API Key
+                      </label>
+                      {apiKeyConfigured && (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-mono text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md font-semibold">
+                          <CheckCircle2 className="h-3 w-3" />
+                          Configured {apiKeyMasked ? `(${apiKeyMasked})` : ''}
+                        </span>
+                      )}
+                    </div>
                     <input
                       type="password"
                       value={form.defaultAiApiKey}
                       onChange={(e) => setForm({ ...form, defaultAiApiKey: e.target.value })}
-                      placeholder="sk-proj-..."
+                      placeholder={apiKeyConfigured ? 'Leave blank to keep existing key' : 'sk-proj-...'}
                       className="mt-1.5 w-full h-10 rounded-xl border border-border bg-background px-3 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
                     />
                   </div>
@@ -411,15 +423,23 @@ export function SuperAdminSettingsView() {
                   </div>
 
                   <div>
-                    <label className="text-xs font-mono uppercase text-muted-foreground flex items-center gap-1.5">
-                      <Key className="h-3.5 w-3.5 text-amber-500" />
-                      Anthropic API Key
-                    </label>
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-mono uppercase text-muted-foreground flex items-center gap-1.5">
+                        <Key className="h-3.5 w-3.5 text-amber-500" />
+                        Anthropic API Key
+                      </label>
+                      {apiKeyConfigured && (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-mono text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md font-semibold">
+                          <CheckCircle2 className="h-3 w-3" />
+                          Configured {apiKeyMasked ? `(${apiKeyMasked})` : ''}
+                        </span>
+                      )}
+                    </div>
                     <input
                       type="password"
                       value={form.defaultAiApiKey}
                       onChange={(e) => setForm({ ...form, defaultAiApiKey: e.target.value })}
-                      placeholder="sk-ant-api03-..."
+                      placeholder={apiKeyConfigured ? 'Leave blank to keep existing key' : 'sk-ant-api03-...'}
                       className="mt-1.5 w-full h-10 rounded-xl border border-border bg-background px-3 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500"
                     />
                   </div>
@@ -486,7 +506,6 @@ export function SuperAdminSettingsView() {
                         { name: 'Z.ai (GLM)', url: 'https://api.z.ai/api/paas/v4' },
                         { name: 'Groq', url: 'https://api.groq.com/openai/v1' },
                         { name: 'OpenRouter', url: 'https://openrouter.ai/api/v1' },
-                        { name: 'Ollama (Local)', url: 'http://localhost:11434/v1' },
                       ].map((preset) => (
                         <button
                           key={preset.name}
@@ -505,22 +524,30 @@ export function SuperAdminSettingsView() {
                   </div>
 
                   <div>
-                    <label className="text-xs font-mono uppercase text-muted-foreground flex items-center gap-1.5">
-                      <Key className="h-3.5 w-3.5 text-purple-500" />
-                      API Key
-                    </label>
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-mono uppercase text-muted-foreground flex items-center gap-1.5">
+                        <Key className="h-3.5 w-3.5 text-purple-500" />
+                        API Key
+                      </label>
+                      {apiKeyConfigured && (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-mono text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md font-semibold">
+                          <CheckCircle2 className="h-3 w-3" />
+                          Configured {apiKeyMasked ? `(${apiKeyMasked})` : ''}
+                        </span>
+                      )}
+                    </div>
                     <div className="flex gap-2 mt-1.5">
                       <input
                         type="password"
                         value={form.defaultAiApiKey}
                         onChange={(e) => setForm({ ...form, defaultAiApiKey: e.target.value })}
-                        placeholder="Provider API Key..."
+                        placeholder={apiKeyConfigured ? 'Leave blank to keep existing key' : 'Provider API Key...'}
                         className="flex-1 h-10 rounded-xl border border-border bg-background px-3 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500"
                       />
                       <button
                         type="button"
                         onClick={handleFetchModels}
-                        disabled={fetchingModels || !form.defaultAiBaseUrl || !form.defaultAiApiKey}
+                        disabled={fetchingModels || !form.defaultAiBaseUrl || (!apiKeyConfigured && !form.defaultAiApiKey)}
                         className="h-10 px-4 rounded-xl bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white text-xs font-semibold flex items-center gap-2 shrink-0 transition-all shadow-sm"
                       >
                         {fetchingModels ? (
@@ -664,4 +691,3 @@ export function SuperAdminSettingsView() {
     </div>
   );
 }
-
