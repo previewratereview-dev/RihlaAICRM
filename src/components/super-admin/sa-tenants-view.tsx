@@ -5,7 +5,6 @@ import { useCRMStore } from '@/hooks/use-crm-store';
 import { Building2, Power, PowerOff, Plus, Search, Pencil, Users, TrendingUp, Cpu, MessageSquare, Eye, Trash2, Crown } from 'lucide-react';
 import { EmptyState } from '@/components/ui/empty-state';
 import { logger } from '@/lib/logger';
-import { CRMDatabaseService } from '@/lib/db-service';
 import type { TenantFeatureFlags } from '@/types';
 
 interface TenantModalProps {
@@ -166,7 +165,6 @@ function DeleteConfirmModal({ name, onConfirm, onCancel, saving }: { name: strin
 export function SuperAdminTenantsView() {
   const tenantsWithStats = useCRMStore((state) => state.tenantsWithStats);
   const syncData = useCRMStore((state) => state.syncData);
-  const logAuditEvent = useCRMStore((state) => state.logAuditEvent);
   const setImpersonateTenant = useCRMStore((state) => state.setImpersonateTenant);
   const setActiveTab = useCRMStore((state) => state.setActiveTab);
 
@@ -227,24 +225,44 @@ export function SuperAdminTenantsView() {
     });
   };
 
-  const toggleStatus = async (id: string, currentStatus: string, tenantName: string) => {
+  const toggleStatus = async (id: string, currentStatus: string) => {
     const newStatus = currentStatus === 'active' ? 'suspended' : 'active';
-    await CRMDatabaseService.updateTenantStatus(id, newStatus);
-    await logAuditEvent(newStatus === 'suspended' ? 'tenant_suspended' : 'tenant_updated', `${tenantName} ${newStatus}.`);
-    await syncData();
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/platform/agencies/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to update agency status');
+      }
+      await syncData();
+    } catch (e) {
+      logger.error('Failed to update agency status', e);
+      alert(e instanceof Error ? e.message : 'Failed to update status.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleDelete = async () => {
     if (!deleteTarget) return;
     setSaving(true);
     try {
-      await CRMDatabaseService.deleteAgency(deleteTarget.id);
-      await logAuditEvent('tenant_suspended', `Deleted agency "${deleteTarget.name}" (${deleteTarget.id}).`);
+      const res = await fetch(`/api/platform/agencies/${deleteTarget.id}`, {
+        method: 'DELETE',
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to delete agency');
+      }
       setDeleteTarget(null);
       await syncData();
     } catch (e) {
       logger.error('Failed to delete agency', e);
-      alert('Failed to delete agency.');
+      alert(e instanceof Error ? e.message : 'Failed to delete agency.');
     } finally {
       setSaving(false);
     }
@@ -255,10 +273,22 @@ export function SuperAdminTenantsView() {
     setSaving(true);
     try {
       const id = slug.trim().toLowerCase().replace(/\s+/g, '-');
-      await CRMDatabaseService.createTenant({ id, name: name.trim(), slug: id, domain: domain.trim() || undefined });
-      await CRMDatabaseService.updateTenantSettings(id, { aiBudget, features });
-      await CRMDatabaseService.updateAgencySubscription(id, plan);
-      await logAuditEvent('tenant_created', `Created agency "${name.trim()}" (${id}).`);
+      const res = await fetch('/api/platform/agencies', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: name.trim(),
+          slug: id,
+          domain: domain.trim() || undefined,
+          plan,
+          aiBudget,
+          features,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to create agency');
+      }
       setShowCreate(false);
       setName('');
       setSlug('');
@@ -268,7 +298,7 @@ export function SuperAdminTenantsView() {
       await syncData();
     } catch (e) {
       logger.error('Tenant operation failed', e);
-      alert('Failed to create agency. Slug may already exist.');
+      alert(e instanceof Error ? e.message : 'Failed to create agency.');
     } finally {
       setSaving(false);
     }
@@ -278,21 +308,28 @@ export function SuperAdminTenantsView() {
     if (!editTenant) return;
     setSaving(true);
     try {
-      await CRMDatabaseService.updateTenant(editTenant.id, {
-        name,
-        slug,
-        domain: domain || undefined,
-        primaryColor,
-        customPrompt: customPrompt || undefined,
+      const res = await fetch(`/api/platform/agencies/${editTenant.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: name.trim(),
+          domain: domain.trim() || undefined,
+          primaryColor,
+          customPrompt: customPrompt || undefined,
+          plan,
+          aiBudget,
+          features,
+        }),
       });
-      await CRMDatabaseService.updateTenantSettings(editTenant.id, { aiBudget, features });
-      await CRMDatabaseService.updateAgencySubscription(editTenant.id, plan);
-      await logAuditEvent('tenant_updated', `Updated agency "${name}" configuration.`);
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to save agency');
+      }
       setEditTenant(null);
       await syncData();
     } catch (e) {
       logger.error('Tenant operation failed', e);
-      alert('Failed to save agency.');
+      alert(e instanceof Error ? e.message : 'Failed to save agency.');
     } finally {
       setSaving(false);
     }
@@ -462,7 +499,7 @@ export function SuperAdminTenantsView() {
                   <Pencil className="w-3.5 h-3.5" /> Edit
                 </button>
                 <button
-                  onClick={() => toggleStatus(tenant.id, tenant.status, tenant.name)}
+                  onClick={() => toggleStatus(tenant.id, tenant.status)}
                   className={`flex-1 flex items-center justify-center gap-1.5 py-2 text-sm font-medium rounded-lg border ${tenant.status === 'active' ? 'text-red-600 border-red-200 hover:bg-red-50 dark:border-red-800 dark:hover:bg-red-950' : 'text-emerald-600 border-emerald-200 hover:bg-emerald-50 dark:border-emerald-800 dark:hover:bg-emerald-950'}`}
                 >
                   {tenant.status === 'active' ? <><PowerOff className="w-3.5 h-3.5" /> Suspend</> : <><Power className="w-3.5 h-3.5" /> Activate</>}
