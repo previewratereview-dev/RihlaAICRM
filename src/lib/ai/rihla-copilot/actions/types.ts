@@ -93,6 +93,7 @@ export interface ActionExecutionResult {
     | 'FORBIDDEN'
     | 'NOT_FOUND'
     | 'STALE_STATE'
+    | 'ALREADY_EXECUTED'
     | 'INVALID_ARGUMENT'
     | 'INVALID_SIGNATURE'
     | 'EXPIRED_PROPOSAL'

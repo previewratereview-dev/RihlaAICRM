@@ -18,7 +18,7 @@ import {
   ProposeAssignInquirySchema,
   ProposeSetInquiryFollowUpSchema,
 } from './types';
-import { signProposal } from './signatures';
+import { signProposal, isActionSigningConfigured } from './signatures';
 
 export interface ProposalOutput {
   proposal: ActionProposalDTO;
@@ -38,6 +38,12 @@ export const proposeUpdateInquiryStageTool: ToolDefinition<typeof ProposeUpdateI
     params,
     supabase: SupabaseClient
   ): Promise<ToolResult<ProposalOutput>> => {
+    if (!isActionSigningConfigured()) {
+      return {
+        success: false,
+        error: 'CRM action proposals are temporarily unavailable because COPILOT_ACTION_SECRET is not configured on the server.',
+      };
+    }
     try {
       const inquiryId = params.inquiryId.trim();
       const targetStage = params.proposedStage as ValidInquiryStage;
@@ -127,6 +133,12 @@ export const proposeAssignInquiryTool: ToolDefinition<typeof ProposeAssignInquir
     params,
     supabase: SupabaseClient
   ): Promise<ToolResult<ProposalOutput>> => {
+    if (!isActionSigningConfigured()) {
+      return {
+        success: false,
+        error: 'CRM action proposals are temporarily unavailable because COPILOT_ACTION_SECRET is not configured on the server.',
+      };
+    }
     try {
       const inquiryId = params.inquiryId.trim();
       const assigneeUserId = params.assigneeUserId.trim();
@@ -219,6 +231,12 @@ export const proposeSetInquiryFollowUpTool: ToolDefinition<typeof ProposeSetInqu
     params,
     supabase: SupabaseClient
   ): Promise<ToolResult<ProposalOutput>> => {
+    if (!isActionSigningConfigured()) {
+      return {
+        success: false,
+        error: 'CRM action proposals are temporarily unavailable because COPILOT_ACTION_SECRET is not configured on the server.',
+      };
+    }
     try {
       const inquiryId = params.inquiryId.trim();
       const nextFollowUpAt = params.nextFollowUpAt ? new Date(params.nextFollowUpAt).toISOString() : null;

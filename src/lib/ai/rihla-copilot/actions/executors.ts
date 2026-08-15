@@ -1,13 +1,17 @@
 /**
- * CRM Copilot Action Mutation Executors (Phase AI-3)
+ * CRM Copilot Action Mutation Executors (Phase AI-3A)
  * 
  * Deterministic, server-only mutation executors invoked ONLY upon explicit human confirmation.
+ * Delegates execution to the atomic database RPC: public.execute_copilot_inquiry_action_atomic.
  * 
  * INVARIANTS:
  * - NOT exposed as model tools.
+ * - Single atomic database transaction covers canonical Inquiry update, legacy Lead dual-write,
+ *   single-use proposal execution receipt, and activity log insert.
+ * - Proposal execution is transactionally single-use (duplicate proposal_id rejected with ALREADY_EXECUTED).
  * - Re-authenticates actor session, tenant boundary, and RBAC write permissions.
  * - Re-reads authoritative DB record and aborts on stale state (optimistic concurrency).
- * - Attributes audit log / activity to the authenticated human user (with source: copilot).
+ * - Attributes audit log / activity to the authenticated human user.
  * - Zero external messaging (no email, WhatsApp, SMS).
  * - Zero financial or booking mutations.
  */
@@ -16,6 +20,7 @@ import type { UserRole } from '@/types/common';
 import {
   type ActionProposalDTO,
   type ActionExecutionResult,
+  type ActionType,
   type ValidInquiryStage,
   WRITABLE_ROLES,
   STAGE_LABELS,
@@ -30,6 +35,82 @@ export interface AuthenticatedActor {
 }
 
 /**
+ * Maps Supabase RPC errors to sanitized, client-safe ActionExecutionResults.
+ */
+function mapRpcErrorToActionExecutionResult(
+  actionType: ActionType,
+  entityId: string,
+  error: { message?: string; code?: string } | null
+): ActionExecutionResult {
+  const msg = error?.message || 'Database execution error';
+  const code = error?.code || '';
+
+  if (msg.includes('ALREADY_EXECUTED') || code === '23505') {
+    return {
+      success: false,
+      actionType,
+      entityId,
+      message: 'This action proposal has already been executed. No changes made.',
+      error: 'Proposal already executed',
+      errorCode: 'ALREADY_EXECUTED',
+    };
+  }
+
+  if (msg.includes('STALE_STATE') || code === 'P0001') {
+    return {
+      success: false,
+      actionType,
+      entityId,
+      message: 'The record was modified after this action was prepared, or is already in the target state. Please review the latest record.',
+      error: 'Stale state conflict',
+      errorCode: 'STALE_STATE',
+    };
+  }
+
+  if (msg.includes('FORBIDDEN') || code === '42501') {
+    return {
+      success: false,
+      actionType,
+      entityId,
+      message: 'You do not have permission to execute this CRM action.',
+      error: 'Forbidden',
+      errorCode: 'FORBIDDEN',
+    };
+  }
+
+  if (msg.includes('NOT_FOUND') || code === 'P0002') {
+    return {
+      success: false,
+      actionType,
+      entityId,
+      message: 'Inquiry not found in current agency workspace.',
+      error: 'Not found',
+      errorCode: 'NOT_FOUND',
+    };
+  }
+
+  if (msg.includes('INVALID_ARGUMENT') || code === '22023') {
+    return {
+      success: false,
+      actionType,
+      entityId,
+      message: 'Invalid action arguments provided.',
+      error: 'Invalid argument',
+      errorCode: 'INVALID_ARGUMENT',
+    };
+  }
+
+  return {
+    success: false,
+    actionType,
+    entityId,
+    message: 'Database error executing atomic CRM action.',
+    error: 'Execution failed',
+    errorCode: 'EXECUTION_FAILED',
+  };
+}
+
+/**
  * Executes an action proposal after explicit human confirmation and full server revalidation.
  */
 export async function executeConfirmedAction(
@@ -37,8 +118,6 @@ export async function executeConfirmedAction(
   proposal: ActionProposalDTO,
   supabase: SupabaseClient
 ): Promise<ActionExecutionResult> {
-  const now = new Date().toISOString();
-
   // 1. Revalidate Actor & Tenant
   if (!actor || !actor.userId || !actor.tenantId) {
     return {
@@ -98,50 +177,14 @@ export async function executeConfirmedAction(
     };
   }
 
-  // 5. Re-read canonical Inquiry record (Tenant Boundary & Stale-State Check)
-  const { data: currentInq, error: readErr } = await supabase
-    .from('inquiries')
-    .select('id, tenant_id, destination, pipeline_stage, assigned_agent_id, next_follow_up_at, legacy_lead_id, updated_at')
-    .eq('id', proposal.entityId)
-    .eq('tenant_id', actor.tenantId)
-    .is('archived_at', null)
-    .maybeSingle();
-
-  if (readErr || !currentInq) {
-    return {
-      success: false,
-      actionType: proposal.actionType,
-      entityId: proposal.entityId,
-      message: 'Inquiry not found in current agency workspace.',
-      error: 'Record not found or cross-tenant access denied',
-      errorCode: 'NOT_FOUND',
-    };
-  }
-
-  // 6. Ownership Parity Check:
-  // Admins & Managers have tenant-wide authority.
-  // Specialists, consultants, setters, closers can only modify inquiries assigned to them or unassigned inquiries.
-  if (actor.role !== 'admin' && actor.role !== 'manager') {
-    if (currentInq.assigned_agent_id && currentInq.assigned_agent_id !== actor.userId) {
-      return {
-        success: false,
-        actionType: proposal.actionType,
-        entityId: currentInq.id,
-        message: 'You can only modify inquiries assigned to you or unassigned inquiries.',
-        error: 'Ownership permission denied',
-        errorCode: 'FORBIDDEN',
-      };
-    }
-  }
-
-  // 7. Dispatch specific action executor
+  // 5. Dispatch specific atomic server action executor
   switch (proposal.actionType) {
     case 'update_inquiry_stage':
-      return await executeUpdateInquiryStage(actor, currentInq, proposal, supabase, now);
+      return await executeUpdateInquiryStage(actor, proposal, supabase);
     case 'assign_inquiry':
-      return await executeAssignInquiry(actor, currentInq, proposal, supabase, now);
+      return await executeAssignInquiry(actor, proposal, supabase);
     case 'set_inquiry_follow_up':
-      return await executeSetInquiryFollowUp(actor, currentInq, proposal, supabase, now);
+      return await executeSetInquiryFollowUp(actor, proposal, supabase);
     default:
       return {
         success: false,
@@ -154,429 +197,162 @@ export async function executeConfirmedAction(
   }
 }
 
-interface CurrentInquiryRecord {
-  id: string;
-  tenant_id: string;
-  destination?: string | null;
-  pipeline_stage?: string | null;
-  assigned_agent_id?: string | null;
-  next_follow_up_at?: string | null;
-  legacy_lead_id?: string | null;
-  updated_at?: string;
-}
-
 /**
- * Executor: Update Inquiry Pipeline Stage
+ * Server Executor 1: Atomic Update Inquiry Stage
  */
-async function executeUpdateInquiryStage(
-  actor: AuthenticatedActor,
-  currentInq: CurrentInquiryRecord,
+export async function executeUpdateInquiryStage(
+  _actor: AuthenticatedActor,
   proposal: ActionProposalDTO,
-  supabase: SupabaseClient,
-  now: string
+  supabase: SupabaseClient
 ): Promise<ActionExecutionResult> {
   const targetStage = proposal.proposedState.stage as ValidInquiryStage;
   if (!targetStage || !STAGE_LABELS[targetStage]) {
     return {
       success: false,
       actionType: proposal.actionType,
-      entityId: currentInq.id,
+      entityId: proposal.entityId,
       message: 'Invalid target pipeline stage.',
       error: 'Invalid target stage',
       errorCode: 'INVALID_ARGUMENT',
     };
   }
 
-  // Replay & Stale-State Check: Verify record has not changed stage since proposal was created, and is not already in target stage
-  if (currentInq.pipeline_stage === targetStage) {
-    const stageLabel = STAGE_LABELS[targetStage] || targetStage;
-    return {
-      success: false,
-      actionType: proposal.actionType,
-      entityId: currentInq.id,
-      message: `Inquiry is already in "${stageLabel}". No changes made.`,
-      error: 'Already in target stage',
-      errorCode: 'STALE_STATE',
-    };
+  const { data: rpcResult, error: rpcErr } = await supabase.rpc('execute_copilot_inquiry_action_atomic', {
+    p_proposal_id: proposal.proposalId,
+    p_inquiry_id: proposal.entityId,
+    p_action_type: 'update_inquiry_stage',
+    p_expected_current_state: proposal.currentState || {},
+    p_proposed_state: proposal.proposedState || {},
+  });
+
+  if (rpcErr) {
+    return mapRpcErrorToActionExecutionResult('update_inquiry_stage', proposal.entityId, rpcErr);
   }
 
-  if (proposal.currentState.stage && currentInq.pipeline_stage !== proposal.currentState.stage) {
-    const currentLabel = STAGE_LABELS[currentInq.pipeline_stage as ValidInquiryStage] || currentInq.pipeline_stage;
+  if (!rpcResult || !rpcResult.success) {
     return {
       success: false,
-      actionType: proposal.actionType,
-      entityId: currentInq.id,
-      message: `This inquiry changed to "${currentLabel}" after the action was prepared. Please review the latest record and try again.`,
-      error: 'Stale state conflict',
-      errorCode: 'STALE_STATE',
-    };
-  }
-
-  // 1. Update public.inquiries
-  const { error: inqUpdateErr } = await supabase
-    .from('inquiries')
-    .update({
-      pipeline_stage: targetStage,
-      updated_at: now,
-    })
-    .eq('id', currentInq.id)
-    .eq('tenant_id', actor.tenantId);
-
-  if (inqUpdateErr) {
-    console.error('[Copilot Execution Error] update inquiry stage:', inqUpdateErr.message);
-    return {
-      success: false,
-      actionType: proposal.actionType,
-      entityId: currentInq.id,
-      message: 'Database error updating inquiry stage.',
-      error: inqUpdateErr.message,
+      actionType: 'update_inquiry_stage',
+      entityId: proposal.entityId,
+      message: rpcResult?.message || 'Database error updating inquiry stage.',
+      error: 'Execution failed',
       errorCode: 'EXECUTION_FAILED',
     };
   }
 
-  // 2. Dual-write to public.leads if legacy_lead_id is present
-  if (currentInq.legacy_lead_id) {
-    const { error: leadUpdateErr } = await supabase
-      .from('leads')
-      .update({
-        status: targetStage,
-        updated_at: now,
-      })
-      .eq('id', currentInq.legacy_lead_id)
-      .eq('tenant_id', actor.tenantId);
-
-    if (leadUpdateErr) {
-      console.error('[Copilot Dual-Write Error] Reverting inquiry update due to legacy lead failure:', leadUpdateErr.message);
-      // Compensating rollback on canonical inquiry
-      await supabase
-        .from('inquiries')
-        .update({
-          pipeline_stage: currentInq.pipeline_stage,
-          updated_at: currentInq.updated_at || now,
-        })
-        .eq('id', currentInq.id)
-        .eq('tenant_id', actor.tenantId);
-
-      return {
-        success: false,
-        actionType: proposal.actionType,
-        entityId: currentInq.id,
-        message: 'Database error updating legacy compatibility record. Changes were reverted.',
-        error: leadUpdateErr.message,
-        errorCode: 'EXECUTION_FAILED',
-      };
-    }
-  }
-
-  // 3. Insert audit activity log (Attributed to the authenticated HUMAN actor)
-  const prevLabel = STAGE_LABELS[currentInq.pipeline_stage as ValidInquiryStage] || currentInq.pipeline_stage;
-  const newLabel = STAGE_LABELS[targetStage] || targetStage;
-
-  const { error: actErr } = await supabase.from('activities').insert({
-    id: `act-stage-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-    lead_id: currentInq.legacy_lead_id || null,
-    user_id: actor.userId,
-    user_name: actor.fullName,
-    type: 'status_change',
-    title: 'Inquiry Stage Updated via Copilot',
-    description: `Stage moved from "${prevLabel}" to "${newLabel}" (confirmed by ${actor.fullName}).`,
-    tenant_id: actor.tenantId,
-    created_at: now,
-  });
-
-  if (actErr) {
-    console.warn('[Copilot Activity Log Warning] Failed to insert stage activity log:', actErr.message);
-  }
-
+  const stageLabel = STAGE_LABELS[targetStage] || targetStage;
   return {
     success: true,
     actionType: 'update_inquiry_stage',
-    entityId: currentInq.id,
-    message: `Stage successfully updated to **${newLabel}**.`,
+    entityId: proposal.entityId,
+    message: `Stage successfully updated to **${stageLabel}**.`,
     newState: {
       stage: targetStage,
-      stageLabel: newLabel,
-      updatedAt: now,
+      stageLabel,
+      updatedAt: rpcResult.newState?.updatedAt || new Date().toISOString(),
     },
   };
 }
 
 /**
- * Executor: Assign Inquiry
+ * Server Executor 2: Atomic Assign Inquiry
  */
-async function executeAssignInquiry(
-  actor: AuthenticatedActor,
-  currentInq: CurrentInquiryRecord,
+export async function executeAssignInquiry(
+  _actor: AuthenticatedActor,
   proposal: ActionProposalDTO,
-  supabase: SupabaseClient,
-  now: string
+  supabase: SupabaseClient
 ): Promise<ActionExecutionResult> {
   const targetAssigneeId = proposal.proposedState.assignedAgentId;
   if (!targetAssigneeId) {
     return {
       success: false,
       actionType: proposal.actionType,
-      entityId: currentInq.id,
+      entityId: proposal.entityId,
       message: 'Target assignee ID is required.',
       error: 'Missing assignee',
       errorCode: 'INVALID_ARGUMENT',
     };
   }
 
-  // Replay check: already assigned
-  if (currentInq.assigned_agent_id === targetAssigneeId) {
-    return {
-      success: false,
-      actionType: proposal.actionType,
-      entityId: currentInq.id,
-      message: 'Inquiry is already assigned to this team member. No changes made.',
-      error: 'Already assigned to target',
-      errorCode: 'STALE_STATE',
-    };
+  const { data: rpcResult, error: rpcErr } = await supabase.rpc('execute_copilot_inquiry_action_atomic', {
+    p_proposal_id: proposal.proposalId,
+    p_inquiry_id: proposal.entityId,
+    p_action_type: 'assign_inquiry',
+    p_expected_current_state: proposal.currentState || {},
+    p_proposed_state: proposal.proposedState || {},
+  });
+
+  if (rpcErr) {
+    return mapRpcErrorToActionExecutionResult('assign_inquiry', proposal.entityId, rpcErr);
   }
 
-  // Revalidate that target assignee belongs to same tenant and is an eligible role
-  const { data: assigneeProfile, error: profErr } = await supabase
-    .from('profiles')
-    .select('id, full_name, role, tenant_id')
-    .eq('id', targetAssigneeId)
-    .eq('tenant_id', actor.tenantId)
-    .maybeSingle();
-
-  if (profErr || !assigneeProfile) {
+  if (!rpcResult || !rpcResult.success) {
     return {
       success: false,
-      actionType: proposal.actionType,
-      entityId: currentInq.id,
-      message: 'Target assignee is not a valid team member in this workspace.',
-      error: 'Invalid assignee',
-      errorCode: 'INVALID_ARGUMENT',
-    };
-  }
-
-  // Stale-State Check: Verify assignee has not changed since proposal
-  if (
-    proposal.currentState.assignedAgentId !== undefined &&
-    (currentInq.assigned_agent_id || null) !== (proposal.currentState.assignedAgentId || null)
-  ) {
-    return {
-      success: false,
-      actionType: proposal.actionType,
-      entityId: currentInq.id,
-      message: 'The inquiry assignee was modified after this action was prepared. Please review the latest record.',
-      error: 'Stale state conflict',
-      errorCode: 'STALE_STATE',
-    };
-  }
-
-  // 1. Update public.inquiries
-  const { error: inqUpdateErr } = await supabase
-    .from('inquiries')
-    .update({
-      assigned_agent_id: targetAssigneeId,
-      updated_at: now,
-    })
-    .eq('id', currentInq.id)
-    .eq('tenant_id', actor.tenantId);
-
-  if (inqUpdateErr) {
-    console.error('[Copilot Execution Error] assign inquiry:', inqUpdateErr.message);
-    return {
-      success: false,
-      actionType: proposal.actionType,
-      entityId: currentInq.id,
-      message: 'Database error reassigning inquiry.',
-      error: inqUpdateErr.message,
+      actionType: 'assign_inquiry',
+      entityId: proposal.entityId,
+      message: rpcResult?.message || 'Database error assigning inquiry.',
+      error: 'Execution failed',
       errorCode: 'EXECUTION_FAILED',
     };
   }
 
-  // 2. Dual-write to public.leads
-  if (currentInq.legacy_lead_id) {
-    const { error: leadUpdateErr } = await supabase
-      .from('leads')
-      .update({
-        assigned_to: targetAssigneeId,
-        updated_at: now,
-      })
-      .eq('id', currentInq.legacy_lead_id)
-      .eq('tenant_id', actor.tenantId);
-
-    if (leadUpdateErr) {
-      console.error('[Copilot Dual-Write Error] Reverting inquiry assignment due to legacy lead failure:', leadUpdateErr.message);
-      // Compensating rollback on canonical inquiry
-      await supabase
-        .from('inquiries')
-        .update({
-          assigned_agent_id: currentInq.assigned_agent_id,
-          updated_at: currentInq.updated_at || now,
-        })
-        .eq('id', currentInq.id)
-        .eq('tenant_id', actor.tenantId);
-
-      return {
-        success: false,
-        actionType: proposal.actionType,
-        entityId: currentInq.id,
-        message: 'Database error updating legacy compatibility record. Changes were reverted.',
-        error: leadUpdateErr.message,
-        errorCode: 'EXECUTION_FAILED',
-      };
-    }
-  }
-
-  // 3. Insert audit activity log (Attributed to HUMAN actor)
-  const assigneeName = assigneeProfile.full_name || 'Team Member';
-  const { error: actErr } = await supabase.from('activities').insert({
-    id: `act-assign-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-    lead_id: currentInq.legacy_lead_id || null,
-    user_id: actor.userId,
-    user_name: actor.fullName,
-    type: 'assigned',
-    title: 'Inquiry Reassigned via Copilot',
-    description: `Assigned to ${assigneeName} (confirmed by ${actor.fullName}).`,
-    tenant_id: actor.tenantId,
-    created_at: now,
-  });
-
-  if (actErr) {
-    console.warn('[Copilot Activity Log Warning] Failed to insert assign activity log:', actErr.message);
-  }
-
+  const assigneeName = proposal.proposedState.assignedAgentName || 'Team Member';
   return {
     success: true,
     actionType: 'assign_inquiry',
-    entityId: currentInq.id,
+    entityId: proposal.entityId,
     message: `Inquiry successfully assigned to **${assigneeName}**.`,
     newState: {
       assignedAgentId: targetAssigneeId,
       assignedAgentName: assigneeName,
-      updatedAt: now,
+      updatedAt: rpcResult.newState?.updatedAt || new Date().toISOString(),
     },
   };
 }
 
 /**
- * Executor: Set Inquiry Next Follow-Up
+ * Server Executor 3: Atomic Set Inquiry Next Follow-Up
  */
-async function executeSetInquiryFollowUp(
-  actor: AuthenticatedActor,
-  currentInq: CurrentInquiryRecord,
+export async function executeSetInquiryFollowUp(
+  _actor: AuthenticatedActor,
   proposal: ActionProposalDTO,
-  supabase: SupabaseClient,
-  now: string
+  supabase: SupabaseClient
 ): Promise<ActionExecutionResult> {
   const targetFollowUpAt = proposal.proposedState.nextFollowUpAt || null;
 
-  // Replay check: already set to target follow-up date
-  if ((currentInq.next_follow_up_at || null) === targetFollowUpAt) {
-    return {
-      success: false,
-      actionType: proposal.actionType,
-      entityId: currentInq.id,
-      message: 'Follow-up is already set to this datetime. No changes made.',
-      error: 'Already set to target follow-up',
-      errorCode: 'STALE_STATE',
-    };
+  const { data: rpcResult, error: rpcErr } = await supabase.rpc('execute_copilot_inquiry_action_atomic', {
+    p_proposal_id: proposal.proposalId,
+    p_inquiry_id: proposal.entityId,
+    p_action_type: 'set_inquiry_follow_up',
+    p_expected_current_state: proposal.currentState || {},
+    p_proposed_state: proposal.proposedState || {},
+  });
+
+  if (rpcErr) {
+    return mapRpcErrorToActionExecutionResult('set_inquiry_follow_up', proposal.entityId, rpcErr);
   }
 
-  // Stale-State Check: Verify follow-up date has not changed since proposal
-  if (
-    proposal.currentState.nextFollowUpAt !== undefined &&
-    (currentInq.next_follow_up_at || null) !== (proposal.currentState.nextFollowUpAt || null)
-  ) {
+  if (!rpcResult || !rpcResult.success) {
     return {
       success: false,
-      actionType: proposal.actionType,
-      entityId: currentInq.id,
-      message: 'The follow-up date was modified after this action was prepared. Please review the latest record.',
-      error: 'Stale state conflict',
-      errorCode: 'STALE_STATE',
-    };
-  }
-
-  // 1. Update public.inquiries
-  const { error: inqUpdateErr } = await supabase
-    .from('inquiries')
-    .update({
-      next_follow_up_at: targetFollowUpAt,
-      updated_at: now,
-    })
-    .eq('id', currentInq.id)
-    .eq('tenant_id', actor.tenantId);
-
-  if (inqUpdateErr) {
-    console.error('[Copilot Execution Error] set follow-up:', inqUpdateErr.message);
-    return {
-      success: false,
-      actionType: proposal.actionType,
-      entityId: currentInq.id,
-      message: 'Database error setting follow-up date.',
-      error: inqUpdateErr.message,
+      actionType: 'set_inquiry_follow_up',
+      entityId: proposal.entityId,
+      message: rpcResult?.message || 'Database error setting follow-up date.',
+      error: 'Execution failed',
       errorCode: 'EXECUTION_FAILED',
     };
   }
 
-  // 2. Dual-write to public.leads
-  if (currentInq.legacy_lead_id) {
-    const { error: leadUpdateErr } = await supabase
-      .from('leads')
-      .update({
-        next_follow_up_at: targetFollowUpAt,
-        updated_at: now,
-      })
-      .eq('id', currentInq.legacy_lead_id)
-      .eq('tenant_id', actor.tenantId);
-
-    if (leadUpdateErr) {
-      console.error('[Copilot Dual-Write Error] Reverting inquiry follow-up due to legacy lead failure:', leadUpdateErr.message);
-      // Compensating rollback on canonical inquiry
-      await supabase
-        .from('inquiries')
-        .update({
-          next_follow_up_at: currentInq.next_follow_up_at,
-          updated_at: currentInq.updated_at || now,
-        })
-        .eq('id', currentInq.id)
-        .eq('tenant_id', actor.tenantId);
-
-      return {
-        success: false,
-        actionType: proposal.actionType,
-        entityId: currentInq.id,
-        message: 'Database error updating legacy compatibility record. Changes were reverted.',
-        error: leadUpdateErr.message,
-        errorCode: 'EXECUTION_FAILED',
-      };
-    }
-  }
-
-  // 3. Insert audit activity log (Attributed to HUMAN actor)
   const formattedDate = targetFollowUpAt ? new Date(targetFollowUpAt).toLocaleString() : 'Cleared';
-  const { error: actErr } = await supabase.from('activities').insert({
-    id: `act-followup-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-    lead_id: currentInq.legacy_lead_id || null,
-    user_id: actor.userId,
-    user_name: actor.fullName,
-    type: 'follow_up_set',
-    title: 'Follow-Up Scheduled via Copilot',
-    description: `Follow-up set to ${formattedDate} (confirmed by ${actor.fullName}).`,
-    tenant_id: actor.tenantId,
-    created_at: now,
-  });
-
-  if (actErr) {
-    console.warn('[Copilot Activity Log Warning] Failed to insert follow-up activity log:', actErr.message);
-  }
-
   return {
     success: true,
     actionType: 'set_inquiry_follow_up',
-    entityId: currentInq.id,
+    entityId: proposal.entityId,
     message: `Follow-up successfully scheduled for **${formattedDate}**.`,
     newState: {
       nextFollowUpAt: targetFollowUpAt,
-      updatedAt: now,
+      updatedAt: rpcResult.newState?.updatedAt || new Date().toISOString(),
     },
   };
 }

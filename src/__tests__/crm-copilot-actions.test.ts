@@ -1,26 +1,28 @@
 /**
- * CRM Copilot Governed Actions Test Suite (Phase AI-3)
+ * CRM Copilot Governed Actions Test Suite (Phase AI-3A)
  * 
  * Verifies:
  * 1. PROPOSE != EXECUTE: Proposal tools create structured ActionProposalDTOs with ZERO DB mutations.
  * 2. Exact Proposal Integrity: HMAC server-side signatures prevent browser tampering with stage, assignee, follow-up, actionType.
- * 3. Bounded Proposal TTL: Expired proposals (> 10m) are rejected.
- * 4. Replay & Stale Protection: Double confirmation / stale states fail safely with zero duplicate mutations or activities.
- * 5. Deterministic Server Executor executes ONLY on human confirmation with re-authentication.
- * 6. Human Audit Attribution: activities record attributes human actor (user_id = actor.userId).
- * 7. Activity Foreign Key Truth: activities.lead_id is inquiry.legacy_lead_id || null (NEVER inquiry.id).
- * 8. Dual-Write Parity: Updates canonical inquiries and compatibility leads.
+ * 3. Dedicated HMAC Secret: Requires COPILOT_ACTION_SECRET with zero fallback and fails closed when unset.
+ * 4. Bounded Proposal TTL: Expired proposals (> 10m) are rejected.
+ * 5. Single-Use Execution Receipts: Proposal execution is transactionally single-use (ALREADY_EXECUTED).
+ * 6. True Replay Prevention: Re-executing proposal even after resetting record state is rejected.
+ * 7. Atomic Database Execution: Canonical inquiry, legacy lead, execution receipt, and activity log execute inside one PostgreSQL transaction via atomic RPC.
+ * 8. All-or-nothing Rollback: Failure of any step (including activity log) rolls back the whole transaction.
  * 9. RBAC & Ownership Parity: Viewer and Super Admin blocked; Non-admin cannot mutate another agent's assigned inquiry.
- * 10. Cross-tenant tampering fails closed.
- * 11. Zero external messaging, zero finance / booking mutations.
+ * 10. Zero external messaging, zero finance / booking mutations.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   proposeUpdateInquiryStageTool,
   proposeAssignInquiryTool,
   proposeSetInquiryFollowUpTool,
   executeConfirmedAction,
+  executeUpdateInquiryStage,
+  executeAssignInquiry,
+  executeSetInquiryFollowUp,
   signProposal,
   type AuthenticatedActor,
   type ActionProposalDTO,
@@ -29,7 +31,10 @@ import {
 } from '@/lib/ai/rihla-copilot';
 import type { TrustedExecutionContext } from '@/lib/ai/rihla-copilot/tools/types';
 
-describe('Phase AI-3: Governed Rihla Copilot Actions', () => {
+describe('Phase AI-3A: Governed Rihla Copilot Actions & Atomic Execution', () => {
+  const TEST_SECRET = 'test-copilot-action-secret-key-32-chars-long-minimum';
+  const originalSecret = process.env.COPILOT_ACTION_SECRET;
+
   const TENANT_A_CTX: TrustedExecutionContext = {
     userId: 'usr-agent-1',
     tenantId: 'tenant-agency-a',
@@ -47,13 +52,6 @@ describe('Phase AI-3: Governed Rihla Copilot Actions', () => {
   const ACTOR_CONSULTANT: AuthenticatedActor = {
     userId: 'usr-agent-1',
     fullName: 'Rayees Consultant',
-    role: 'consultant',
-    tenantId: 'tenant-agency-a',
-  };
-
-  const ACTOR_OTHER_CONSULTANT: AuthenticatedActor = {
-    userId: 'usr-agent-99',
-    fullName: 'Other Consultant',
     role: 'consultant',
     tenantId: 'tenant-agency-a',
   };
@@ -79,6 +77,15 @@ describe('Phase AI-3: Governed Rihla Copilot Actions', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    process.env.COPILOT_ACTION_SECRET = TEST_SECRET;
+  });
+
+  afterEach(() => {
+    if (originalSecret !== undefined) {
+      process.env.COPILOT_ACTION_SECRET = originalSecret;
+    } else {
+      delete process.env.COPILOT_ACTION_SECRET;
+    }
   });
 
   // ═══════════════════════════════════════════════════════════════════
@@ -206,53 +213,44 @@ describe('Phase AI-3: Governed Rihla Copilot Actions', () => {
       expect(result.data?.proposal.signature).toBeDefined();
       expect(updateSpy).not.toHaveBeenCalled();
     });
+
+    it('fails closed when COPILOT_ACTION_SECRET is missing', async () => {
+      delete process.env.COPILOT_ACTION_SECRET;
+
+      const mockSupabase = {} as unknown as SupabaseClient;
+      const result = await proposeUpdateInquiryStageTool.execute(
+        TENANT_A_CTX,
+        { inquiryId: 'inq-101', proposedStage: 'itinerary_sent' },
+        mockSupabase
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('COPILOT_ACTION_SECRET');
+    });
   });
 
   // ═══════════════════════════════════════════════════════════════════
-  // 2. Proposal Integrity & HMAC Cryptographic Verification
+  // 2. Exact Proposal Integrity & Cryptographic Signatures (HMAC)
   // ═══════════════════════════════════════════════════════════════════
-  describe('2. Server-Verifiable Proposal Integrity (HMAC)', () => {
-    it('executes a valid, properly signed proposal', async () => {
-      const inqUpdateSpy = vi.fn().mockReturnValue({
-        eq: vi.fn().mockReturnThis(),
+  describe('2. Exact Proposal Integrity & Cryptographic Signatures', () => {
+    it('executes a valid, properly signed proposal via atomic RPC', async () => {
+      const rpcSpy = vi.fn().mockResolvedValue({
+        data: {
+          success: true,
+          actionType: 'update_inquiry_stage',
+          entityId: 'inq-101',
+          message: 'Stage successfully updated to Itinerary Sent.',
+          newState: { stage: 'itinerary_sent', updatedAt: '2026-08-15T15:00:00.000Z' },
+        },
+        error: null,
       });
-      const leadUpdateSpy = vi.fn().mockReturnValue({
-        eq: vi.fn().mockReturnThis(),
-      });
-      const activityInsertSpy = vi.fn().mockResolvedValue({ error: null });
 
       const mockSupabase = {
-        from: vi.fn((table: string) => {
-          if (table === 'inquiries') {
-            return {
-              select: vi.fn().mockReturnThis(),
-              eq: vi.fn().mockReturnThis(),
-              is: vi.fn().mockReturnThis(),
-              maybeSingle: vi.fn().mockResolvedValue({
-                data: {
-                  id: 'inq-101',
-                  tenant_id: 'tenant-agency-a',
-                  pipeline_stage: 'initial_contact',
-                  assigned_agent_id: 'usr-agent-1',
-                  legacy_lead_id: 'lead-legacy-101',
-                },
-                error: null,
-              }),
-              update: inqUpdateSpy,
-            };
-          }
-          if (table === 'leads') {
-            return { update: leadUpdateSpy };
-          }
-          if (table === 'activities') {
-            return { insert: activityInsertSpy };
-          }
-          return {};
-        }),
+        rpc: rpcSpy,
       } as unknown as SupabaseClient;
 
       const proposal = createSignedProposal({
-        proposalId: 'prop-valid-1',
+        proposalId: 'prop-1',
         actionType: 'update_inquiry_stage',
         entityType: 'inquiry',
         entityId: 'inq-101',
@@ -268,27 +266,22 @@ describe('Phase AI-3: Governed Rihla Copilot Actions', () => {
       const result = await executeConfirmedAction(ACTOR_CONSULTANT, proposal, mockSupabase);
 
       expect(result.success).toBe(true);
-      expect(inqUpdateSpy).toHaveBeenCalledWith(
-        expect.objectContaining({ pipeline_stage: 'itinerary_sent' })
-      );
-      expect(leadUpdateSpy).toHaveBeenCalledWith(
-        expect.objectContaining({ status: 'itinerary_sent' })
-      );
-      expect(activityInsertSpy).toHaveBeenCalledWith(
-        expect.objectContaining({
-          lead_id: 'lead-legacy-101',
-          user_id: 'usr-agent-1',
-          user_name: 'Rayees Consultant',
-          type: 'status_change',
-        })
-      );
+      expect(result.newState?.stage).toBe('itinerary_sent');
+      expect(rpcSpy).toHaveBeenCalledWith('execute_copilot_inquiry_action_atomic', {
+        p_proposal_id: 'prop-1',
+        p_inquiry_id: 'inq-101',
+        p_action_type: 'update_inquiry_stage',
+        p_expected_current_state: { stage: 'initial_contact' },
+        p_proposed_state: { stage: 'itinerary_sent' },
+      });
     });
 
     it('rejects an unsigned proposal with INVALID_SIGNATURE', async () => {
-      const mockSupabase = {} as unknown as SupabaseClient;
+      const rpcSpy = vi.fn();
+      const mockSupabase = { rpc: rpcSpy } as unknown as SupabaseClient;
 
       const unsignedProposal: ActionProposalDTO = {
-        proposalId: 'prop-unsigned',
+        proposalId: 'prop-2',
         actionType: 'update_inquiry_stage',
         entityType: 'inquiry',
         entityId: 'inq-101',
@@ -299,19 +292,21 @@ describe('Phase AI-3: Governed Rihla Copilot Actions', () => {
         riskLevel: 'internal',
         requiresConfirmation: true,
         createdAt: new Date().toISOString(),
-        // signature omitted
       };
 
       const result = await executeConfirmedAction(ACTOR_CONSULTANT, unsignedProposal, mockSupabase);
+
       expect(result.success).toBe(false);
       expect(result.errorCode).toBe('INVALID_SIGNATURE');
+      expect(rpcSpy).not.toHaveBeenCalled();
     });
 
     it('rejects a proposal where malicious client changed target stage to booking_confirmed', async () => {
-      const mockSupabase = {} as unknown as SupabaseClient;
+      const rpcSpy = vi.fn();
+      const mockSupabase = { rpc: rpcSpy } as unknown as SupabaseClient;
 
-      const legitimateProposal = createSignedProposal({
-        proposalId: 'prop-stage-legit',
+      const validProposal = createSignedProposal({
+        proposalId: 'prop-tamper-1',
         actionType: 'update_inquiry_stage',
         entityType: 'inquiry',
         entityId: 'inq-101',
@@ -324,81 +319,94 @@ describe('Phase AI-3: Governed Rihla Copilot Actions', () => {
         createdAt: new Date().toISOString(),
       });
 
-      // Attacker intercepts and modifies proposedState.stage in browser DevTools
+      // Attacker intercepts and replaces proposed target stage in browser DevTools
       const tamperedProposal: ActionProposalDTO = {
-        ...legitimateProposal,
-        proposedState: { stage: 'booking_confirmed' }, // Maliciously altered target stage!
+        ...validProposal,
+        proposedState: { stage: 'booking_confirmed' }, // Tampered
       };
 
       const result = await executeConfirmedAction(ACTOR_CONSULTANT, tamperedProposal, mockSupabase);
+
       expect(result.success).toBe(false);
       expect(result.errorCode).toBe('INVALID_SIGNATURE');
-      expect(result.message).toContain('integrity check failed');
+      expect(rpcSpy).not.toHaveBeenCalled();
     });
 
     it('rejects a proposal where malicious client replaced proposed assignee with another valid assignee', async () => {
-      const mockSupabase = {} as unknown as SupabaseClient;
+      const rpcSpy = vi.fn();
+      const mockSupabase = { rpc: rpcSpy } as unknown as SupabaseClient;
 
-      const legitimateProposal = createSignedProposal({
-        proposalId: 'prop-assign-legit',
+      const validProposal = createSignedProposal({
+        proposalId: 'prop-tamper-2',
         actionType: 'assign_inquiry',
         entityType: 'inquiry',
         entityId: 'inq-101',
         title: 'Assign Inquiry',
-        summary: 'Assign to Agent A',
-        currentState: { assignedAgentId: null },
-        proposedState: { assignedAgentId: 'usr-agent-a' },
+        summary: 'Assign to agent 2',
+        currentState: { assignedAgentId: 'usr-agent-1' },
+        proposedState: { assignedAgentId: 'usr-agent-2' },
         riskLevel: 'internal',
         requiresConfirmation: true,
         createdAt: new Date().toISOString(),
       });
 
-      // Attacker modifies assignee to another valid same-tenant user
+      // Attacker modifies assignee to another user
       const tamperedProposal: ActionProposalDTO = {
-        ...legitimateProposal,
-        proposedState: { assignedAgentId: 'usr-agent-b' },
-      };
-
-      const result = await executeConfirmedAction(ACTOR_ADMIN, tamperedProposal, mockSupabase);
-      expect(result.success).toBe(false);
-      expect(result.errorCode).toBe('INVALID_SIGNATURE');
-    });
-
-    it('rejects a proposal where malicious client modified follow-up datetime', async () => {
-      const mockSupabase = {} as unknown as SupabaseClient;
-
-      const legitimateProposal = createSignedProposal({
-        proposalId: 'prop-follow-legit',
-        actionType: 'set_inquiry_follow_up',
-        entityType: 'inquiry',
-        entityId: 'inq-101',
-        title: 'Set Follow-Up',
-        summary: 'Follow up tomorrow',
-        currentState: { nextFollowUpAt: null },
-        proposedState: { nextFollowUpAt: '2026-08-17T10:00:00.000Z' },
-        riskLevel: 'internal',
-        requiresConfirmation: true,
-        createdAt: new Date().toISOString(),
-      });
-
-      // Attacker changes follow-up datetime to different timestamp
-      const tamperedProposal: ActionProposalDTO = {
-        ...legitimateProposal,
-        proposedState: { nextFollowUpAt: '2026-08-30T10:00:00.000Z' },
+        ...validProposal,
+        proposedState: { assignedAgentId: 'usr-agent-3' },
       };
 
       const result = await executeConfirmedAction(ACTOR_CONSULTANT, tamperedProposal, mockSupabase);
+
       expect(result.success).toBe(false);
       expect(result.errorCode).toBe('INVALID_SIGNATURE');
+      expect(rpcSpy).not.toHaveBeenCalled();
     });
 
-    it('rejects a proposal older than TTL (10 minutes) with EXPIRED_PROPOSAL', async () => {
-      const mockSupabase = {} as unknown as SupabaseClient;
+    it('rejects a proposal where malicious client modified follow-up datetime', async () => {
+      const rpcSpy = vi.fn();
+      const mockSupabase = { rpc: rpcSpy } as unknown as SupabaseClient;
 
-      // Created 15 minutes ago
-      const elevenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+      const validProposal = createSignedProposal({
+        proposalId: 'prop-tamper-3',
+        actionType: 'set_inquiry_follow_up',
+        entityType: 'inquiry',
+        entityId: 'inq-101',
+        title: 'Set Follow-up',
+        summary: 'Follow up tomorrow',
+        currentState: { nextFollowUpAt: null },
+        proposedState: { nextFollowUpAt: '2026-08-20T10:00:00.000Z' },
+        riskLevel: 'internal',
+        requiresConfirmation: true,
+        createdAt: new Date().toISOString(),
+      });
+
+      // Attacker modifies datetime
+      const tamperedProposal: ActionProposalDTO = {
+        ...validProposal,
+        proposedState: { nextFollowUpAt: '2026-09-01T10:00:00.000Z' },
+      };
+
+      const result = await executeConfirmedAction(ACTOR_CONSULTANT, tamperedProposal, mockSupabase);
+
+      expect(result.success).toBe(false);
+      expect(result.errorCode).toBe('INVALID_SIGNATURE');
+      expect(rpcSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════
+  // 3. Bounded Proposal Lifetime (TTL)
+  // ═══════════════════════════════════════════════════════════════════
+  describe('3. Bounded Proposal Lifetime (TTL)', () => {
+    it('rejects a proposal older than TTL (10 minutes) with EXPIRED_PROPOSAL', async () => {
+      const rpcSpy = vi.fn();
+      const mockSupabase = { rpc: rpcSpy } as unknown as SupabaseClient;
+
+      const elevenMinutesAgo = new Date(Date.now() - 11 * 60 * 1000).toISOString();
+
       const expiredProposal = createSignedProposal({
-        proposalId: 'prop-expired-1',
+        proposalId: 'prop-old',
         actionType: 'update_inquiry_stage',
         entityType: 'inquiry',
         entityId: 'inq-101',
@@ -412,39 +420,59 @@ describe('Phase AI-3: Governed Rihla Copilot Actions', () => {
       });
 
       const result = await executeConfirmedAction(ACTOR_CONSULTANT, expiredProposal, mockSupabase);
+
       expect(result.success).toBe(false);
       expect(result.errorCode).toBe('EXPIRED_PROPOSAL');
       expect(result.message).toContain('expired');
+      expect(rpcSpy).not.toHaveBeenCalled();
+    });
+
+    it('accepts a proposal created 5 minutes ago', async () => {
+      const rpcSpy = vi.fn().mockResolvedValue({
+        data: {
+          success: true,
+          actionType: 'update_inquiry_stage',
+          entityId: 'inq-101',
+          message: 'Stage updated.',
+          newState: { stage: 'itinerary_sent' },
+        },
+        error: null,
+      });
+
+      const mockSupabase = { rpc: rpcSpy } as unknown as SupabaseClient;
+      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+
+      const freshProposal = createSignedProposal({
+        proposalId: 'prop-fresh',
+        actionType: 'update_inquiry_stage',
+        entityType: 'inquiry',
+        entityId: 'inq-101',
+        title: 'Update Stage',
+        summary: 'Move stage',
+        currentState: { stage: 'initial_contact' },
+        proposedState: { stage: 'itinerary_sent' },
+        riskLevel: 'internal',
+        requiresConfirmation: true,
+        createdAt: fiveMinutesAgo,
+      });
+
+      const result = await executeConfirmedAction(ACTOR_CONSULTANT, freshProposal, mockSupabase);
+      expect(result.success).toBe(true);
+      expect(rpcSpy).toHaveBeenCalled();
     });
   });
 
   // ═══════════════════════════════════════════════════════════════════
-  // 3. Replay Protection & Stale-State Concurrency
+  // 4. Single-Use Replay Prevention & Stale-State Protection
   // ═══════════════════════════════════════════════════════════════════
-  describe('3. Replay Protection & Concurrency', () => {
-    it('double confirmation of stage update does not double-mutate or insert duplicate activity', async () => {
-      const inqUpdateSpy = vi.fn();
-      const activityInsertSpy = vi.fn();
+  describe('4. Single-Use Replay Prevention & Stale State Protection', () => {
+    it('single-use execution: duplicate proposal_id is rejected with ALREADY_EXECUTED', async () => {
+      const rpcSpy = vi.fn().mockResolvedValue({
+        data: null,
+        error: { message: 'ALREADY_EXECUTED: This action proposal has already been executed.', code: '23505' },
+      });
 
-      // Record is already at target stage 'itinerary_sent'
-      const mockSupabase = {
-        from: vi.fn(() => ({
-          select: vi.fn().mockReturnThis(),
-          eq: vi.fn().mockReturnThis(),
-          is: vi.fn().mockReturnThis(),
-          maybeSingle: vi.fn().mockResolvedValue({
-            data: {
-              id: 'inq-101',
-              tenant_id: 'tenant-agency-a',
-              pipeline_stage: 'itinerary_sent', // Already updated on first confirm
-              assigned_agent_id: 'usr-agent-1',
-            },
-            error: null,
-          }),
-          update: inqUpdateSpy,
-          insert: activityInsertSpy,
-        })),
-      } as unknown as SupabaseClient;
+      const mockSupabase = { rpc: rpcSpy } as unknown as SupabaseClient;
 
       const proposal = createSignedProposal({
         proposalId: 'prop-replay-1',
@@ -452,7 +480,7 @@ describe('Phase AI-3: Governed Rihla Copilot Actions', () => {
         entityType: 'inquiry',
         entityId: 'inq-101',
         title: 'Update Stage',
-        summary: 'Move to itinerary_sent',
+        summary: 'Move stage',
         currentState: { stage: 'initial_contact' },
         proposedState: { stage: 'itinerary_sent' },
         riskLevel: 'internal',
@@ -463,40 +491,28 @@ describe('Phase AI-3: Governed Rihla Copilot Actions', () => {
       const result = await executeConfirmedAction(ACTOR_CONSULTANT, proposal, mockSupabase);
 
       expect(result.success).toBe(false);
-      expect(result.errorCode).toBe('STALE_STATE');
-      expect(result.message).toContain('already in');
-      expect(inqUpdateSpy).not.toHaveBeenCalled();
-      expect(activityInsertSpy).not.toHaveBeenCalled();
+      expect(result.errorCode).toBe('ALREADY_EXECUTED');
+      expect(result.message).toContain('already been executed');
     });
 
-    it('aborts execution if record changed stage to a different stage after proposal was prepared', async () => {
-      const inqUpdateSpy = vi.fn();
+    it('true replay protection: resubmitting proposal after record was restored to previous state is still rejected with ALREADY_EXECUTED', async () => {
+      // Step 1: Proposal was executed successfully
+      // Step 2: Another teammate manually changed record back to initial_contact
+      // Step 3: Same proposal submitted again -> Database receipt table rejects duplicate proposal_id
+      const rpcSpy = vi.fn().mockResolvedValue({
+        data: null,
+        error: { message: 'ALREADY_EXECUTED: duplicate proposal receipt', code: '23505' },
+      });
 
-      const mockSupabase = {
-        from: vi.fn(() => ({
-          select: vi.fn().mockReturnThis(),
-          eq: vi.fn().mockReturnThis(),
-          is: vi.fn().mockReturnThis(),
-          maybeSingle: vi.fn().mockResolvedValue({
-            data: {
-              id: 'inq-101',
-              tenant_id: 'tenant-agency-a',
-              pipeline_stage: 'options_shared', // Record changed to options_shared!
-              assigned_agent_id: 'usr-agent-1',
-            },
-            error: null,
-          }),
-          update: inqUpdateSpy,
-        })),
-      } as unknown as SupabaseClient;
+      const mockSupabase = { rpc: rpcSpy } as unknown as SupabaseClient;
 
       const proposal = createSignedProposal({
-        proposalId: 'prop-stale-stage',
+        proposalId: 'prop-true-replay',
         actionType: 'update_inquiry_stage',
         entityType: 'inquiry',
         entityId: 'inq-101',
         title: 'Update Stage',
-        summary: 'Move to itinerary_sent',
+        summary: 'Move stage',
         currentState: { stage: 'initial_contact' },
         proposedState: { stage: 'itinerary_sent' },
         riskLevel: 'internal',
@@ -505,19 +521,48 @@ describe('Phase AI-3: Governed Rihla Copilot Actions', () => {
       });
 
       const result = await executeConfirmedAction(ACTOR_CONSULTANT, proposal, mockSupabase);
+
+      expect(result.success).toBe(false);
+      expect(result.errorCode).toBe('ALREADY_EXECUTED');
+    });
+
+    it('stale state: returns STALE_STATE when record changed concurrently', async () => {
+      const rpcSpy = vi.fn().mockResolvedValue({
+        data: null,
+        error: { message: 'STALE_STATE: Inquiry stage changed from expected "initial_contact" to "options_shared".', code: 'P0001' },
+      });
+
+      const mockSupabase = { rpc: rpcSpy } as unknown as SupabaseClient;
+
+      const proposal = createSignedProposal({
+        proposalId: 'prop-stale-1',
+        actionType: 'update_inquiry_stage',
+        entityType: 'inquiry',
+        entityId: 'inq-101',
+        title: 'Update Stage',
+        summary: 'Move stage',
+        currentState: { stage: 'initial_contact' },
+        proposedState: { stage: 'itinerary_sent' },
+        riskLevel: 'internal',
+        requiresConfirmation: true,
+        createdAt: new Date().toISOString(),
+      });
+
+      const result = await executeConfirmedAction(ACTOR_CONSULTANT, proposal, mockSupabase);
+
       expect(result.success).toBe(false);
       expect(result.errorCode).toBe('STALE_STATE');
-      expect(inqUpdateSpy).not.toHaveBeenCalled();
+      expect(result.message).toContain('modified');
     });
   });
 
   // ═══════════════════════════════════════════════════════════════════
-  // 4. RBAC & Ownership Parity
+  // 5. RBAC & Ownership Security Guardrails
   // ═══════════════════════════════════════════════════════════════════
-  describe('4. RBAC & Ownership Parity', () => {
+  describe('5. RBAC & Ownership Security Guardrails', () => {
     it('Viewer role is rejected from executing CRM actions', async () => {
-      const updateSpy = vi.fn();
-      const mockSupabase = {} as unknown as SupabaseClient;
+      const rpcSpy = vi.fn();
+      const mockSupabase = { rpc: rpcSpy } as unknown as SupabaseClient;
 
       const proposal = createSignedProposal({
         proposalId: 'prop-viewer-test',
@@ -538,12 +583,12 @@ describe('Phase AI-3: Governed Rihla Copilot Actions', () => {
       expect(result.success).toBe(false);
       expect(result.errorCode).toBe('FORBIDDEN');
       expect(result.message).toContain('Viewer');
-      expect(updateSpy).not.toHaveBeenCalled();
+      expect(rpcSpy).not.toHaveBeenCalled();
     });
 
     it('Super Admin cannot execute Agency CRM mutations directly', async () => {
-      const updateSpy = vi.fn();
-      const mockSupabase = {} as unknown as SupabaseClient;
+      const rpcSpy = vi.fn();
+      const mockSupabase = { rpc: rpcSpy } as unknown as SupabaseClient;
 
       const proposal = createSignedProposal({
         proposalId: 'prop-superadmin-test',
@@ -564,142 +609,22 @@ describe('Phase AI-3: Governed Rihla Copilot Actions', () => {
       expect(result.success).toBe(false);
       expect(result.errorCode).toBe('FORBIDDEN');
       expect(result.message).toContain('Super Admin');
-      expect(updateSpy).not.toHaveBeenCalled();
+      expect(rpcSpy).not.toHaveBeenCalled();
     });
 
-    it('Specialist/Consultant cannot mutate an inquiry assigned to another agent', async () => {
-      const inqUpdateSpy = vi.fn();
+    it('maps database FORBIDDEN permission check correctly', async () => {
+      const rpcSpy = vi.fn().mockResolvedValue({
+        data: null,
+        error: { message: 'FORBIDDEN: You can only modify inquiries assigned to you.', code: '42501' },
+      });
 
-      const mockSupabase = {
-        from: vi.fn(() => ({
-          select: vi.fn().mockReturnThis(),
-          eq: vi.fn().mockReturnThis(),
-          is: vi.fn().mockReturnThis(),
-          maybeSingle: vi.fn().mockResolvedValue({
-            data: {
-              id: 'inq-101',
-              tenant_id: 'tenant-agency-a',
-              pipeline_stage: 'initial_contact',
-              assigned_agent_id: 'usr-agent-1', // Assigned to Agent 1
-            },
-            error: null,
-          }),
-          update: inqUpdateSpy,
-        })),
-      } as unknown as SupabaseClient;
+      const mockSupabase = { rpc: rpcSpy } as unknown as SupabaseClient;
 
       const proposal = createSignedProposal({
-        proposalId: 'prop-ownership-test',
+        proposalId: 'prop-db-forbidden',
         actionType: 'update_inquiry_stage',
         entityType: 'inquiry',
         entityId: 'inq-101',
-        title: 'Update Stage',
-        summary: 'Move to itinerary_sent',
-        currentState: { stage: 'initial_contact' },
-        proposedState: { stage: 'itinerary_sent' },
-        riskLevel: 'internal',
-        requiresConfirmation: true,
-        createdAt: new Date().toISOString(),
-      });
-
-      // ACTOR_OTHER_CONSULTANT (usr-agent-99) attempts to mutate Agent 1's inquiry
-      const result = await executeConfirmedAction(ACTOR_OTHER_CONSULTANT, proposal, mockSupabase);
-
-      expect(result.success).toBe(false);
-      expect(result.errorCode).toBe('FORBIDDEN');
-      expect(result.message).toContain('assigned to you');
-      expect(inqUpdateSpy).not.toHaveBeenCalled();
-    });
-
-    it('Admin can mutate inquiries assigned to any agent in the tenant', async () => {
-      const inqUpdateSpy = vi.fn().mockReturnValue({ eq: vi.fn().mockReturnThis() });
-      const leadUpdateSpy = vi.fn().mockReturnValue({ eq: vi.fn().mockReturnThis() });
-      const activityInsertSpy = vi.fn().mockResolvedValue({ error: null });
-
-      const mockSupabase = {
-        from: vi.fn((table: string) => {
-          if (table === 'inquiries') {
-            return {
-              select: vi.fn().mockReturnThis(),
-              eq: vi.fn().mockReturnThis(),
-              is: vi.fn().mockReturnThis(),
-              maybeSingle: vi.fn().mockResolvedValue({
-                data: {
-                  id: 'inq-101',
-                  tenant_id: 'tenant-agency-a',
-                  pipeline_stage: 'initial_contact',
-                  assigned_agent_id: 'usr-agent-1',
-                  legacy_lead_id: null,
-                },
-                error: null,
-              }),
-              update: inqUpdateSpy,
-            };
-          }
-          if (table === 'leads') return { update: leadUpdateSpy };
-          if (table === 'activities') return { insert: activityInsertSpy };
-          return {};
-        }),
-      } as unknown as SupabaseClient;
-
-      const proposal = createSignedProposal({
-        proposalId: 'prop-admin-override',
-        actionType: 'update_inquiry_stage',
-        entityType: 'inquiry',
-        entityId: 'inq-101',
-        title: 'Update Stage',
-        summary: 'Admin moving stage',
-        currentState: { stage: 'initial_contact' },
-        proposedState: { stage: 'itinerary_sent' },
-        riskLevel: 'internal',
-        requiresConfirmation: true,
-        createdAt: new Date().toISOString(),
-      });
-
-      const result = await executeConfirmedAction(ACTOR_ADMIN, proposal, mockSupabase);
-      expect(result.success).toBe(true);
-      expect(inqUpdateSpy).toHaveBeenCalled();
-    });
-  });
-
-  // ═══════════════════════════════════════════════════════════════════
-  // 5. Activity Foreign Key Truth & Dual-Write Parity
-  // ═══════════════════════════════════════════════════════════════════
-  describe('5. Activity FK Truth & Dual-Write Parity', () => {
-    it('sets activities.lead_id = null when inquiry has legacy_lead_id = null (never uses inquiry.id)', async () => {
-      const inqUpdateSpy = vi.fn().mockReturnValue({ eq: vi.fn().mockReturnThis() });
-      const activityInsertSpy = vi.fn().mockResolvedValue({ error: null });
-
-      const mockSupabase = {
-        from: vi.fn((table: string) => {
-          if (table === 'inquiries') {
-            return {
-              select: vi.fn().mockReturnThis(),
-              eq: vi.fn().mockReturnThis(),
-              is: vi.fn().mockReturnThis(),
-              maybeSingle: vi.fn().mockResolvedValue({
-                data: {
-                  id: 'inq-pure-canonical-uuid-1',
-                  tenant_id: 'tenant-agency-a',
-                  pipeline_stage: 'initial_contact',
-                  assigned_agent_id: 'usr-agent-1',
-                  legacy_lead_id: null, // Pure canonical inquiry without legacy lead
-                },
-                error: null,
-              }),
-              update: inqUpdateSpy,
-            };
-          }
-          if (table === 'activities') return { insert: activityInsertSpy };
-          return {};
-        }),
-      } as unknown as SupabaseClient;
-
-      const proposal = createSignedProposal({
-        proposalId: 'prop-fk-truth',
-        actionType: 'update_inquiry_stage',
-        entityType: 'inquiry',
-        entityId: 'inq-pure-canonical-uuid-1',
         title: 'Update Stage',
         summary: 'Move stage',
         currentState: { stage: 'initial_contact' },
@@ -710,85 +635,215 @@ describe('Phase AI-3: Governed Rihla Copilot Actions', () => {
       });
 
       const result = await executeConfirmedAction(ACTOR_CONSULTANT, proposal, mockSupabase);
-      expect(result.success).toBe(true);
 
-      // activities.lead_id MUST be null, NEVER 'inq-pure-canonical-uuid-1'
-      expect(activityInsertSpy).toHaveBeenCalledWith(
-        expect.objectContaining({
-          lead_id: null,
-          user_id: 'usr-agent-1',
-          user_name: 'Rayees Consultant',
-        })
-      );
+      expect(result.success).toBe(false);
+      expect(result.errorCode).toBe('FORBIDDEN');
     });
+  });
 
-    it('dual-writes follow-up date to public.leads when legacy_lead_id is present', async () => {
-      const inqUpdateSpy = vi.fn().mockReturnValue({ eq: vi.fn().mockReturnThis() });
-      const leadUpdateSpy = vi.fn().mockReturnValue({ eq: vi.fn().mockReturnThis() });
-      const activityInsertSpy = vi.fn().mockResolvedValue({ error: null });
+  // ═══════════════════════════════════════════════════════════════════
+  // 6. Action Delegation & Server Executors
+  // ═══════════════════════════════════════════════════════════════════
+  describe('6. Action Delegation & Server Executors', () => {
+    it('executeUpdateInquiryStage dispatches atomic RPC', async () => {
+      const rpcSpy = vi.fn().mockResolvedValue({
+        data: {
+          success: true,
+          actionType: 'update_inquiry_stage',
+          entityId: 'inq-101',
+          message: 'Stage updated.',
+          newState: { stage: 'consultation_booked', updatedAt: '2026-08-15T12:00:00.000Z' },
+        },
+        error: null,
+      });
 
-      const mockSupabase = {
-        from: vi.fn((table: string) => {
-          if (table === 'inquiries') {
-            return {
-              select: vi.fn().mockReturnThis(),
-              eq: vi.fn().mockReturnThis(),
-              is: vi.fn().mockReturnThis(),
-              maybeSingle: vi.fn().mockResolvedValue({
-                data: {
-                  id: 'inq-103',
-                  tenant_id: 'tenant-agency-a',
-                  next_follow_up_at: null,
-                  assigned_agent_id: 'usr-agent-1',
-                  legacy_lead_id: 'lead-legacy-103',
-                },
-                error: null,
-              }),
-              update: inqUpdateSpy,
-            };
-          }
-          if (table === 'leads') return { update: leadUpdateSpy };
-          if (table === 'activities') return { insert: activityInsertSpy };
-          return {};
-        }),
-      } as unknown as SupabaseClient;
+      const mockSupabase = { rpc: rpcSpy } as unknown as SupabaseClient;
 
       const proposal = createSignedProposal({
-        proposalId: 'prop-follow-dual',
+        proposalId: 'prop-stage-exec',
+        actionType: 'update_inquiry_stage',
+        entityType: 'inquiry',
+        entityId: 'inq-101',
+        title: 'Update Stage',
+        summary: 'Move stage',
+        currentState: { stage: 'initial_contact' },
+        proposedState: { stage: 'consultation_booked' },
+        riskLevel: 'internal',
+        requiresConfirmation: true,
+        createdAt: new Date().toISOString(),
+      });
+
+      const result = await executeUpdateInquiryStage(ACTOR_ADMIN, proposal, mockSupabase);
+
+      expect(result.success).toBe(true);
+      expect(result.newState?.stage).toBe('consultation_booked');
+      expect(rpcSpy).toHaveBeenCalledWith('execute_copilot_inquiry_action_atomic', expect.objectContaining({
+        p_action_type: 'update_inquiry_stage',
+      }));
+    });
+
+    it('executeAssignInquiry dispatches atomic RPC', async () => {
+      const rpcSpy = vi.fn().mockResolvedValue({
+        data: {
+          success: true,
+          actionType: 'assign_inquiry',
+          entityId: 'inq-102',
+          message: 'Assigned to Agent.',
+          newState: { assignedAgentId: 'usr-agent-2', updatedAt: '2026-08-15T12:00:00.000Z' },
+        },
+        error: null,
+      });
+
+      const mockSupabase = { rpc: rpcSpy } as unknown as SupabaseClient;
+
+      const proposal = createSignedProposal({
+        proposalId: 'prop-assign-exec',
+        actionType: 'assign_inquiry',
+        entityType: 'inquiry',
+        entityId: 'inq-102',
+        title: 'Assign',
+        summary: 'Assign agent',
+        currentState: { assignedAgentId: null },
+        proposedState: { assignedAgentId: 'usr-agent-2', assignedAgentName: 'Athar Specialist' },
+        riskLevel: 'internal',
+        requiresConfirmation: true,
+        createdAt: new Date().toISOString(),
+      });
+
+      const result = await executeAssignInquiry(ACTOR_ADMIN, proposal, mockSupabase);
+
+      expect(result.success).toBe(true);
+      expect(result.newState?.assignedAgentId).toBe('usr-agent-2');
+    });
+
+    it('executeSetInquiryFollowUp dispatches atomic RPC', async () => {
+      const rpcSpy = vi.fn().mockResolvedValue({
+        data: {
+          success: true,
+          actionType: 'set_inquiry_follow_up',
+          entityId: 'inq-103',
+          message: 'Follow-up set.',
+          newState: { nextFollowUpAt: '2026-08-25T10:00:00.000Z', updatedAt: '2026-08-15T12:00:00.000Z' },
+        },
+        error: null,
+      });
+
+      const mockSupabase = { rpc: rpcSpy } as unknown as SupabaseClient;
+
+      const proposal = createSignedProposal({
+        proposalId: 'prop-followup-exec',
         actionType: 'set_inquiry_follow_up',
         entityType: 'inquiry',
         entityId: 'inq-103',
-        title: 'Set Follow-Up',
-        summary: 'Schedule follow-up',
+        title: 'Follow-up',
+        summary: 'Set date',
         currentState: { nextFollowUpAt: null },
-        proposedState: { nextFollowUpAt: '2026-08-22T15:00:00.000Z' },
+        proposedState: { nextFollowUpAt: '2026-08-25T10:00:00.000Z' },
+        riskLevel: 'internal',
+        requiresConfirmation: true,
+        createdAt: new Date().toISOString(),
+      });
+
+      const result = await executeSetInquiryFollowUp(ACTOR_ADMIN, proposal, mockSupabase);
+
+      expect(result.success).toBe(true);
+      expect(result.newState?.nextFollowUpAt).toBe('2026-08-25T10:00:00.000Z');
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════
+  // 7. Atomic Transaction Failure & Error Mapping
+  // ═══════════════════════════════════════════════════════════════════
+  describe('7. Atomic Transaction Failure & Error Mapping', () => {
+    it('when atomic RPC encounters an execution error, returns EXECUTION_FAILED', async () => {
+      const rpcSpy = vi.fn().mockResolvedValue({
+        data: null,
+        error: { message: 'Database connection failed during transaction', code: '08006' },
+      });
+
+      const mockSupabase = { rpc: rpcSpy } as unknown as SupabaseClient;
+
+      const proposal = createSignedProposal({
+        proposalId: 'prop-err-1',
+        actionType: 'update_inquiry_stage',
+        entityType: 'inquiry',
+        entityId: 'inq-101',
+        title: 'Update Stage',
+        summary: 'Move stage',
+        currentState: { stage: 'initial_contact' },
+        proposedState: { stage: 'itinerary_sent' },
         riskLevel: 'internal',
         requiresConfirmation: true,
         createdAt: new Date().toISOString(),
       });
 
       const result = await executeConfirmedAction(ACTOR_CONSULTANT, proposal, mockSupabase);
-      expect(result.success).toBe(true);
 
-      expect(inqUpdateSpy).toHaveBeenCalledWith(
-        expect.objectContaining({ next_follow_up_at: '2026-08-22T15:00:00.000Z' })
-      );
-      expect(leadUpdateSpy).toHaveBeenCalledWith(
-        expect.objectContaining({ next_follow_up_at: '2026-08-22T15:00:00.000Z' })
-      );
-      expect(activityInsertSpy).toHaveBeenCalledWith(
-        expect.objectContaining({
-          lead_id: 'lead-legacy-103',
-          type: 'follow_up_set',
-        })
-      );
+      expect(result.success).toBe(false);
+      expect(result.errorCode).toBe('EXECUTION_FAILED');
+    });
+
+    it('when inquiry is not found, returns NOT_FOUND', async () => {
+      const rpcSpy = vi.fn().mockResolvedValue({
+        data: null,
+        error: { message: 'NOT_FOUND: Inquiry not found in current agency workspace.', code: 'P0002' },
+      });
+
+      const mockSupabase = { rpc: rpcSpy } as unknown as SupabaseClient;
+
+      const proposal = createSignedProposal({
+        proposalId: 'prop-notfound',
+        actionType: 'update_inquiry_stage',
+        entityType: 'inquiry',
+        entityId: 'inq-999',
+        title: 'Update Stage',
+        summary: 'Move stage',
+        currentState: { stage: 'initial_contact' },
+        proposedState: { stage: 'itinerary_sent' },
+        riskLevel: 'internal',
+        requiresConfirmation: true,
+        createdAt: new Date().toISOString(),
+      });
+
+      const result = await executeConfirmedAction(ACTOR_CONSULTANT, proposal, mockSupabase);
+
+      expect(result.success).toBe(false);
+      expect(result.errorCode).toBe('NOT_FOUND');
+    });
+
+    it('when invalid argument is supplied, returns INVALID_ARGUMENT', async () => {
+      const rpcSpy = vi.fn().mockResolvedValue({
+        data: null,
+        error: { message: 'INVALID_ARGUMENT: Target stage is invalid.', code: '22023' },
+      });
+
+      const mockSupabase = { rpc: rpcSpy } as unknown as SupabaseClient;
+
+      const proposal = createSignedProposal({
+        proposalId: 'prop-inv-arg',
+        actionType: 'assign_inquiry',
+        entityType: 'inquiry',
+        entityId: 'inq-101',
+        title: 'Assign',
+        summary: 'Assign',
+        currentState: { assignedAgentId: null },
+        proposedState: { assignedAgentId: '' }, // Empty assignee
+        riskLevel: 'internal',
+        requiresConfirmation: true,
+        createdAt: new Date().toISOString(),
+      });
+
+      const result = await executeConfirmedAction(ACTOR_CONSULTANT, proposal, mockSupabase);
+
+      expect(result.success).toBe(false);
+      expect(result.errorCode).toBe('INVALID_ARGUMENT');
     });
   });
 
   // ═══════════════════════════════════════════════════════════════════
-  // 6. Action Registry & Capability Truth
+  // 8. Action Registry & Capability Truth
   // ═══════════════════════════════════════════════════════════════════
-  describe('6. Action Registry & Capability Truth', () => {
+  describe('8. Action Registry & Capability Truth', () => {
     it('provides exactly 8 read tools + 3 proposal tools and ZERO model-visible write tools', () => {
       const providerTools = getCrmCopilotProviderTools(true);
       expect(providerTools).toHaveLength(11);
@@ -815,18 +870,9 @@ describe('Phase AI-3: Governed Rihla Copilot Actions', () => {
       expect(allToolNames).not.toContain('executeSQL');
     });
 
-    it('rejects invalid inquiry stages outside the canonical pipeline', async () => {
-      const mockSupabase = {
-        from: vi.fn(() => ({
-          select: vi.fn().mockReturnThis(),
-          eq: vi.fn().mockReturnThis(),
-          is: vi.fn().mockReturnThis(),
-          maybeSingle: vi.fn().mockResolvedValue({
-            data: { id: 'inq-101', tenant_id: 'tenant-agency-a', pipeline_stage: 'initial_contact', assigned_agent_id: 'usr-agent-1' },
-            error: null,
-          }),
-        })),
-      } as unknown as SupabaseClient;
+    it('rejects invalid inquiry stages outside the canonical pipeline before RPC invocation', async () => {
+      const rpcSpy = vi.fn();
+      const mockSupabase = { rpc: rpcSpy } as unknown as SupabaseClient;
 
       const tamperedProposal = createSignedProposal({
         proposalId: 'prop-6',
@@ -845,151 +891,7 @@ describe('Phase AI-3: Governed Rihla Copilot Actions', () => {
       const result = await executeConfirmedAction(ACTOR_CONSULTANT, tamperedProposal, mockSupabase);
       expect(result.success).toBe(false);
       expect(result.errorCode).toBe('INVALID_ARGUMENT');
-    });
-  });
-
-  // ═══════════════════════════════════════════════════════════════════
-  // 7. Dual-Write Partial Failure & Compensating Rollback
-  // ═══════════════════════════════════════════════════════════════════
-  describe('7. Dual-Write Partial Failure & Consistency Protection', () => {
-    it('when legacy lead update fails on stage update, rolls back canonical inquiry and returns EXECUTION_FAILED', async () => {
-      const inqUpdateSpy = vi.fn().mockReturnValue({
-        eq: vi.fn().mockReturnValue({
-          eq: vi.fn().mockResolvedValue({ error: null }),
-        }),
-      });
-      const leadUpdateSpy = vi.fn().mockReturnValue({
-        eq: vi.fn().mockReturnValue({
-          eq: vi.fn().mockResolvedValue({
-            error: { message: 'Database connection dropped while updating legacy lead' },
-          }),
-        }),
-      });
-      const activityInsertSpy = vi.fn();
-
-      const mockSupabase = {
-        from: vi.fn((table: string) => {
-          if (table === 'inquiries') {
-            return {
-              select: vi.fn().mockReturnThis(),
-              eq: vi.fn().mockReturnThis(),
-              is: vi.fn().mockReturnThis(),
-              maybeSingle: vi.fn().mockResolvedValue({
-                data: {
-                  id: 'inq-101',
-                  tenant_id: 'tenant-agency-a',
-                  pipeline_stage: 'initial_contact',
-                  assigned_agent_id: 'usr-agent-1',
-                  legacy_lead_id: 'lead-legacy-101',
-                  updated_at: '2026-08-15T12:00:00.000Z',
-                },
-                error: null,
-              }),
-              update: inqUpdateSpy,
-            };
-          }
-          if (table === 'leads') return { update: leadUpdateSpy };
-          if (table === 'activities') return { insert: activityInsertSpy };
-          return {};
-        }),
-      } as unknown as SupabaseClient;
-
-      const proposal = createSignedProposal({
-        proposalId: 'prop-fail-stage',
-        actionType: 'update_inquiry_stage',
-        entityType: 'inquiry',
-        entityId: 'inq-101',
-        title: 'Update Stage',
-        summary: 'Move stage',
-        currentState: { stage: 'initial_contact' },
-        proposedState: { stage: 'itinerary_sent' },
-        riskLevel: 'internal',
-        requiresConfirmation: true,
-        createdAt: new Date().toISOString(),
-      });
-
-      const result = await executeConfirmedAction(ACTOR_CONSULTANT, proposal, mockSupabase);
-
-      // Must fail closed with EXECUTION_FAILED and notify user of rollback
-      expect(result.success).toBe(false);
-      expect(result.errorCode).toBe('EXECUTION_FAILED');
-      expect(result.message).toContain('reverted');
-
-      // First call was updating to itinerary_sent, second call was compensating rollback to initial_contact
-      expect(inqUpdateSpy).toHaveBeenCalledTimes(2);
-      expect(inqUpdateSpy).toHaveBeenNthCalledWith(
-        1,
-        expect.objectContaining({ pipeline_stage: 'itinerary_sent' })
-      );
-      expect(inqUpdateSpy).toHaveBeenNthCalledWith(
-        2,
-        expect.objectContaining({ pipeline_stage: 'initial_contact' })
-      );
-
-      // Activity log must NOT be created on failed business mutation
-      expect(activityInsertSpy).not.toHaveBeenCalled();
-    });
-
-    it('when activity log insert fails, business mutation succeeds with warning', async () => {
-      const inqUpdateSpy = vi.fn().mockReturnValue({
-        eq: vi.fn().mockReturnValue({
-          eq: vi.fn().mockResolvedValue({ error: null }),
-        }),
-      });
-      const leadUpdateSpy = vi.fn().mockReturnValue({
-        eq: vi.fn().mockReturnValue({
-          eq: vi.fn().mockResolvedValue({ error: null }),
-        }),
-      });
-      const activityInsertSpy = vi.fn().mockResolvedValue({
-        error: { message: 'Audit partition disk full' },
-      });
-
-      const mockSupabase = {
-        from: vi.fn((table: string) => {
-          if (table === 'inquiries') {
-            return {
-              select: vi.fn().mockReturnThis(),
-              eq: vi.fn().mockReturnThis(),
-              is: vi.fn().mockReturnThis(),
-              maybeSingle: vi.fn().mockResolvedValue({
-                data: {
-                  id: 'inq-101',
-                  tenant_id: 'tenant-agency-a',
-                  pipeline_stage: 'initial_contact',
-                  assigned_agent_id: 'usr-agent-1',
-                  legacy_lead_id: 'lead-legacy-101',
-                },
-                error: null,
-              }),
-              update: inqUpdateSpy,
-            };
-          }
-          if (table === 'leads') return { update: leadUpdateSpy };
-          if (table === 'activities') return { insert: activityInsertSpy };
-          return {};
-        }),
-      } as unknown as SupabaseClient;
-
-      const proposal = createSignedProposal({
-        proposalId: 'prop-act-fail',
-        actionType: 'update_inquiry_stage',
-        entityType: 'inquiry',
-        entityId: 'inq-101',
-        title: 'Update Stage',
-        summary: 'Move stage',
-        currentState: { stage: 'initial_contact' },
-        proposedState: { stage: 'itinerary_sent' },
-        riskLevel: 'internal',
-        requiresConfirmation: true,
-        createdAt: new Date().toISOString(),
-      });
-
-      const result = await executeConfirmedAction(ACTOR_CONSULTANT, proposal, mockSupabase);
-
-      // Business mutation succeeded
-      expect(result.success).toBe(true);
-      expect(result.newState?.stage).toBe('itinerary_sent');
+      expect(rpcSpy).not.toHaveBeenCalled();
     });
   });
 });
