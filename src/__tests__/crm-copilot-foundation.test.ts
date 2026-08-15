@@ -674,8 +674,8 @@ describe('Phase AI-1: CRM Copilot Foundation', () => {
     });
   });
 
-  describe('10. Invariant Verification: Zero Tools, Zero Writes, No RAG', () => {
-    it('CRM Copilot has 0 registered tools and does not import or invoke RAG modules', () => {
+  describe('10. Invariant Verification: Pure Server Functions Exported', () => {
+    it('CRM Copilot exports pure server action and prompt builder', () => {
       expect(submitCrmCopilotMessage).toBeDefined();
       expect(buildCrmCopilotPrompt).toBeDefined();
     });
