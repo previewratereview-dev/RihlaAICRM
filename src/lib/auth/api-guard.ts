@@ -30,6 +30,7 @@ export type PlatformCapability =
   | 'agencies:manage'
   | 'agencies:suspend'
   | 'agencies:delete'
+  | 'platform:users'
   | 'platform:billing'
   | 'platform:analytics'
   | 'platform:feature-flags'

@@ -2,7 +2,6 @@
 
 import React, { useMemo, useState } from 'react';
 import { useCRMStore } from '@/hooks/use-crm-store';
-import { CRMDatabaseService } from '@/lib/db-service';
 import { getInitials } from '@/lib/utils';
 import { Search, Users, Shield, Mail, Plus, Trash2, KeyRound } from 'lucide-react';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -48,20 +47,19 @@ export function SuperAdminUsersView() {
   const handleRoleChange = async (userId: string, role: string) => {
     setUpdating(userId);
     try {
-      await CRMDatabaseService.updateTeamMember(userId, { role: role as typeof platformUsers[0]['role'] });
-      await syncData();
-    } finally {
-      setUpdating(null);
-    }
-  };
-
-  const handleDeactivate = async (userId: string, current: string | undefined) => {
-    setUpdating(userId);
-    try {
-      await CRMDatabaseService.updateTeamMember(userId, {
-        status: current === 'deactivated' ? 'active' : 'deactivated',
+      const res = await fetch(`/api/platform/users/${userId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role }),
       });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to update user role');
+      }
       await syncData();
+    } catch (e) {
+      logger.error('Failed to update user role', e);
+      alert(e instanceof Error ? e.message : 'Failed to update user role.');
     } finally {
       setUpdating(null);
     }
@@ -71,12 +69,20 @@ export function SuperAdminUsersView() {
     if (!createEmail.trim() || !createName.trim() || !createTenantId) return;
     setSaving(true);
     try {
-      await CRMDatabaseService.createUser({
-        email: createEmail.trim(),
-        fullName: createName.trim(),
-        role: createRole,
-        tenantId: createTenantId,
+      const res = await fetch('/api/platform/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: createEmail.trim(),
+          fullName: createName.trim(),
+          role: createRole,
+          tenantId: createTenantId,
+        }),
       });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to create user');
+      }
       setShowCreate(false);
       setCreateName('');
       setCreateEmail('');
@@ -85,7 +91,7 @@ export function SuperAdminUsersView() {
       await syncData();
     } catch (e) {
       logger.error('Failed to create user', e);
-      alert('Failed to create user.');
+      alert(e instanceof Error ? e.message : 'Failed to create user.');
     } finally {
       setSaving(false);
     }
@@ -95,12 +101,18 @@ export function SuperAdminUsersView() {
     if (!deleteTarget) return;
     setSaving(true);
     try {
-      await CRMDatabaseService.deleteUser(deleteTarget.id);
+      const res = await fetch(`/api/platform/users/${deleteTarget.id}`, {
+        method: 'DELETE',
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to delete user');
+      }
       setDeleteTarget(null);
       await syncData();
     } catch (e) {
       logger.error('Failed to delete user', e);
-      alert('Failed to delete user.');
+      alert(e instanceof Error ? e.message : 'Failed to delete user.');
     } finally {
       setSaving(false);
     }
@@ -110,12 +122,18 @@ export function SuperAdminUsersView() {
     if (!resetTarget) return;
     setSaving(true);
     try {
-      await CRMDatabaseService.resetUserPassword(resetTarget.email);
+      const res = await fetch(`/api/platform/users/${resetTarget.id}/password-reset`, {
+        method: 'POST',
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to send password reset');
+      }
       setResetTarget(null);
-      alert('Password reset email sent.');
+      alert('Password reset link sent.');
     } catch (e) {
       logger.error('Failed to reset password', e);
-      alert('Failed to send password reset.');
+      alert(e instanceof Error ? e.message : 'Failed to send password reset.');
     } finally {
       setSaving(false);
     }
@@ -183,7 +201,6 @@ export function SuperAdminUsersView() {
                   <th className="text-left p-4 font-semibold">User</th>
                   <th className="text-left p-4 font-semibold">Agency</th>
                   <th className="text-left p-4 font-semibold">Role</th>
-                  <th className="text-left p-4 font-semibold">Status</th>
                   <th className="text-right p-4 font-semibold">Actions</th>
                 </tr>
               </thead>
@@ -216,35 +233,19 @@ export function SuperAdminUsersView() {
                         ))}
                       </select>
                     </td>
-                    <td className="p-4">
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                        user.status === 'deactivated'
-                          ? 'bg-red-100 text-red-600 dark:bg-red-950 dark:text-red-400'
-                          : 'bg-emerald-100 text-emerald-600 dark:bg-emerald-950 dark:text-emerald-400'
-                      }`}>
-                        {user.status === 'deactivated' ? 'deactivated' : 'active'}
-                      </span>
-                    </td>
                     <td className="p-4 text-right">
                       <div className="flex items-center justify-end gap-2">
-                        <button
-                          disabled={updating === user.id}
-                          onClick={() => handleDeactivate(user.id, user.status)}
-                          className="text-xs font-semibold text-red-600 hover:underline"
-                        >
-                          {user.status === 'deactivated' ? 'Reactivate' : 'Deactivate'}
-                        </button>
                         <button
                           onClick={() => setResetTarget({ id: user.id, email: user.email, name: user.fullName })}
                           className="text-xs font-semibold text-amber-600 hover:underline flex items-center gap-1"
                         >
-                          <KeyRound className="h-3 w-3" /> Reset
+                          <KeyRound className="h-3 w-3" /> Reset Password
                         </button>
                         <button
                           onClick={() => setDeleteTarget({ id: user.id, name: user.fullName })}
                           className="text-xs font-semibold text-red-600 hover:underline flex items-center gap-1"
                         >
-                          <Trash2 className="h-3 w-3" />
+                          <Trash2 className="h-3 w-3" /> Delete
                         </button>
                       </div>
                     </td>
@@ -264,7 +265,7 @@ export function SuperAdminUsersView() {
 
         <p className="text-xs text-muted-foreground flex items-center gap-1">
           <Shield className="h-3 w-3" />
-          Role changes apply immediately. Deactivated users cannot log in.
+          Role changes apply immediately. All administrative actions are recorded in the platform audit log.
         </p>
       </div>
 
