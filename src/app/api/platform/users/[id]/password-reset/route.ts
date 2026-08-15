@@ -6,6 +6,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { requirePlatformSuperAdmin } from '@/lib/auth/api-guard';
 import { recordAuditEvent } from '@/lib/security/audit-log';
 import { sendEmail } from '@/lib/integrations/email';
+import { getTrustedAppOrigin } from '@/lib/auth/trusted-origin';
 
 function isSameOrigin(request: NextRequest): boolean {
   const origin = request.headers.get('origin');
@@ -17,20 +18,6 @@ function isSameOrigin(request: NextRequest): boolean {
   } catch {
     return false;
   }
-}
-
-function getTrustedOrigin(request: NextRequest): string {
-  const configuredAppUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL;
-  if (configuredAppUrl) {
-    try {
-      return new URL(configuredAppUrl).origin;
-    } catch {
-      // ignore
-    }
-  }
-  const host = request.headers.get('host') || 'localhost:3000';
-  const protocol = request.headers.get('x-forwarded-proto') || 'http';
-  return `${protocol}://${host}`;
 }
 
 function escapeHtml(str: string): string {
@@ -84,7 +71,13 @@ export async function POST(
   }
 
   // Strict server-configured origin to prevent open redirects
-  const trustedOrigin = getTrustedOrigin(request);
+  const trustedOrigin = getTrustedAppOrigin();
+  if (!trustedOrigin) {
+    return NextResponse.json(
+      { error: 'Server misconfiguration: trusted application origin is not configured' },
+      { status: 500 }
+    );
+  }
   const redirectUrl = `${trustedOrigin}/login?flow=reset`;
 
   // 3. Initiate recovery link via Admin Client and deliver via Email Provider

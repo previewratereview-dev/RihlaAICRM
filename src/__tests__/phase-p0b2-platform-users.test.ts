@@ -4,16 +4,18 @@
  * Verifies that:
  * 1. POST /api/platform/users is strictly guarded (401 unauth, 403 non-super_admin).
  * 2. POST /api/platform/users normalizes super_admin creation to tenant_id='global' and preserves agency for ordinary users.
- * 3. POST /api/platform/users reports truthful partial delivery (accountCreated: true, onboardingDelivered: false) when email fails.
+ * 3. POST /api/platform/users reports truthful partial delivery (accountCreated: true, onboardingDelivered: false) when email fails or origin is unconfigured.
  * 4. PATCH /api/platform/users/[id] enforces last-super-admin and self-demotion protections atomically.
- * 5. POST /api/platform/users/[id]/password-reset invokes real email delivery to trusted origin (/login?flow=reset) without token leakage.
- * 6. DELETE /api/platform/users/[id] handles external Auth deletion boundary and reports partial failure when Auth cleanup fails.
- * 7. LoginPage contains complete recovery session handling and password-update UI.
- * 8. Migration 014 statically enforces concurrency locks (FOR UPDATE) on super_admin profiles.
- * 9. sa-users-view.tsx has zero direct CRMDatabaseService mutations and no fake status manipulation.
+ * 5. POST /api/platform/users/[id]/password-reset invokes real email delivery to trusted server origin (/login?flow=reset) without token leakage.
+ * 6. Recovery URLs are NEVER derived from untrusted client request headers (Host, X-Forwarded-Proto).
+ * 7. In production, missing/invalid configured origin fails closed (no untrusted email sent, 500 error on reset, false delivery on create).
+ * 8. DELETE /api/platform/users/[id] handles external Auth deletion boundary and reports partial failure when Auth cleanup fails.
+ * 9. LoginPage contains complete recovery session handling and password-update UI.
+ * 10. Migration 014 statically enforces concurrency locks (FOR UPDATE) on super_admin profiles.
+ * 11. sa-users-view.tsx has zero direct CRMDatabaseService mutations and no fake status manipulation.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -169,8 +171,11 @@ vi.mock('@/lib/supabase/server', () => ({
 import { POST as createUserHandler } from '@/app/api/platform/users/route';
 import { PATCH as updateUserHandler, DELETE as deleteUserHandler } from '@/app/api/platform/users/[id]/route';
 import { POST as resetPasswordHandler } from '@/app/api/platform/users/[id]/password-reset/route';
+import { getTrustedAppOrigin } from '@/lib/auth/trusted-origin';
 
 describe('Phase P0B-2: Server-Authoritative Global User Management & Recovery Closure', () => {
+  const originalEnv = { ...process.env };
+
   beforeEach(() => {
     vi.clearAllMocks();
     profilesDb.clear();
@@ -195,8 +200,50 @@ describe('Phase P0B-2: Server-Authoritative Global User Management & Recovery Cl
     mockRpc.mockResolvedValue({ data: null, error: { code: 'PGRST202', message: 'Function not found' } });
   });
 
+  afterEach(() => {
+    process.env = { ...originalEnv };
+  });
+
   // =========================================================================
-  // 1. POST /api/platform/users Normalization & Partial Delivery
+  // 1. Trusted Origin Helper Verification
+  // =========================================================================
+  describe('Trusted Origin Resolution Invariants', () => {
+    it('uses configured APP_URL and normalizes to origin', () => {
+      process.env.APP_URL = 'https://portal.rihla.travel/some/path';
+      expect(getTrustedAppOrigin()).toBe('https://portal.rihla.travel');
+    });
+
+    it('falls back to NEXT_PUBLIC_APP_URL if APP_URL is absent', () => {
+      delete process.env.APP_URL;
+      process.env.NEXT_PUBLIC_APP_URL = 'https://crm.stateai.in:8443/auth';
+      expect(getTrustedAppOrigin()).toBe('https://crm.stateai.in:8443');
+    });
+
+    it('fails closed (returns null) in production if configured URL is missing or invalid', () => {
+      const savedEnv = process.env.NODE_ENV;
+      // @ts-expect-error mutating readonly NODE_ENV for test
+      process.env.NODE_ENV = 'production';
+      delete process.env.APP_URL;
+      delete process.env.NEXT_PUBLIC_APP_URL;
+
+      expect(getTrustedAppOrigin()).toBeNull();
+
+      // @ts-expect-error restoring
+      process.env.NODE_ENV = savedEnv;
+    });
+
+    it('returns fixed http://localhost:3000 in development/test when unconfigured', () => {
+      // @ts-expect-error mutating readonly NODE_ENV for test
+      process.env.NODE_ENV = 'development';
+      delete process.env.APP_URL;
+      delete process.env.NEXT_PUBLIC_APP_URL;
+
+      expect(getTrustedAppOrigin()).toBe('http://localhost:3000');
+    });
+  });
+
+  // =========================================================================
+  // 2. POST /api/platform/users Normalization & Partial Delivery
   // =========================================================================
   describe('POST /api/platform/users', () => {
     it('1. Unauthenticated request returns 401', async () => {
@@ -292,7 +339,7 @@ describe('Phase P0B-2: Server-Authoritative Global User Management & Recovery Cl
   });
 
   // =========================================================================
-  // 2. PATCH /api/platform/users/[id]
+  // 3. PATCH /api/platform/users/[id]
   // =========================================================================
   describe('PATCH /api/platform/users/[id]', () => {
     it('5. Self-demotion by super_admin is rejected (400)', async () => {
@@ -330,10 +377,11 @@ describe('Phase P0B-2: Server-Authoritative Global User Management & Recovery Cl
   });
 
   // =========================================================================
-  // 3. POST /api/platform/users/[id]/password-reset
+  // 4. POST /api/platform/users/[id]/password-reset
   // =========================================================================
   describe('POST /api/platform/users/[id]/password-reset', () => {
-    it('7. Super admin initiates reset, dispatches email to trusted origin, and never leaks tokens', async () => {
+    it('7. Super admin initiates reset, dispatches email to trusted origin, and ignores malicious Host header', async () => {
+      process.env.APP_URL = 'https://app.rihla.travel';
       profilesDb.set('user-target-1', {
         id: 'user-target-1',
         email: 'target@agency.com',
@@ -343,9 +391,15 @@ describe('Phase P0B-2: Server-Authoritative Global User Management & Recovery Cl
       });
       mockGetUser.mockResolvedValue({ data: { user: { id: 'user-super-1', email: 'super1@stateai.in' } }, error: null });
 
-      const req = new NextRequest('http://localhost:3000/api/platform/users/user-target-1/password-reset', {
+      // Attacker passes poisoned Host & X-Forwarded headers
+      const req = new NextRequest('https://evil.attacker.com/api/platform/users/user-target-1/password-reset', {
         method: 'POST',
-        headers: { 'host': 'localhost:3000', 'origin': 'http://localhost:3000' },
+        headers: {
+          'host': 'evil.attacker.com',
+          'origin': 'https://evil.attacker.com',
+          'x-forwarded-proto': 'http',
+          'x-forwarded-host': 'malicious-domain.com',
+        },
       });
 
       const res = await resetPasswordHandler(req, { params: Promise.resolve({ id: 'user-target-1' }) });
@@ -354,12 +408,14 @@ describe('Phase P0B-2: Server-Authoritative Global User Management & Recovery Cl
       expect(json.success).toBe(true);
       expect(json.token).toBeUndefined(); // MUST NOT leak token
       expect(json.action_link).toBeUndefined(); // MUST NOT leak link
+
+      // Strictly configured origin MUST be used, NOT evil.attacker.com
       expect(mockAuthAdminGenerateLink).toHaveBeenCalledWith(expect.objectContaining({
         type: 'recovery',
         email: 'target@agency.com',
-        options: expect.objectContaining({
-          redirectTo: expect.stringMatching(/login\?flow=reset/),
-        }),
+        options: {
+          redirectTo: 'https://app.rihla.travel/login?flow=reset',
+        },
       }));
       expect(mockSendEmail).toHaveBeenCalledWith(expect.objectContaining({
         to: 'target@agency.com',
@@ -388,13 +444,46 @@ describe('Phase P0B-2: Server-Authoritative Global User Management & Recovery Cl
       const json = await res.json();
       expect(json.error).toMatch(/Failed to deliver recovery email/);
     });
+
+    it('9. Missing production trusted origin fails closed with 500', async () => {
+      const savedEnv = process.env.NODE_ENV;
+      // @ts-expect-error mutating readonly NODE_ENV for test
+      process.env.NODE_ENV = 'production';
+      delete process.env.APP_URL;
+      delete process.env.NEXT_PUBLIC_APP_URL;
+
+      profilesDb.set('user-target-1', {
+        id: 'user-target-1',
+        email: 'target@agency.com',
+        full_name: 'Target User',
+        role: 'viewer',
+        tenant_id: 'agency-1',
+      });
+      mockGetUser.mockResolvedValue({ data: { user: { id: 'user-super-1', email: 'super1@stateai.in' } }, error: null });
+
+      const req = new NextRequest('http://localhost:3000/api/platform/users/user-target-1/password-reset', {
+        method: 'POST',
+        headers: { 'host': 'localhost:3000', 'origin': 'http://localhost:3000' },
+      });
+
+      const res = await resetPasswordHandler(req, { params: Promise.resolve({ id: 'user-target-1' }) });
+      expect(res.status).toBe(500);
+      const json = await res.json();
+      expect(json.error).toMatch(/trusted application origin is not configured/i);
+
+      // Verify no email was dispatched
+      expect(mockSendEmail).not.toHaveBeenCalled();
+
+      // @ts-expect-error restoring
+      process.env.NODE_ENV = savedEnv;
+    });
   });
 
   // =========================================================================
-  // 4. DELETE /api/platform/users/[id]
+  // 5. DELETE /api/platform/users/[id]
   // =========================================================================
   describe('DELETE /api/platform/users/[id]', () => {
-    it('9. Self-deletion is denied (400)', async () => {
+    it('10. Self-deletion is denied (400)', async () => {
       mockGetUser.mockResolvedValue({ data: { user: { id: 'user-super-1', email: 'super1@stateai.in' } }, error: null });
 
       const req = new NextRequest('http://localhost:3000/api/platform/users/user-super-1', {
@@ -408,7 +497,7 @@ describe('Phase P0B-2: Server-Authoritative Global User Management & Recovery Cl
       expect(json.error).toMatch(/Self-deletion/);
     });
 
-    it('10. Deleting target user deletes profile and calls Auth Admin delete', async () => {
+    it('11. Deleting target user deletes profile and calls Auth Admin delete', async () => {
       profilesDb.set('user-target-1', {
         id: 'user-target-1',
         email: 'target@agency.com',
@@ -431,7 +520,7 @@ describe('Phase P0B-2: Server-Authoritative Global User Management & Recovery Cl
       expect(mockAuthAdminDeleteUser).toHaveBeenCalledWith('user-target-1');
     });
 
-    it('11. When Auth cleanup fails after profile deletion, returns partial failure (500)', async () => {
+    it('12. When Auth cleanup fails after profile deletion, returns partial failure (500)', async () => {
       profilesDb.set('user-target-1', {
         id: 'user-target-1',
         email: 'target@agency.com',
@@ -456,10 +545,10 @@ describe('Phase P0B-2: Server-Authoritative Global User Management & Recovery Cl
   });
 
   // =========================================================================
-  // 5. Static Code & Schema Integrity Checks
+  // 6. Static Code & Schema Integrity Checks
   // =========================================================================
   describe('Static Code & Recovery Lifecycle Integrity', () => {
-    it('12. LoginPage implements Set New Password form calling supabase.auth.updateUser', () => {
+    it('13. LoginPage implements Set New Password form calling supabase.auth.updateUser', () => {
       const loginPath = path.join(process.cwd(), 'src', 'app', 'login', 'page.tsx');
       expect(fs.existsSync(loginPath)).toBe(true);
 
@@ -470,7 +559,7 @@ describe('Phase P0B-2: Server-Authoritative Global User Management & Recovery Cl
       expect(content).toContain('Set New Password');
     });
 
-    it('13. Migration 014 acquires row locks on super_admin profiles and enforces last-super-admin invariant', () => {
+    it('14. Migration 014 acquires row locks on super_admin profiles and enforces last-super-admin invariant', () => {
       const migrationPath = path.join(process.cwd(), 'supabase', 'migrations', '014_platform_user_lifecycle_rpcs.sql');
       expect(fs.existsSync(migrationPath)).toBe(true);
 
@@ -484,7 +573,7 @@ describe('Phase P0B-2: Server-Authoritative Global User Management & Recovery Cl
       expect(content).toContain('Self-deletion is not permitted');
     });
 
-    it('14. sa-users-view.tsx does NOT call CRMDatabaseService or render fake status mutations', () => {
+    it('15. sa-users-view.tsx does NOT call CRMDatabaseService or render fake status mutations', () => {
       const filePath = path.join(process.cwd(), 'src', 'components', 'super-admin', 'sa-users-view.tsx');
       expect(fs.existsSync(filePath)).toBe(true);
 

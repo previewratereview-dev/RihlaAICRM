@@ -6,6 +6,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { requirePlatformSuperAdmin } from '@/lib/auth/api-guard';
 import { recordAuditEvent } from '@/lib/security/audit-log';
 import { sendEmail } from '@/lib/integrations/email';
+import { getTrustedAppOrigin } from '@/lib/auth/trusted-origin';
 import type { UserRole } from '@/types/common';
 
 const VALID_ROLES = new Set<string>([
@@ -29,20 +30,6 @@ function isSameOrigin(request: NextRequest): boolean {
   } catch {
     return false;
   }
-}
-
-function getTrustedOrigin(request: NextRequest): string {
-  const configuredAppUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL;
-  if (configuredAppUrl) {
-    try {
-      return new URL(configuredAppUrl).origin;
-    } catch {
-      // ignore
-    }
-  }
-  const host = request.headers.get('host') || 'localhost:3000';
-  const protocol = request.headers.get('x-forwarded-proto') || 'http';
-  return `${protocol}://${host}`;
 }
 
 function escapeHtml(str: string): string {
@@ -189,11 +176,11 @@ export async function POST(request: NextRequest) {
   }
 
   // 8. Onboarding Delivery: Generate setup link and send Welcome Email
-  const trustedOrigin = getTrustedOrigin(request);
-  const redirectUrl = `${trustedOrigin}/login?flow=reset`;
+  const trustedOrigin = getTrustedAppOrigin();
   let onboardingDelivered = false;
 
-  if (adminClient) {
+  if (adminClient && trustedOrigin) {
+    const redirectUrl = `${trustedOrigin}/login?flow=reset`;
     try {
       const { data: linkData, error: linkError } = await adminClient.auth.admin.generateLink({
         type: 'recovery',
