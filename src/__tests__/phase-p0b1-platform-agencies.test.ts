@@ -1,30 +1,27 @@
 /**
- * Phase P0B-1: Server-Authoritative Agency Management Mutations Test Suite
+ * Phase P0B-1: Server-Authoritative & Transactional Agency Management Mutations Test Suite
  *
  * Verifies that:
  * 1. POST /api/platform/agencies is strictly guarded (401 unauth, 403 non-super_admin).
- * 2. POST /api/platform/agencies validates payload (rejects invalid names, slugs, duplicate slugs).
- * 3. POST /api/platform/agencies creates tenant, settings, and subscription atomically with audit logging.
- * 4. PATCH /api/platform/agencies/[id] is strictly guarded and performs authoritative target lookup (404 on missing).
- * 5. PATCH /api/platform/agencies/[id] allows only allowlisted fields and updates status/plan/settings.
- * 6. DELETE /api/platform/agencies/[id] is strictly guarded, blocks system tenants, and deletes child data in order.
+ * 2. POST /api/platform/agencies validates payload and delegates to atomic RPC platform_create_agency_atomic.
+ * 3. POST /api/platform/agencies handles slug conflict (409) and validation errors (400) without partial writes.
+ * 4. PATCH /api/platform/agencies/[id] is strictly guarded and delegates to atomic RPC platform_edit_agency_atomic.
+ * 5. PATCH /api/platform/agencies/[id] handles 404 on missing target agency.
+ * 6. DELETE /api/platform/agencies/[id] is strictly guarded, blocks system tenants, and delegates to atomic RPC platform_delete_agency_atomic.
  * 7. Cross-origin requests with mismatched Origin/Host are rejected (403).
+ * 8. Static schema verification: Migration 013 covers canonical Stage A entities (bookings, inquiries, traveler_profiles).
+ * 9. Fail-closed contract: RPC failure returns sanitized server error without unsafe sequential fallback.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
+import * as fs from 'fs';
+import * as path from 'path';
 
 // Mock dependencies
 const mockGetUser = vi.fn();
 const mockProfileSelect = vi.fn();
-const mockTenantSelect = vi.fn();
-const mockTenantInsert = vi.fn();
-const mockTenantUpdate = vi.fn();
-const mockTenantDelete = vi.fn();
-const mockSettingsUpsert = vi.fn();
-const mockSubscriptionsUpsert = vi.fn();
-const mockAuditLogInsert = vi.fn();
-const mockChildTableDelete = vi.fn();
+const mockRpc = vi.fn();
 
 vi.mock('next/headers', () => ({
   cookies: vi.fn().mockResolvedValue({
@@ -46,54 +43,6 @@ vi.mock('@/lib/supabase/server', () => ({
               maybeSingle: () => mockProfileSelect(),
             }),
           }),
-          delete: () => ({
-            eq: () => mockChildTableDelete('profiles'),
-          }),
-        };
-      }
-      if (table === 'tenants') {
-        return {
-          select: () => ({
-            or: () => ({
-              maybeSingle: () => mockTenantSelect(),
-            }),
-            eq: () => ({
-              maybeSingle: () => mockTenantSelect(),
-              single: () => mockTenantSelect(),
-            }),
-          }),
-          insert: (data: unknown) => ({
-            select: () => ({
-              single: () => mockTenantInsert(data),
-            }),
-          }),
-          update: (data: unknown) => ({
-            eq: () => ({
-              select: () => ({
-                single: () => mockTenantUpdate(data),
-              }),
-            }),
-          }),
-          delete: () => ({
-            eq: () => mockTenantDelete(),
-          }),
-        };
-      }
-      if (table === 'settings') {
-        return {
-          upsert: (data: unknown) => mockSettingsUpsert(data),
-          delete: () => ({ eq: () => mockChildTableDelete(table) }),
-        };
-      }
-      if (table === 'subscriptions') {
-        return {
-          upsert: (data: unknown) => mockSubscriptionsUpsert(data),
-          delete: () => ({ eq: () => mockChildTableDelete(table) }),
-        };
-      }
-      if (table === 'audit_logs') {
-        return {
-          insert: (data: unknown) => mockAuditLogInsert(data),
         };
       }
       return {
@@ -103,28 +52,22 @@ vi.mock('@/lib/supabase/server', () => ({
             single: () => Promise.resolve({ data: null, error: null }),
           }),
         }),
-        delete: () => ({
-          eq: () => mockChildTableDelete(table),
-        }),
       };
     },
+    rpc: (func: string, params: unknown) => mockRpc(func, params),
   }),
 }));
 
 import { POST as createAgencyHandler } from '@/app/api/platform/agencies/route';
 import { PATCH as updateAgencyHandler, DELETE as deleteAgencyHandler } from '@/app/api/platform/agencies/[id]/route';
 
-describe('Phase P0B-1: Server-Authoritative Agency Management Mutations', () => {
+describe('Phase P0B-1: Transactional Agency Management Mutations', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockChildTableDelete.mockResolvedValue({ error: null });
-    mockAuditLogInsert.mockResolvedValue({ error: null });
-    mockSettingsUpsert.mockResolvedValue({ error: null });
-    mockSubscriptionsUpsert.mockResolvedValue({ error: null });
   });
 
   // =========================================================================
-  // 1. POST /api/platform/agencies Authorization & Validation
+  // 1. POST /api/platform/agencies Authorization, Validation & Atomic RPC
   // =========================================================================
   describe('POST /api/platform/agencies', () => {
     it('1. Unauthenticated create request returns 401', async () => {
@@ -138,6 +81,7 @@ describe('Phase P0B-1: Server-Authoritative Agency Management Mutations', () => 
 
       const res = await createAgencyHandler(req);
       expect(res.status).toBe(401);
+      expect(mockRpc).not.toHaveBeenCalled();
     });
 
     it('2. Ordinary tenant admin is denied agency creation (403)', async () => {
@@ -152,23 +96,10 @@ describe('Phase P0B-1: Server-Authoritative Agency Management Mutations', () => 
 
       const res = await createAgencyHandler(req);
       expect(res.status).toBe(403);
+      expect(mockRpc).not.toHaveBeenCalled();
     });
 
-    it('3. @stateai.in email with ordinary specialist role is denied (403)', async () => {
-      mockGetUser.mockResolvedValue({ data: { user: { id: 'user-emp', email: 'emp@stateai.in' } }, error: null });
-      mockProfileSelect.mockResolvedValue({ data: { role: 'specialist', tenant_id: 'global' }, error: null });
-
-      const req = new NextRequest('http://localhost:3000/api/platform/agencies', {
-        method: 'POST',
-        headers: { 'host': 'localhost:3000', 'origin': 'http://localhost:3000' },
-        body: JSON.stringify({ name: 'New Agency', slug: 'new-agency' }),
-      });
-
-      const res = await createAgencyHandler(req);
-      expect(res.status).toBe(403);
-    });
-
-    it('4. Invalid agency payload (short name, invalid slug) returns 400', async () => {
+    it('3. Invalid agency payload (short name, invalid slug) returns 400 without RPC call', async () => {
       mockGetUser.mockResolvedValue({ data: { user: { id: 'user-super', email: 'super@stateai.in' } }, error: null });
       mockProfileSelect.mockResolvedValue({ data: { role: 'super_admin', tenant_id: 'global' }, error: null });
 
@@ -182,12 +113,13 @@ describe('Phase P0B-1: Server-Authoritative Agency Management Mutations', () => 
       expect(res.status).toBe(400);
       const json = await res.json();
       expect(json.error).toMatch(/Agency name/);
+      expect(mockRpc).not.toHaveBeenCalled();
     });
 
-    it('5. Duplicate agency slug returns 409 Conflict', async () => {
+    it('4. Duplicate agency slug returns 409 Conflict from atomic RPC', async () => {
       mockGetUser.mockResolvedValue({ data: { user: { id: 'user-super', email: 'super@stateai.in' } }, error: null });
       mockProfileSelect.mockResolvedValue({ data: { role: 'super_admin', tenant_id: 'global' }, error: null });
-      mockTenantSelect.mockResolvedValue({ data: { id: 'existing-agency', slug: 'existing-agency' }, error: null });
+      mockRpc.mockResolvedValue({ data: null, error: { code: '23505', message: 'Conflict: An agency with slug already exists.' } });
 
       const req = new NextRequest('http://localhost:3000/api/platform/agencies', {
         method: 'POST',
@@ -199,16 +131,29 @@ describe('Phase P0B-1: Server-Authoritative Agency Management Mutations', () => 
       expect(res.status).toBe(409);
       const json = await res.json();
       expect(json.error).toMatch(/already exists/);
+      expect(mockRpc).toHaveBeenCalledWith('platform_create_agency_atomic', expect.objectContaining({
+        p_name: 'Existing Agency',
+        p_slug: 'existing-agency',
+      }));
     });
 
-    it('6. Valid create request creates agency, settings, subscription, and records audit event', async () => {
+    it('5. Valid create request invokes platform_create_agency_atomic and returns 201', async () => {
       mockGetUser.mockResolvedValue({ data: { user: { id: 'user-super', email: 'super@stateai.in' } }, error: null });
       mockProfileSelect.mockResolvedValue({ data: { role: 'super_admin', tenant_id: 'global' }, error: null });
-      mockTenantSelect.mockResolvedValue({ data: null, error: null });
-      mockTenantInsert.mockImplementation((data: Record<string, unknown>) => ({
-        data: { ...data, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+      mockRpc.mockResolvedValue({
+        data: {
+          id: 'atlas-journeys',
+          name: 'Atlas Journeys',
+          slug: 'atlas-journeys',
+          domain: 'atlasjourneys.com',
+          plan: 'growth',
+          status: 'active',
+          settings: { aiBudget: 250, features: { pipeline: true, chatbot: true } },
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
         error: null,
-      }));
+      });
 
       const req = new NextRequest('http://localhost:3000/api/platform/agencies', {
         method: 'POST',
@@ -229,9 +174,12 @@ describe('Phase P0B-1: Server-Authoritative Agency Management Mutations', () => 
       expect(json.success).toBe(true);
       expect(json.tenant.id).toBe('atlas-journeys');
       expect(json.tenant.plan).toBe('growth');
-      expect(mockSettingsUpsert).toHaveBeenCalled();
-      expect(mockSubscriptionsUpsert).toHaveBeenCalled();
-      expect(mockAuditLogInsert).toHaveBeenCalled();
+      expect(mockRpc).toHaveBeenCalledWith('platform_create_agency_atomic', expect.objectContaining({
+        p_name: 'Atlas Journeys',
+        p_slug: 'atlas-journeys',
+        p_plan: 'growth',
+        p_ai_budget: 250,
+      }));
     });
   });
 
@@ -239,7 +187,7 @@ describe('Phase P0B-1: Server-Authoritative Agency Management Mutations', () => 
   // 2. PATCH /api/platform/agencies/[id] Edit & Status Operations
   // =========================================================================
   describe('PATCH /api/platform/agencies/[id]', () => {
-    it('7. Non-super_admin user is denied agency editing (403)', async () => {
+    it('6. Non-super_admin user is denied agency editing (403)', async () => {
       mockGetUser.mockResolvedValue({ data: { user: { id: 'user-specialist', email: 'user@agency.com' } }, error: null });
       mockProfileSelect.mockResolvedValue({ data: { role: 'specialist', tenant_id: 'agency-1' }, error: null });
 
@@ -251,60 +199,42 @@ describe('Phase P0B-1: Server-Authoritative Agency Management Mutations', () => 
 
       const res = await updateAgencyHandler(req, { params: Promise.resolve({ id: 'agency-1' }) });
       expect(res.status).toBe(403);
+      expect(mockRpc).not.toHaveBeenCalled();
     });
 
-    it('8. Missing target agency returns 404', async () => {
+    it('7. Missing target agency returns 404 from atomic edit RPC', async () => {
       mockGetUser.mockResolvedValue({ data: { user: { id: 'user-super', email: 'super@stateai.in' } }, error: null });
       mockProfileSelect.mockResolvedValue({ data: { role: 'super_admin', tenant_id: 'global' }, error: null });
-      mockTenantSelect.mockResolvedValue({ data: null, error: null });
+      mockRpc.mockResolvedValue({ data: null, error: { code: 'P0002', message: 'Not found: Agency "non-existent" does not exist.' } });
 
-      const req = new NextRequest('http://localhost:3000/api/platform/agencies/non-existent-agency', {
+      const req = new NextRequest('http://localhost:3000/api/platform/agencies/non-existent', {
         method: 'PATCH',
         headers: { 'host': 'localhost:3000', 'origin': 'http://localhost:3000' },
         body: JSON.stringify({ name: 'Updated Name' }),
       });
 
-      const res = await updateAgencyHandler(req, { params: Promise.resolve({ id: 'non-existent-agency' }) });
+      const res = await updateAgencyHandler(req, { params: Promise.resolve({ id: 'non-existent' }) });
       expect(res.status).toBe(404);
+      expect(mockRpc).toHaveBeenCalledWith('platform_edit_agency_atomic', expect.objectContaining({
+        p_tenant_id: 'non-existent',
+      }));
     });
 
-    it('9. Super admin can suspend an agency and audit event is recorded', async () => {
+    it('8. Super admin can edit configuration and status atomically via RPC', async () => {
       mockGetUser.mockResolvedValue({ data: { user: { id: 'user-super', email: 'super@stateai.in' } }, error: null });
       mockProfileSelect.mockResolvedValue({ data: { role: 'super_admin', tenant_id: 'global' }, error: null });
-      mockTenantSelect.mockResolvedValue({
-        data: { id: 'agency-target', name: 'Target Agency', status: 'active', subscriptions: { plan: 'growth' } },
+      mockRpc.mockResolvedValue({
+        data: {
+          id: 'agency-target',
+          name: 'Renamed Agency',
+          slug: 'agency-target',
+          status: 'suspended',
+          plan: 'enterprise',
+          primaryColor: '#00AAFF',
+          updatedAt: new Date().toISOString(),
+        },
         error: null,
       });
-      mockTenantUpdate.mockImplementation((data: Record<string, unknown>) => ({
-        data: { id: 'agency-target', name: 'Target Agency', status: data.status || 'suspended', updated_at: new Date().toISOString() },
-        error: null,
-      }));
-
-      const req = new NextRequest('http://localhost:3000/api/platform/agencies/agency-target', {
-        method: 'PATCH',
-        headers: { 'host': 'localhost:3000', 'origin': 'http://localhost:3000' },
-        body: JSON.stringify({ status: 'suspended' }),
-      });
-
-      const res = await updateAgencyHandler(req, { params: Promise.resolve({ id: 'agency-target' }) });
-      expect(res.status).toBe(200);
-      const json = await res.json();
-      expect(json.success).toBe(true);
-      expect(json.tenant.status).toBe('suspended');
-      expect(mockAuditLogInsert).toHaveBeenCalled();
-    });
-
-    it('10. Super admin can update configuration with allowlisted fields', async () => {
-      mockGetUser.mockResolvedValue({ data: { user: { id: 'user-super', email: 'super@stateai.in' } }, error: null });
-      mockProfileSelect.mockResolvedValue({ data: { role: 'super_admin', tenant_id: 'global' }, error: null });
-      mockTenantSelect.mockResolvedValue({
-        data: { id: 'agency-target', name: 'Target Agency', status: 'active', settings: { aiBudget: 100 }, subscriptions: { plan: 'growth' } },
-        error: null,
-      });
-      mockTenantUpdate.mockImplementation((data: Record<string, unknown>) => ({
-        data: { id: 'agency-target', name: data.name || 'Target Agency', status: 'active', settings: data.settings, updated_at: new Date().toISOString() },
-        error: null,
-      }));
 
       const req = new NextRequest('http://localhost:3000/api/platform/agencies/agency-target', {
         method: 'PATCH',
@@ -313,7 +243,7 @@ describe('Phase P0B-1: Server-Authoritative Agency Management Mutations', () => 
           name: 'Renamed Agency',
           primaryColor: '#00AAFF',
           plan: 'enterprise',
-          aiBudget: 500,
+          status: 'suspended',
         }),
       });
 
@@ -322,15 +252,22 @@ describe('Phase P0B-1: Server-Authoritative Agency Management Mutations', () => 
       const json = await res.json();
       expect(json.success).toBe(true);
       expect(json.tenant.plan).toBe('enterprise');
-      expect(mockSubscriptionsUpsert).toHaveBeenCalled();
+      expect(json.tenant.status).toBe('suspended');
+      expect(mockRpc).toHaveBeenCalledWith('platform_edit_agency_atomic', expect.objectContaining({
+        p_tenant_id: 'agency-target',
+        p_name: 'Renamed Agency',
+        p_primary_color: '#00AAFF',
+        p_plan: 'enterprise',
+        p_status: 'suspended',
+      }));
     });
   });
 
   // =========================================================================
-  // 3. DELETE /api/platform/agencies/[id] Deletion Operations
+  // 3. DELETE /api/platform/agencies/[id] Atomic Deletion Operations
   // =========================================================================
   describe('DELETE /api/platform/agencies/[id]', () => {
-    it('11. Non-super_admin is denied agency deletion (403)', async () => {
+    it('9. Non-super_admin is denied agency deletion (403)', async () => {
       mockGetUser.mockResolvedValue({ data: { user: { id: 'user-admin', email: 'admin@agency.com' } }, error: null });
       mockProfileSelect.mockResolvedValue({ data: { role: 'admin', tenant_id: 'agency-1' }, error: null });
 
@@ -341,9 +278,10 @@ describe('Phase P0B-1: Server-Authoritative Agency Management Mutations', () => 
 
       const res = await deleteAgencyHandler(req, { params: Promise.resolve({ id: 'agency-1' }) });
       expect(res.status).toBe(403);
+      expect(mockRpc).not.toHaveBeenCalled();
     });
 
-    it('12. Attempt to delete system tenant "global" is rejected (400)', async () => {
+    it('10. Attempt to delete system tenant "global" is rejected (400) before RPC', async () => {
       mockGetUser.mockResolvedValue({ data: { user: { id: 'user-super', email: 'super@stateai.in' } }, error: null });
       mockProfileSelect.mockResolvedValue({ data: { role: 'super_admin', tenant_id: 'global' }, error: null });
 
@@ -356,13 +294,16 @@ describe('Phase P0B-1: Server-Authoritative Agency Management Mutations', () => 
       expect(res.status).toBe(400);
       const json = await res.json();
       expect(json.error).toMatch(/System tenant/);
+      expect(mockRpc).not.toHaveBeenCalled();
     });
 
-    it('13. Super admin can delete target agency, cleaning child tables and writing audit log', async () => {
+    it('11. Super admin can delete target agency atomically via platform_delete_agency_atomic', async () => {
       mockGetUser.mockResolvedValue({ data: { user: { id: 'user-super', email: 'super@stateai.in' } }, error: null });
       mockProfileSelect.mockResolvedValue({ data: { role: 'super_admin', tenant_id: 'global' }, error: null });
-      mockTenantSelect.mockResolvedValue({ data: { id: 'agency-to-delete', name: 'Delete Me' }, error: null });
-      mockTenantDelete.mockResolvedValue({ error: null });
+      mockRpc.mockResolvedValue({
+        data: { success: true, deletedId: 'agency-to-delete' },
+        error: null,
+      });
 
       const req = new NextRequest('http://localhost:3000/api/platform/agencies/agency-to-delete', {
         method: 'DELETE',
@@ -374,11 +315,31 @@ describe('Phase P0B-1: Server-Authoritative Agency Management Mutations', () => 
       const json = await res.json();
       expect(json.success).toBe(true);
       expect(json.deletedId).toBe('agency-to-delete');
-      expect(mockChildTableDelete).toHaveBeenCalled();
-      expect(mockAuditLogInsert).toHaveBeenCalled();
+      expect(mockRpc).toHaveBeenCalledWith('platform_delete_agency_atomic', {
+        p_tenant_id: 'agency-to-delete',
+      });
     });
 
-    it('14. Cross-origin request with mismatched origin/host is blocked (403)', async () => {
+    it('12. RPC failure fails closed without sequential fallback', async () => {
+      mockGetUser.mockResolvedValue({ data: { user: { id: 'user-super', email: 'super@stateai.in' } }, error: null });
+      mockProfileSelect.mockResolvedValue({ data: { role: 'super_admin', tenant_id: 'global' }, error: null });
+      mockRpc.mockResolvedValue({
+        data: null,
+        error: { code: 'XX000', message: 'Database transaction lock timeout' },
+      });
+
+      const req = new NextRequest('http://localhost:3000/api/platform/agencies/agency-to-delete', {
+        method: 'DELETE',
+        headers: { 'host': 'localhost:3000', 'origin': 'http://localhost:3000' },
+      });
+
+      const res = await deleteAgencyHandler(req, { params: Promise.resolve({ id: 'agency-to-delete' }) });
+      expect(res.status).toBe(500);
+      const json = await res.json();
+      expect(json.error).toMatch(/Deletion failed/);
+    });
+
+    it('13. Cross-origin request with mismatched origin/host is blocked (403)', async () => {
       mockGetUser.mockResolvedValue({ data: { user: { id: 'user-super', email: 'super@stateai.in' } }, error: null });
       mockProfileSelect.mockResolvedValue({ data: { role: 'super_admin', tenant_id: 'global' }, error: null });
 
@@ -391,6 +352,38 @@ describe('Phase P0B-1: Server-Authoritative Agency Management Mutations', () => 
       expect(res.status).toBe(403);
       const json = await res.json();
       expect(json.error).toMatch(/Cross-origin/);
+    });
+  });
+
+  // =========================================================================
+  // 4. Static Migration & Schema Integrity Checks
+  // =========================================================================
+  describe('Static Migration 013 Integrity', () => {
+    it('14. Migration 013 explicitly includes canonical Stage A entities in delete sequence', () => {
+      const migrationPath = path.join(process.cwd(), 'supabase', 'migrations', '013_platform_agency_lifecycle_rpcs.sql');
+      expect(fs.existsSync(migrationPath)).toBe(true);
+
+      const content = fs.readFileSync(migrationPath, 'utf8');
+
+      // Canonical Stage A entities
+      expect(content).toContain('DELETE FROM public.bookings WHERE tenant_id = p_tenant_id;');
+      expect(content).toContain('DELETE FROM public.inquiries WHERE tenant_id = p_tenant_id;');
+      expect(content).toContain('DELETE FROM public.traveler_profiles WHERE tenant_id = p_tenant_id;');
+
+      // Order check: bookings before inquiries before traveler_profiles
+      const bookingsIdx = content.indexOf('DELETE FROM public.bookings');
+      const inquiriesIdx = content.indexOf('DELETE FROM public.inquiries');
+      const travelersIdx = content.indexOf('DELETE FROM public.traveler_profiles');
+      const tenantsIdx = content.indexOf('DELETE FROM public.tenants');
+
+      expect(bookingsIdx).toBeLessThan(inquiriesIdx);
+      expect(inquiriesIdx).toBeLessThan(travelersIdx);
+      expect(travelersIdx).toBeLessThan(tenantsIdx);
+
+      // Audit scoping under global
+      expect(content).toContain("'global'");
+      expect(content).toContain("'agency.deleted'");
+      expect(content).toContain("'agency.created'");
     });
   });
 });

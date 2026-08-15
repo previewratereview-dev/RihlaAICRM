@@ -3,7 +3,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { createClient } from '@/lib/supabase/server';
 import { requirePlatformSuperAdmin } from '@/lib/auth/api-guard';
-import { recordAuditEvent } from '@/lib/security/audit-log';
 
 /**
  * Validates that the request origin matches the host header to prevent CSRF.
@@ -23,7 +22,7 @@ function isSameOrigin(request: NextRequest): boolean {
 /**
  * POST /api/platform/agencies
  *
- * Super-admin only endpoint to create a new Agency tenant with settings and subscription.
+ * Super-admin only endpoint to create a new Agency tenant with settings and subscription atomically.
  */
 export async function POST(request: NextRequest) {
   if (!isSameOrigin(request)) {
@@ -47,7 +46,7 @@ export async function POST(request: NextRequest) {
   const name = typeof body.name === 'string' ? body.name.trim() : '';
   const rawSlug = typeof body.slug === 'string' ? body.slug.trim() : '';
   const domain = typeof body.domain === 'string' ? body.domain.trim() : undefined;
-  const plan = typeof body.plan === 'string' && ['free', 'starter', 'growth', 'enterprise', 'custom', 'scale'].includes(body.plan.trim().toLowerCase())
+  const plan = typeof body.plan === 'string' && ['free', 'starter', 'growth', 'enterprise', 'custom', 'scale', 'pro', 'premium'].includes(body.plan.trim().toLowerCase())
     ? body.plan.trim().toLowerCase()
     : 'free';
   const aiBudget = typeof body.aiBudget === 'number' && body.aiBudget >= 0 ? body.aiBudget : 50;
@@ -71,91 +70,37 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Agency slug must be between 2 and 60 alphanumeric characters' }, { status: 400 });
   }
 
-  // Use service client or server session client
   const cookieStore = await cookies();
   const supabase = createClient(cookieStore);
 
-  // 3. Authoritative target lookup: Check if tenant ID or slug already exists
-  const { data: existing } = await supabase
-    .from('tenants')
-    .select('id, slug')
-    .or(`id.eq.${slug},slug.eq.${slug}`)
-    .maybeSingle();
+  // 3. Invoke Atomic Transactional RPC (Fail-Closed: No sequential fallback)
+  const { data: result, error: rpcError } = await supabase.rpc(
+    'platform_create_agency_atomic' as never,
+    {
+      p_name: name,
+      p_slug: slug,
+      p_domain: domain || null,
+      p_plan: plan,
+      p_ai_budget: aiBudget,
+      p_features: features,
+    } as never
+  );
 
-  if (existing) {
-    return NextResponse.json({ error: 'An agency with this identifier or slug already exists' }, { status: 409 });
-  }
-
-  const now = new Date().toISOString();
-  const tenantId = slug;
-
-  // 4. Create Tenant Record
-  const { data: tenant, error: tenantError } = await supabase
-    .from('tenants')
-    .insert({
-      id: tenantId,
-      name,
-      slug,
-      domain: domain || null,
-      status: 'active',
-      settings: { aiBudget, features },
-      created_at: now,
-      updated_at: now,
-    })
-    .select('*')
-    .single();
-
-  if (tenantError || !tenant) {
-    return NextResponse.json({ error: `Failed to create tenant: ${tenantError?.message || 'Unknown database error'}` }, { status: 500 });
-  }
-
-  // 5. Compensating multi-step create: Create settings & subscription
-  try {
-    await supabase.from('settings').upsert({
-      id: tenantId,
-      tenant_id: tenantId,
-      agency_name: name,
-    });
-
-    await supabase.from('subscriptions').upsert(
-      {
-        tenant_id: tenantId,
-        plan,
-        status: 'active',
-        created_at: now,
-        updated_at: now,
-      },
-      { onConflict: 'tenant_id' }
-    );
-  } catch (secondaryError) {
-    console.error('[PlatformAgencies] Secondary record creation warning:', secondaryError);
-  }
-
-  // 6. Record Audit Event
-  try {
-    await recordAuditEvent(supabase, {
-      actor: auth.authUserId,
-      action: 'agency.created',
-      target: tenantId,
-      tenantId,
-      details: { name, slug, plan, domain: domain || null },
-    });
-  } catch (auditError) {
-    console.warn('[PlatformAgencies] Audit log write warning:', auditError);
+  if (rpcError) {
+    if (rpcError.code === '23505' || rpcError.message?.toLowerCase().includes('already exists')) {
+      return NextResponse.json({ error: 'An agency with this identifier or slug already exists' }, { status: 409 });
+    }
+    if (rpcError.code === '22023' || rpcError.message?.toLowerCase().includes('validation')) {
+      return NextResponse.json({ error: rpcError.message }, { status: 400 });
+    }
+    if (rpcError.code === '42501' || rpcError.message?.toLowerCase().includes('forbidden')) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+    return NextResponse.json({ error: `Failed to create agency: ${rpcError.message}` }, { status: 500 });
   }
 
   return NextResponse.json({
     success: true,
-    tenant: {
-      id: tenant.id,
-      name: tenant.name,
-      slug: tenant.slug,
-      domain: tenant.domain,
-      status: tenant.status,
-      plan,
-      settings: tenant.settings,
-      createdAt: tenant.created_at,
-      updatedAt: tenant.updated_at,
-    },
+    tenant: result,
   }, { status: 201 });
 }

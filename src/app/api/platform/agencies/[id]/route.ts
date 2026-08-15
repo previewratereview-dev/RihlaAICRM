@@ -3,7 +3,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { createClient } from '@/lib/supabase/server';
 import { requirePlatformSuperAdmin } from '@/lib/auth/api-guard';
-import { recordAuditEvent } from '@/lib/security/audit-log';
 
 /**
  * Validates that the request origin matches the host header to prevent CSRF.
@@ -21,34 +20,9 @@ function isSameOrigin(request: NextRequest): boolean {
 }
 
 /**
- * The tenant-owned tables whose rows must be removed when an Agency is deleted,
- * in child-before-parent order to satisfy foreign-key constraints.
- */
-const TENANT_CHILD_TABLES_IN_DELETE_ORDER: readonly string[] = [
-  'messages',
-  'notes',
-  'activities',
-  'conversations',
-  'tasks',
-  'leads',
-  'ai_usage',
-  'faq_entries',
-  'knowledge_documents',
-  'settings',
-  'documents',
-  'files',
-  'secret_store',
-  'invitations',
-  'integration_credentials',
-  'roles',
-  'subscriptions',
-  'profiles',
-];
-
-/**
  * PATCH /api/platform/agencies/[id]
  *
- * Super-admin only endpoint to edit an existing Agency tenant (name, domain, colors, settings, plan, status).
+ * Super-admin only endpoint to edit an existing Agency tenant atomically via transactional RPC.
  */
 export async function PATCH(
   request: NextRequest,
@@ -77,129 +51,59 @@ export async function PATCH(
     return NextResponse.json({ error: 'Invalid JSON payload' }, { status: 400 });
   }
 
+  const name = typeof body.name === 'string' && body.name.trim().length >= 2 ? body.name.trim() : null;
+  const domain = typeof body.domain === 'string' ? body.domain.trim() || null : null;
+  const primaryColor = typeof body.primaryColor === 'string' ? body.primaryColor.trim() : null;
+  const customPrompt = typeof body.customPrompt === 'string' ? body.customPrompt.trim() : null;
+  const plan = typeof body.plan === 'string' ? body.plan.trim().toLowerCase() : null;
+  const aiBudget = typeof body.aiBudget === 'number' && body.aiBudget >= 0 ? body.aiBudget : null;
+  const features = typeof body.features === 'object' && body.features !== null ? (body.features as Record<string, boolean>) : null;
+  const status = typeof body.status === 'string' && ['active', 'suspended'].includes(body.status.trim().toLowerCase())
+    ? body.status.trim().toLowerCase()
+    : null;
+
   const cookieStore = await cookies();
   const supabase = createClient(cookieStore);
 
-  // 3. Authoritative target lookup
-  const { data: existingTenant, error: fetchError } = await supabase
-    .from('tenants')
-    .select('*, subscriptions(plan, status)')
-    .eq('id', id)
-    .maybeSingle();
+  // 3. Invoke Atomic Transactional Edit RPC (Fail-Closed: No sequential fallback)
+  const { data: updatedTenant, error: rpcError } = await supabase.rpc(
+    'platform_edit_agency_atomic' as never,
+    {
+      p_tenant_id: id,
+      p_name: name,
+      p_domain: domain,
+      p_primary_color: primaryColor,
+      p_custom_prompt: customPrompt,
+      p_plan: plan,
+      p_ai_budget: aiBudget,
+      p_features: features,
+      p_status: status,
+    } as never
+  );
 
-  if (fetchError || !existingTenant) {
-    return NextResponse.json({ error: 'Agency not found' }, { status: 404 });
-  }
-
-  // 4. Extract allowlisted fields only
-  const updatePayload: Record<string, unknown> = {
-    updated_at: new Date().toISOString(),
-  };
-
-  if (typeof body.name === 'string' && body.name.trim().length >= 2) {
-    updatePayload.name = body.name.trim();
-  }
-  if (typeof body.domain === 'string') {
-    updatePayload.domain = body.domain.trim() || null;
-  }
-  if (typeof body.primaryColor === 'string') {
-    updatePayload.primary_color = body.primaryColor.trim();
-  }
-  if (typeof body.customPrompt === 'string') {
-    updatePayload.custom_prompt = body.customPrompt.trim();
-  }
-  if (typeof body.status === 'string' && ['active', 'suspended'].includes(body.status.trim().toLowerCase())) {
-    updatePayload.status = body.status.trim().toLowerCase();
-  }
-
-  // Merge settings if provided
-  let newSettings: Record<string, unknown> | undefined;
-  if (body.aiBudget !== undefined || body.features !== undefined) {
-    const prevSettings = (existingTenant.settings as Record<string, unknown>) || {};
-    newSettings = { ...prevSettings };
-    if (typeof body.aiBudget === 'number' && body.aiBudget >= 0) {
-      newSettings.aiBudget = body.aiBudget;
+  if (rpcError) {
+    if (rpcError.code === 'P0002' || rpcError.message?.toLowerCase().includes('not exist') || rpcError.message?.toLowerCase().includes('not found')) {
+      return NextResponse.json({ error: 'Agency not found' }, { status: 404 });
     }
-    if (typeof body.features === 'object' && body.features !== null) {
-      newSettings.features = body.features;
+    if (rpcError.code === '22023' || rpcError.message?.toLowerCase().includes('validation')) {
+      return NextResponse.json({ error: rpcError.message }, { status: 400 });
     }
-    updatePayload.settings = newSettings;
-  }
-
-  // 5. Update Tenant Record
-  const { data: updatedTenant, error: updateError } = await supabase
-    .from('tenants')
-    .update(updatePayload)
-    .eq('id', id)
-    .select('*')
-    .single();
-
-  if (updateError || !updatedTenant) {
-    return NextResponse.json({ error: `Failed to update agency: ${updateError?.message || 'Unknown database error'}` }, { status: 500 });
-  }
-
-  // 6. Update Subscription if plan or status provided
-  let finalPlan = (existingTenant.subscriptions as { plan?: string } | null)?.plan || 'free';
-  if (typeof body.plan === 'string' && ['free', 'starter', 'growth', 'enterprise', 'custom', 'scale'].includes(body.plan.trim().toLowerCase())) {
-    finalPlan = body.plan.trim().toLowerCase();
-    try {
-      await supabase.from('subscriptions').upsert(
-        {
-          tenant_id: id,
-          plan: finalPlan,
-          status: updatePayload.status ? (updatePayload.status as string) : 'active',
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: 'tenant_id' }
-      );
-    } catch (subError) {
-      console.warn('[PlatformAgencies] Subscription update warning:', subError);
+    if (rpcError.code === '42501' || rpcError.message?.toLowerCase().includes('forbidden')) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
-  }
-
-  // 7. Record Audit Event
-  try {
-    const isStatusOnly = Object.keys(body).length === 1 && body.status !== undefined;
-    const action = isStatusOnly
-      ? (body.status === 'suspended' ? 'agency.suspended' : 'agency.reinstated')
-      : 'agency.updated';
-
-    await recordAuditEvent(supabase, {
-      actor: auth.authUserId,
-      action,
-      target: id,
-      tenantId: id,
-      details: {
-        updatedFields: Object.keys(body),
-        status: updatedTenant.status,
-        plan: finalPlan,
-      },
-    });
-  } catch (auditError) {
-    console.warn('[PlatformAgencies] Audit log write warning:', auditError);
+    return NextResponse.json({ error: `Failed to update agency: ${rpcError.message}` }, { status: 500 });
   }
 
   return NextResponse.json({
     success: true,
-    tenant: {
-      id: updatedTenant.id,
-      name: updatedTenant.name,
-      slug: updatedTenant.slug,
-      domain: updatedTenant.domain,
-      status: updatedTenant.status,
-      primaryColor: updatedTenant.primary_color,
-      customPrompt: updatedTenant.custom_prompt,
-      settings: updatedTenant.settings,
-      plan: finalPlan,
-      updatedAt: updatedTenant.updated_at,
-    },
+    tenant: updatedTenant,
   });
 }
 
 /**
  * DELETE /api/platform/agencies/[id]
  *
- * Super-admin only endpoint to permanently delete an Agency tenant and clean up child records.
+ * Super-admin only endpoint to permanently delete an Agency tenant atomically via transactional RPC.
  */
 export async function DELETE(
   request: NextRequest,
@@ -228,51 +132,26 @@ export async function DELETE(
   const cookieStore = await cookies();
   const supabase = createClient(cookieStore);
 
-  // 3. Authoritative target lookup
-  const { data: existingTenant, error: fetchError } = await supabase
-    .from('tenants')
-    .select('id, name')
-    .eq('id', id)
-    .maybeSingle();
+  // 3. Invoke Atomic Transactional Delete RPC (Fail-Closed: No sequential fallback)
+  const { data: result, error: rpcError } = await supabase.rpc(
+    'platform_delete_agency_atomic' as never,
+    {
+      p_tenant_id: id,
+    } as never
+  );
 
-  if (fetchError || !existingTenant) {
-    return NextResponse.json({ error: 'Agency not found' }, { status: 404 });
-  }
-
-  // 4. Perform structured child cleanup then tenant delete
-  try {
-    for (const table of TENANT_CHILD_TABLES_IN_DELETE_ORDER) {
-      await supabase.from(table).delete().eq('tenant_id', id);
+  if (rpcError) {
+    if (rpcError.code === 'P0002' || rpcError.message?.toLowerCase().includes('not exist') || rpcError.message?.toLowerCase().includes('not found')) {
+      return NextResponse.json({ error: 'Agency not found' }, { status: 404 });
     }
-
-    const { error: tenantDeleteError } = await supabase
-      .from('tenants')
-      .delete()
-      .eq('id', id);
-
-    if (tenantDeleteError) {
-      return NextResponse.json({ error: `Failed to delete agency: ${tenantDeleteError.message}` }, { status: 500 });
+    if (rpcError.code === '42501' || rpcError.message?.toLowerCase().includes('cannot be deleted')) {
+      return NextResponse.json({ error: rpcError.message }, { status: 400 });
     }
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Unknown database error';
-    return NextResponse.json({ error: `Deletion failed: ${msg}` }, { status: 500 });
-  }
-
-  // 5. Record Audit Event
-  try {
-    await recordAuditEvent(supabase, {
-      actor: auth.authUserId,
-      action: 'agency.deleted',
-      target: id,
-      tenantId: id,
-      details: { deletedAgencyName: existingTenant.name },
-    });
-  } catch (auditError) {
-    console.warn('[PlatformAgencies] Audit log write warning:', auditError);
+    return NextResponse.json({ error: `Deletion failed: ${rpcError.message}` }, { status: 500 });
   }
 
   return NextResponse.json({
     success: true,
-    deletedId: id,
+    deletedId: (result as { deletedId?: string })?.deletedId || id,
   });
 }
