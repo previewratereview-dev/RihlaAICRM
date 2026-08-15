@@ -13,7 +13,7 @@ BEGIN;
 CREATE TABLE IF NOT EXISTS public.copilot_action_executions (
   proposal_id text PRIMARY KEY,
   tenant_id text NOT NULL REFERENCES public.tenants(id) ON DELETE CASCADE,
-  actor_user_id text NOT NULL,
+  actor_user_id uuid NOT NULL,
   action_type text NOT NULL,
   entity_id uuid NOT NULL REFERENCES public.inquiries(id) ON DELETE CASCADE,
   executed_at timestamptz NOT NULL DEFAULT now()
@@ -27,7 +27,7 @@ GRANT ALL ON public.copilot_action_executions TO service_role, postgres;
 
 -- 2. Atomic Transactional RPC for Copilot Inquiry Actions
 CREATE OR REPLACE FUNCTION public.execute_copilot_inquiry_action_atomic(
-  p_actor_user_id text,
+  p_actor_user_id uuid,
   p_proposal_id text,
   p_inquiry_id uuid,
   p_action_type text,
@@ -44,15 +44,16 @@ DECLARE
   v_inquiry record;
   v_assignee_profile record;
   v_target_stage text;
-  v_target_assignee text;
+  v_target_assignee uuid;
   v_target_follow_up timestamptz;
+  v_target_follow_up_iso text;
   v_now timestamptz := now();
   v_now_iso text := to_char(v_now AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
   v_activity_id text;
   v_rows_affected integer;
 BEGIN
   -- 1. Actor Profile Resolution from trusted server-passed p_actor_user_id
-  IF p_actor_user_id IS NULL OR trim(p_actor_user_id) = '' THEN
+  IF p_actor_user_id IS NULL THEN
     RAISE EXCEPTION 'UNAUTHORIZED: Actor user ID is required.' USING ERRCODE = '42501';
   END IF;
 
@@ -181,7 +182,7 @@ BEGIN
     ) VALUES (
       v_activity_id,
       v_inquiry.legacy_lead_id,
-      v_caller_profile.id,
+      v_caller_profile.id::text,
       v_caller_profile.full_name,
       'status_change',
       'Inquiry Stage Updated via Copilot',
@@ -202,14 +203,18 @@ BEGIN
     );
 
   ELSIF p_action_type = 'assign_inquiry' THEN
-    v_target_assignee := trim(p_proposed_state->>'assignedAgentId');
-
-    IF v_target_assignee IS NULL OR v_target_assignee = '' THEN
+    IF (p_proposed_state->>'assignedAgentId') IS NULL OR trim(p_proposed_state->>'assignedAgentId') = '' THEN
       RAISE EXCEPTION 'INVALID_ARGUMENT: Target assignee ID is required.' USING ERRCODE = '22023';
     END IF;
 
+    BEGIN
+      v_target_assignee := (trim(p_proposed_state->>'assignedAgentId'))::uuid;
+    EXCEPTION WHEN others THEN
+      RAISE EXCEPTION 'INVALID_ARGUMENT: Target assignee ID "%" is not a valid UUID.', (p_proposed_state->>'assignedAgentId') USING ERRCODE = '22023';
+    END;
+
     -- Replay / Stale State check
-    IF coalesce(v_inquiry.assigned_agent_id, '') = v_target_assignee THEN
+    IF v_inquiry.assigned_agent_id IS NOT DISTINCT FROM v_target_assignee THEN
       RAISE EXCEPTION 'STALE_STATE: Inquiry is already assigned to this team member. No changes made.' USING ERRCODE = 'P0001';
     END IF;
 
@@ -229,8 +234,10 @@ BEGIN
     END IF;
 
     -- Stale State Check on assignee
-    IF (p_expected_current_state ? 'assignedAgentId') AND coalesce(v_inquiry.assigned_agent_id, '') != coalesce(p_expected_current_state->>'assignedAgentId', '') THEN
-      RAISE EXCEPTION 'STALE_STATE: Inquiry assignee changed unexpectedly. Please review latest record.' USING ERRCODE = 'P0001';
+    IF (p_expected_current_state ? 'assignedAgentId') THEN
+      IF coalesce(v_inquiry.assigned_agent_id::text, '') != trim(coalesce(p_expected_current_state->>'assignedAgentId', '')) THEN
+        RAISE EXCEPTION 'STALE_STATE: Inquiry assignee changed unexpectedly. Please review latest record.' USING ERRCODE = 'P0001';
+      END IF;
     END IF;
 
     -- 5a. Mutate Canonical Inquiry
@@ -268,7 +275,7 @@ BEGIN
     ) VALUES (
       v_activity_id,
       v_inquiry.legacy_lead_id,
-      v_caller_profile.id,
+      v_caller_profile.id::text,
       v_caller_profile.full_name,
       'assigned',
       'Inquiry Reassigned via Copilot',
@@ -290,10 +297,16 @@ BEGIN
     );
 
   ELSIF p_action_type = 'set_inquiry_follow_up' THEN
-    IF (p_proposed_state->>'nextFollowUpAt') IS NOT NULL AND trim(p_proposed_state->>'nextFollowUpAt') != '' THEN
-      v_target_follow_up := (p_proposed_state->>'nextFollowUpAt')::timestamptz;
+    IF (p_proposed_state ? 'nextFollowUpAt') AND (p_proposed_state->>'nextFollowUpAt') IS NOT NULL AND trim(p_proposed_state->>'nextFollowUpAt') != '' THEN
+      BEGIN
+        v_target_follow_up := (p_proposed_state->>'nextFollowUpAt')::timestamptz;
+      EXCEPTION WHEN others THEN
+        RAISE EXCEPTION 'INVALID_ARGUMENT: Follow-up datetime "%" is invalid.', (p_proposed_state->>'nextFollowUpAt') USING ERRCODE = '22023';
+      END;
+      v_target_follow_up_iso := to_char(v_target_follow_up AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
     ELSE
       v_target_follow_up := NULL;
+      v_target_follow_up_iso := NULL;
     END IF;
 
     -- Replay / Stale State check
@@ -301,21 +314,33 @@ BEGIN
       RAISE EXCEPTION 'STALE_STATE: Follow-up is already set to this datetime. No changes made.' USING ERRCODE = 'P0001';
     END IF;
 
-    -- Stale State Check
-    IF (p_expected_current_state ? 'nextFollowUpAt') AND (v_inquiry.next_follow_up_at IS DISTINCT FROM (p_expected_current_state->>'nextFollowUpAt')::timestamptz) THEN
-      RAISE EXCEPTION 'STALE_STATE: Follow-up date changed unexpectedly. Please review latest record.' USING ERRCODE = 'P0001';
+    -- Stale State Check on expected current state
+    IF (p_expected_current_state ? 'nextFollowUpAt') THEN
+      IF (p_expected_current_state->>'nextFollowUpAt') IS NOT NULL AND trim(p_expected_current_state->>'nextFollowUpAt') != '' THEN
+        BEGIN
+          IF (v_inquiry.next_follow_up_at IS DISTINCT FROM (p_expected_current_state->>'nextFollowUpAt')::timestamptz) THEN
+            RAISE EXCEPTION 'STALE_STATE: Follow-up date changed unexpectedly. Please review latest record.' USING ERRCODE = 'P0001';
+          END IF;
+        EXCEPTION WHEN others THEN
+          RAISE EXCEPTION 'INVALID_ARGUMENT: Expected follow-up datetime "%" is invalid.', (p_expected_current_state->>'nextFollowUpAt') USING ERRCODE = '22023';
+        END;
+      ELSE
+        IF (v_inquiry.next_follow_up_at IS NOT NULL) THEN
+          RAISE EXCEPTION 'STALE_STATE: Follow-up date changed unexpectedly. Please review latest record.' USING ERRCODE = 'P0001';
+        END IF;
+      END IF;
     END IF;
 
-    -- 5a. Mutate Canonical Inquiry
+    -- 5a. Mutate Canonical Inquiry (timestamptz)
     UPDATE public.inquiries
     SET next_follow_up_at = v_target_follow_up,
         updated_at = v_now
     WHERE id = v_inquiry.id;
 
-    -- 5b. Dual-Write Legacy Lead if linked (MUST update exactly one row)
+    -- 5b. Dual-Write Legacy Lead if linked (text field public.leads.next_follow_up)
     IF v_inquiry.legacy_lead_id IS NOT NULL THEN
       UPDATE public.leads
-      SET next_follow_up_at = v_target_follow_up,
+      SET next_follow_up = v_target_follow_up_iso,
           updated_at = v_now
       WHERE id = v_inquiry.legacy_lead_id
         AND tenant_id = v_caller_profile.tenant_id;
@@ -341,11 +366,14 @@ BEGIN
     ) VALUES (
       v_activity_id,
       v_inquiry.legacy_lead_id,
-      v_caller_profile.id,
+      v_caller_profile.id::text,
       v_caller_profile.full_name,
       'follow_up_set',
-      'Follow-Up Scheduled via Copilot',
-      'Follow-up scheduled for ' || coalesce(v_target_follow_up::text, 'Cleared') || ' (confirmed by ' || coalesce(v_caller_profile.full_name, 'Agent') || ').',
+      CASE WHEN v_target_follow_up IS NULL THEN 'Follow-Up Cleared via Copilot' ELSE 'Follow-Up Scheduled via Copilot' END,
+      CASE WHEN v_target_follow_up IS NULL 
+        THEN 'Follow-up cleared (confirmed by ' || coalesce(v_caller_profile.full_name, 'Agent') || ').'
+        ELSE 'Follow-up scheduled for ' || coalesce(v_target_follow_up_iso, 'Cleared') || ' (confirmed by ' || coalesce(v_caller_profile.full_name, 'Agent') || ').'
+      END,
       v_caller_profile.tenant_id,
       v_now
     );
@@ -354,9 +382,9 @@ BEGIN
       'success', true,
       'actionType', 'set_inquiry_follow_up',
       'entityId', v_inquiry.id,
-      'message', 'Follow-up successfully scheduled.',
+      'message', CASE WHEN v_target_follow_up IS NULL THEN 'Follow-up successfully cleared.' ELSE 'Follow-up successfully scheduled.' END,
       'newState', jsonb_build_object(
-        'nextFollowUpAt', v_target_follow_up,
+        'nextFollowUpAt', v_target_follow_up_iso,
         'updatedAt', v_now_iso
       )
     );

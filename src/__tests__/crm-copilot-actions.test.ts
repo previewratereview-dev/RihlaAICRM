@@ -970,6 +970,32 @@ describe('Phase AI-3A: Governed Rihla Copilot Actions & Atomic Execution', () =>
       );
     });
 
+    it('STATIC ASSERTION: migration 015 enforces canonical uuid types for actor_user_id, entity_id, and target_assignee', () => {
+      // Function signature uses p_actor_user_id uuid and p_inquiry_id uuid
+      expect(migrationSql).toContain('p_actor_user_id uuid,');
+      expect(migrationSql).toContain('p_inquiry_id uuid,');
+
+      // Receipt table uses actor_user_id uuid and entity_id uuid
+      expect(migrationSql).toContain('actor_user_id uuid NOT NULL,');
+      expect(migrationSql).toContain('entity_id uuid NOT NULL REFERENCES public.inquiries(id)');
+
+      // Target assignee variable is typed as uuid with safe conversion
+      expect(migrationSql).toContain('v_target_assignee uuid;');
+      expect(migrationSql).toContain("v_target_assignee := (trim(p_proposed_state->>'assignedAgentId'))::uuid;");
+    });
+
+    it('STATIC ASSERTION: migration 015 writes to legacy leads.next_follow_up and does NOT reference leads.next_follow_up_at', () => {
+      // Must update canonical inquiries.next_follow_up_at
+      expect(migrationSql).toContain('SET next_follow_up_at = v_target_follow_up,');
+
+      // Must update legacy leads.next_follow_up text column
+      expect(migrationSql).toContain('SET next_follow_up = v_target_follow_up_iso,');
+
+      // Must NOT contain invalid leads.next_follow_up_at reference
+      expect(migrationSql).not.toContain('UPDATE public.leads\n      SET next_follow_up_at');
+      expect(migrationSql).not.toContain('UPDATE public.leads SET next_follow_up_at');
+    });
+
     it('proposeAssignInquiry rejects proposed assignee with role viewer', async () => {
       const mockSupabase = {
         from: vi.fn((table: string) => ({
