@@ -18,6 +18,7 @@ import {
   ProposeAssignInquirySchema,
   ProposeSetInquiryFollowUpSchema,
 } from './types';
+import { signProposal } from './signatures';
 
 export interface ProposalOutput {
   proposal: ActionProposalDTO;
@@ -96,6 +97,7 @@ export const proposeUpdateInquiryStageTool: ToolDefinition<typeof ProposeUpdateI
         requiresConfirmation: true,
         createdAt: new Date().toISOString(),
       };
+      proposal.signature = signProposal(proposal);
 
       return {
         success: true,
@@ -187,6 +189,7 @@ export const proposeAssignInquiryTool: ToolDefinition<typeof ProposeAssignInquir
         requiresConfirmation: true,
         createdAt: new Date().toISOString(),
       };
+      proposal.signature = signProposal(proposal);
 
       return {
         success: true,
@@ -252,6 +255,7 @@ export const proposeSetInquiryFollowUpTool: ToolDefinition<typeof ProposeSetInqu
         requiresConfirmation: true,
         createdAt: new Date().toISOString(),
       };
+      proposal.signature = signProposal(proposal);
 
       return {
         success: true,

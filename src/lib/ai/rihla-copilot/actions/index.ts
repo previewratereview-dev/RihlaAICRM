@@ -4,3 +4,4 @@
 export * from './types';
 export * from './proposals';
 export * from './executors';
+export * from './signatures';

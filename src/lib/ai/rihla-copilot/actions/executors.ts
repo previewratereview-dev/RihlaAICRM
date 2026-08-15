@@ -20,6 +20,7 @@ import {
   WRITABLE_ROLES,
   STAGE_LABELS,
 } from './types';
+import { verifyProposalSignature, isProposalExpired } from './signatures';
 
 export interface AuthenticatedActor {
   userId: string;
@@ -50,7 +51,31 @@ export async function executeConfirmedAction(
     };
   }
 
-  // 2. Revalidate RBAC (Viewer role cannot write, Super Admin cannot perform agency CRM writes)
+  // 2. Verify Exact Cryptographic Proposal Integrity Signature (HMAC)
+  if (!verifyProposalSignature(proposal)) {
+    return {
+      success: false,
+      actionType: proposal.actionType,
+      entityId: proposal.entityId,
+      message: 'Action proposal integrity check failed. The proposal was tampered with, unsigned, or invalid.',
+      error: 'Invalid proposal signature',
+      errorCode: 'INVALID_SIGNATURE',
+    };
+  }
+
+  // 3. Verify Bounded Proposal TTL (10 minutes)
+  if (isProposalExpired(proposal)) {
+    return {
+      success: false,
+      actionType: proposal.actionType,
+      entityId: proposal.entityId,
+      message: 'Action proposal has expired (10 minute limit). Please request a fresh action.',
+      error: 'Expired proposal',
+      errorCode: 'EXPIRED_PROPOSAL',
+    };
+  }
+
+  // 4. Revalidate RBAC (Viewer role cannot write, Super Admin cannot perform agency CRM writes)
   if (actor.role === 'super_admin') {
     return {
       success: false,
@@ -73,7 +98,7 @@ export async function executeConfirmedAction(
     };
   }
 
-  // 3. Re-read canonical Inquiry record (Tenant Boundary & Stale-State Check)
+  // 5. Re-read canonical Inquiry record (Tenant Boundary & Stale-State Check)
   const { data: currentInq, error: readErr } = await supabase
     .from('inquiries')
     .select('id, tenant_id, destination, pipeline_stage, assigned_agent_id, next_follow_up_at, legacy_lead_id, updated_at')
@@ -93,7 +118,23 @@ export async function executeConfirmedAction(
     };
   }
 
-  // 4. Dispatch specific action executor
+  // 6. Ownership Parity Check:
+  // Admins & Managers have tenant-wide authority.
+  // Specialists, consultants, setters, closers can only modify inquiries assigned to them or unassigned inquiries.
+  if (actor.role !== 'admin' && actor.role !== 'manager') {
+    if (currentInq.assigned_agent_id && currentInq.assigned_agent_id !== actor.userId) {
+      return {
+        success: false,
+        actionType: proposal.actionType,
+        entityId: currentInq.id,
+        message: 'You can only modify inquiries assigned to you or unassigned inquiries.',
+        error: 'Ownership permission denied',
+        errorCode: 'FORBIDDEN',
+      };
+    }
+  }
+
+  // 7. Dispatch specific action executor
   switch (proposal.actionType) {
     case 'update_inquiry_stage':
       return await executeUpdateInquiryStage(actor, currentInq, proposal, supabase, now);
@@ -146,7 +187,19 @@ async function executeUpdateInquiryStage(
     };
   }
 
-  // Stale-State / Concurrency Check: Verify record has not changed stage since proposal was created
+  // Replay & Stale-State Check: Verify record has not changed stage since proposal was created, and is not already in target stage
+  if (currentInq.pipeline_stage === targetStage) {
+    const stageLabel = STAGE_LABELS[targetStage] || targetStage;
+    return {
+      success: false,
+      actionType: proposal.actionType,
+      entityId: currentInq.id,
+      message: `Inquiry is already in "${stageLabel}". No changes made.`,
+      error: 'Already in target stage',
+      errorCode: 'STALE_STATE',
+    };
+  }
+
   if (proposal.currentState.stage && currentInq.pipeline_stage !== proposal.currentState.stage) {
     const currentLabel = STAGE_LABELS[currentInq.pipeline_stage as ValidInquiryStage] || currentInq.pipeline_stage;
     return {
@@ -199,7 +252,7 @@ async function executeUpdateInquiryStage(
 
   await supabase.from('activities').insert({
     id: `act-stage-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-    lead_id: currentInq.legacy_lead_id || currentInq.id,
+    lead_id: currentInq.legacy_lead_id || null,
     user_id: actor.userId,
     user_name: actor.fullName,
     type: 'status_change',
@@ -241,6 +294,18 @@ async function executeAssignInquiry(
       message: 'Target assignee ID is required.',
       error: 'Missing assignee',
       errorCode: 'INVALID_ARGUMENT',
+    };
+  }
+
+  // Replay check: already assigned
+  if (currentInq.assigned_agent_id === targetAssigneeId) {
+    return {
+      success: false,
+      actionType: proposal.actionType,
+      entityId: currentInq.id,
+      message: 'Inquiry is already assigned to this team member. No changes made.',
+      error: 'Already assigned to target',
+      errorCode: 'STALE_STATE',
     };
   }
 
@@ -316,7 +381,7 @@ async function executeAssignInquiry(
   const assigneeName = assigneeProfile.full_name || 'Team Member';
   await supabase.from('activities').insert({
     id: `act-assign-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-    lead_id: currentInq.legacy_lead_id || currentInq.id,
+    lead_id: currentInq.legacy_lead_id || null,
     user_id: actor.userId,
     user_name: actor.fullName,
     type: 'assigned',
@@ -350,6 +415,18 @@ async function executeSetInquiryFollowUp(
   now: string
 ): Promise<ActionExecutionResult> {
   const targetFollowUpAt = proposal.proposedState.nextFollowUpAt || null;
+
+  // Replay check: already set to target follow-up date
+  if ((currentInq.next_follow_up_at || null) === targetFollowUpAt) {
+    return {
+      success: false,
+      actionType: proposal.actionType,
+      entityId: currentInq.id,
+      message: 'Follow-up is already set to this datetime. No changes made.',
+      error: 'Already set to target follow-up',
+      errorCode: 'STALE_STATE',
+    };
+  }
 
   // Stale-State Check: Verify follow-up date has not changed since proposal
   if (
@@ -404,7 +481,7 @@ async function executeSetInquiryFollowUp(
   const formattedDate = targetFollowUpAt ? new Date(targetFollowUpAt).toLocaleString() : 'Cleared';
   await supabase.from('activities').insert({
     id: `act-followup-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-    lead_id: currentInq.legacy_lead_id || currentInq.id,
+    lead_id: currentInq.legacy_lead_id || null,
     user_id: actor.userId,
     user_name: actor.fullName,
     type: 'follow_up_set',

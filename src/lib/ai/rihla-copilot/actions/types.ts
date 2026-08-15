@@ -78,6 +78,7 @@ export interface ActionProposalDTO {
   riskLevel: 'internal';
   requiresConfirmation: true;
   createdAt: string;
+  signature?: string;
 }
 
 export interface ActionExecutionResult {
@@ -87,7 +88,15 @@ export interface ActionExecutionResult {
   message: string;
   newState?: Record<string, unknown>;
   error?: string;
-  errorCode?: 'UNAUTHORIZED' | 'FORBIDDEN' | 'NOT_FOUND' | 'STALE_STATE' | 'INVALID_ARGUMENT' | 'EXECUTION_FAILED';
+  errorCode?:
+    | 'UNAUTHORIZED'
+    | 'FORBIDDEN'
+    | 'NOT_FOUND'
+    | 'STALE_STATE'
+    | 'INVALID_ARGUMENT'
+    | 'INVALID_SIGNATURE'
+    | 'EXPIRED_PROPOSAL'
+    | 'EXECUTION_FAILED';
 }
 
 export const WRITABLE_ROLES: Set<UserRole> = new Set([
