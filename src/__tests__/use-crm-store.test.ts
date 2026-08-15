@@ -50,15 +50,9 @@ describe('tenantId threading through DB calls', () => {
     expect(source).toMatch(/getActiveTenantId\(get\(\)\)/);
   });
 
-  it('getActiveTenantId prefers impersonateTenantId over tenantId', async () => {
-    const fs = await import('fs');
-    const path = await import('path');
-    const source = fs.readFileSync(
-      path.resolve(__dirname, '../hooks/store/helpers.ts'),
-      'utf-8'
-    );
-
-    // Function should check impersonateTenantId first
-    expect(source).toMatch(/state\.impersonateTenantId\s*\?\?\s*state\.tenantId/);
+  it('getActiveTenantId returns tenantId without impersonation override', async () => {
+    const { getActiveTenantId } = await import('../hooks/store/helpers');
+    expect(getActiveTenantId({ tenantId: 'tenant-123' })).toBe('tenant-123');
+    expect(() => getActiveTenantId({ tenantId: null })).toThrow('Tenant context is required');
   });
 });

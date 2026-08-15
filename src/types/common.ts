@@ -31,8 +31,7 @@ export type Permission =
   | 'platform:tenants:write'
   | 'platform:users:write'
   | 'platform:analytics:read'
-  | 'platform:settings:write'
-  | 'platform:impersonate';
+  | 'platform:settings:write';
 
 export interface User {
   id: string;

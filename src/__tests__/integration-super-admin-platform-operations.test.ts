@@ -263,7 +263,6 @@ describe('Integration Test 4.2: Super Admin Platform Operations', () => {
     const platformPermissions = [
       'platform:tenants:write', 'platform:users:write',
       'platform:analytics:read', 'platform:settings:write',
-      'platform:impersonate',
     ];
 
     // Verify Super Admin has ALL Agency Admin permissions
@@ -590,7 +589,6 @@ describe('Integration Test 4.2: Super Admin Platform Operations', () => {
       'platform:users:write',
       'platform:analytics:read',
       'platform:settings:write',
-      'platform:impersonate',
     ];
 
     let platformPermCount = 0;

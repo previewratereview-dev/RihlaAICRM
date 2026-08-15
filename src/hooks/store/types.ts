@@ -59,10 +59,6 @@ export interface CRMStore {
   globalSearchQuery: string;
   tenantBranding: { agencyName: string; primaryColor: string; logoUrl?: string };
   tenantFeatures: TenantFeatures;
-  impersonateTenantId: string | null;
-  impersonateTenantName: string | null;
-  impersonationStartedAt: number | null;
-  impersonationRemainingMs: number | null;
   tenantId: string | null;
 
   // Auth actions
@@ -86,7 +82,6 @@ export interface CRMStore {
   toggleSidebar: () => void;
   setDensity: (density: 'comfortable' | 'compact') => void;
   setGlobalSearchQuery: (query: string) => void;
-  setImpersonateTenant: (tenantId: string | null, tenantName?: string) => void;
 
   // Leads actions
   addLead: (lead: Omit<Lead, 'id' | 'createdAt' | 'updatedAt' | 'aiScore' | 'aiSummary'> & { id?: string }) => Promise<void>;

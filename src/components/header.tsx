@@ -10,13 +10,9 @@ import { calculateCRMMetrics } from '@/lib/metrics';
 import { 
   Sparkles, 
   Cpu, 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  Globe, 
   LogOut, 
   User as UserIcon, 
   Settings as SettingsIcon,
-  Eye,
-  X,
   Sun,
   Moon,
   Layout,
@@ -36,10 +32,6 @@ export function Header() {
   const leads = useCRMStore((state) => state.leads);
   const currentUser = useCRMStore((state) => state.currentUser);
   const logout = useCRMStore((state) => state.logout);
-  const impersonateTenantId = useCRMStore((state) => state.impersonateTenantId);
-  const impersonateTenantName = useCRMStore((state) => state.impersonateTenantName);
-  const impersonationRemainingMs = useCRMStore((state) => state.impersonationRemainingMs);
-  const setImpersonateTenant = useCRMStore((state) => state.setImpersonateTenant);
   const density = useCRMStore((state) => state.density);
   const setDensity = useCRMStore((state) => state.setDensity);
 
@@ -74,7 +66,6 @@ export function Header() {
       );
     };
     updateTime();
-    // Update every 30 seconds to reduce re-renders (minutes rarely need sub-second precision)
     const interval = setInterval(updateTime, 30000);
     return () => clearInterval(interval);
   }, []);
@@ -105,56 +96,24 @@ export function Header() {
         return 'Tasks & Reminders';
       case 'team':
         return 'Team Directory';
+      case 'performance':
+        return 'Team Performance';
       case 'analytics':
         return 'Performance Reports';
       case 'settings':
         return 'Settings';
-      case 'sa_dashboard':
-        return 'Platform Command Center';
-      case 'sa_tenants':
-        return 'Agency Management';
-      case 'sa_users':
-        return 'Global User Directory';
-      case 'sa_analytics':
-        return 'Global Analytics';
-      case 'sa_ai':
-        return 'AI Governance';
-      case 'sa_audit':
-        return 'Platform Audit Log';
-      case 'sa_settings':
-        return 'Platform Settings';
       default:
-        return currentUser.role === 'super_admin' ? 'Platform Admin' : 'Rihla Travel CRM';
+        return 'Rihla Travel CRM';
     }
   };
 
   return (
-    <>
-      {impersonateTenantId && (
-        <div className="flex items-center justify-between px-6 py-2 bg-amber-50 border-b border-amber-200 text-amber-900 dark:bg-amber-950 dark:border-amber-800 dark:text-amber-100 text-sm shrink-0">
-          <span className="flex items-center gap-2 font-medium">
-            <Eye className="h-4 w-4" />
-            Viewing as tenant: <strong>{impersonateTenantName || impersonateTenantId}</strong>
-            {impersonationRemainingMs !== null && (
-              <span className="ml-2 px-2 py-0.5 rounded-full bg-amber-200/50 dark:bg-amber-800/50 text-[10px] font-mono font-bold">
-                {Math.floor(impersonationRemainingMs / 60000)}:{String(Math.floor((impersonationRemainingMs % 60000) / 1000)).padStart(2, '0')}
-              </span>
-            )}
-          </span>
-          <button
-            onClick={() => setImpersonateTenant(null)}
-            className="inline-flex items-center gap-1 px-3 py-1 rounded-lg border border-amber-300 hover:bg-amber-100 dark:border-amber-700 dark:hover:bg-amber-900 text-xs font-semibold"
-          >
-            <X className="h-3.5 w-3.5" /> Exit impersonation
-          </button>
-        </div>
-      )}
     <header className="relative flex h-[14.4rem] md:h-[3.6rem] items-center justify-between px-6 lg:px-8 border-b border-border/40 bg-background/80 backdrop-blur-xl z-10 shrink-0 select-none shadow-sm">
       {/* Left: Mobile Nav & Breadcrumbs */}
       <div className="flex items-center gap-4">
         <MobileNav />
         <div className="hidden md:flex items-center text-sm">
-          <span className="text-muted-foreground font-medium">Platform</span>
+          <span className="text-muted-foreground font-medium">CRM</span>
           <span className="mx-2 text-muted-foreground/50">/</span>
           <h1 className="font-semibold text-foreground tracking-tight font-heading">
             {getPageTitle(activeTab)}
@@ -166,7 +125,7 @@ export function Header() {
         </h1>
       </div>
 
-      {/* Center: Empty (Whitespace) to let it breathe */}
+      {/* Center: Search */}
       <div className="flex-1 flex justify-center max-w-md mx-4">
         <GlobalSearch />
       </div>
@@ -191,10 +150,10 @@ export function Header() {
           <DropdownMenuContent align="end" className="w-48 bg-popover/90 backdrop-blur-xl border border-border text-foreground shadow-lg rounded-xl">
             <DropdownMenuLabel className="font-semibold text-xs text-muted-foreground uppercase tracking-wider">Quick Actions</DropdownMenuLabel>
             <DropdownMenuSeparator className="bg-border/60" />
-            <DropdownMenuItem className="cursor-pointer text-sm" onClick={() => setActiveTab('leads')}>
+            <DropdownMenuItem className="cursor-pointer text-sm" onClick={() => setActiveTab('inquiries')}>
               Recent Inquiries
             </DropdownMenuItem>
-            <DropdownMenuItem className="cursor-pointer text-sm" onClick={() => setActiveTab('leads')}>
+            <DropdownMenuItem className="cursor-pointer text-sm" onClick={() => setActiveTab('inquiries')}>
               Assign to me
             </DropdownMenuItem>
             <DropdownMenuItem className="cursor-pointer text-sm" onClick={() => setActiveTab('conversations')}>
@@ -248,21 +207,21 @@ export function Header() {
                 <DropdownMenuSeparator className="bg-border/60" />
               </>
             )}
-              <DropdownMenuItem 
-                onClick={() => setDensity(density === 'compact' ? 'comfortable' : 'compact')}
-                className="hover:bg-secondary/80 hover:text-foreground cursor-pointer text-sm focus:bg-secondary/80 rounded-lg flex items-center justify-between"
-              >
-                <div className="flex items-center">
-                  <Layout className="mr-2 h-4 w-4" />
-                  <span>Compact Layout</span>
-                </div>
-                <div className={cn("w-7 h-4 rounded-full border border-border/50 relative transition-colors", density === 'compact' ? "bg-primary" : "bg-muted")}>
-                  <div className={cn("absolute top-[1px] h-3 w-3 rounded-full bg-background transition-transform", density === 'compact' ? "translate-x-[13px]" : "translate-x-[1px]")} />
-                </div>
-              </DropdownMenuItem>
-              <DropdownMenuSeparator className="bg-border/60" />
-              <DropdownMenuItem 
-                onClick={() => logout()}
+            <DropdownMenuItem 
+              onClick={() => setDensity(density === 'compact' ? 'comfortable' : 'compact')}
+              className="hover:bg-secondary/80 hover:text-foreground cursor-pointer text-sm focus:bg-secondary/80 rounded-lg flex items-center justify-between"
+            >
+              <div className="flex items-center">
+                <Layout className="mr-2 h-4 w-4" />
+                <span>Compact Layout</span>
+              </div>
+              <div className={cn("w-7 h-4 rounded-full border border-border/50 relative transition-colors", density === 'compact' ? "bg-primary" : "bg-muted")}>
+                <div className={cn("absolute top-[1px] h-3 w-3 rounded-full bg-background transition-transform", density === 'compact' ? "translate-x-[13px]" : "translate-x-[1px]")} />
+              </div>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator className="bg-border/60" />
+            <DropdownMenuItem 
+              onClick={() => logout()}
               className="hover:bg-red-500/10 hover:text-red-600 focus:bg-red-500/10 focus:text-red-600 cursor-pointer text-sm rounded-lg"
             >
               <LogOut className="mr-2 h-4 w-4" />
@@ -272,6 +231,5 @@ export function Header() {
         </DropdownMenu>
       </div>
     </header>
-    </>
   );
 }

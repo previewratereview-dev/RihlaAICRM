@@ -1,5 +1,4 @@
 import 'server-only';
-import { randomUUID } from 'crypto';
 import { recordAuditEvent } from '../security/audit-log';
 import type { AuditEventInput, AuditLogEntry } from '../security/audit-log';
 
@@ -256,30 +255,6 @@ function getDefaultStore(): PlatformAdminStore {
 export type AgencyStatus = 'active' | 'suspended';
 
 /**
- * A short-lived authorization to access a Tenant's data under an explicit
- * impersonation action (Requirement 2.10). The token is only minted *after* the
- * corresponding Audit_Log entry is persisted, so `auditLogId` always references
- * a recorded access. Default lifetime is 30 minutes.
- */
-export interface ImpersonationToken {
-  /** Opaque, server-generated token authorizing scoped impersonated access. */
-  token: string;
-  /** The Platform_Super_Admin identity performing the impersonation. */
-  actorId: string;
-  /** The Tenant whose data may be accessed under this token. */
-  tenantId: string;
-  /** ISO-8601 issuance timestamp. */
-  issuedAt: string;
-  /** ISO-8601 expiry timestamp. */
-  expiresAt: string;
-  /** The Audit_Log entry id recorded *before* this token was returned. */
-  auditLogId: string;
-}
-
-/** Default impersonation-token lifetime: 30 minutes. */
-const IMPERSONATION_TTL_MS = 30 * 60 * 1000;
-
-/**
  * The tenant-owned tables whose rows must be removed when an Agency is deleted
  * so that no tenant-owned data remains retrievable (Requirements 2.6, 8.8).
  *
@@ -434,48 +409,6 @@ export async function deleteAgency(actorId: string, tenantId: string): Promise<v
     tenantId: tenant,
     details: { deleted: true },
   });
-}
-
-/**
- * Begin an explicit impersonation of a Tenant for support purposes
- * (Requirements 2.10, 8.11).
- *
- * The Audit_Log entry is written and confirmed persisted **before** an
- * {@link ImpersonationToken} is returned, so no impersonated data access can be
- * authorized without a recorded audit entry. The returned token carries the
- * recorded `auditLogId` and a 30-minute expiry.
- */
-export async function impersonate(
-  actorId: string,
-  tenantId: string,
-): Promise<ImpersonationToken> {
-  const actor = requireId(actorId, 'actorId');
-  const tenant = requireId(tenantId, 'tenantId');
-
-  const store = agencyStoreOrDefault();
-
-  // Audit BEFORE returning any access-bearing data (2.10, 8.11). If this write
-  // fails it throws and no token is minted, so access is never granted without
-  // a recorded audit entry.
-  const entry = await store.recordAudit({
-    actor,
-    action: 'agency.impersonated',
-    target: tenant,
-    tenantId: tenant,
-    details: { reason: 'support_impersonation' },
-  });
-
-  const issuedAt = new Date();
-  const expiresAt = new Date(issuedAt.getTime() + IMPERSONATION_TTL_MS);
-
-  return {
-    token: randomUUID(),
-    actorId: actor,
-    tenantId: tenant,
-    issuedAt: issuedAt.toISOString(),
-    expiresAt: expiresAt.toISOString(),
-    auditLogId: entry.id,
-  };
 }
 
 /**

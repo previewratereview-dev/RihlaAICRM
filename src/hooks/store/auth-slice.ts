@@ -68,10 +68,6 @@ export function createAuthSlice(set: SetState, get: GetState) {
         settings: { ...DEFAULT_SESSION_SETTINGS },
         tenantBranding: { ...DEFAULT_SESSION_BRANDING },
         tenantFeatures: {},
-        impersonateTenantId: null,
-        impersonateTenantName: null,
-        impersonationStartedAt: null,
-        impersonationRemainingMs: null,
         tenants: [],
         tenantsWithStats: [],
         platformUsers: [],
@@ -83,8 +79,7 @@ export function createAuthSlice(set: SetState, get: GetState) {
     setAuthAdapter: (adapter: AuthAdapter) => {
       authAdapter = adapter;
       if (adapter.user && !get().currentUser) {
-        const defaultTab = adapter.user.role === 'super_admin' ? 'sa_dashboard' : 'dashboard';
-        set({ currentUser: adapter.user, tenantId: adapter.user.tenantId, activeTab: defaultTab, sessionLoading: false });
+        set({ currentUser: adapter.user, tenantId: adapter.user.tenantId, activeTab: 'dashboard', sessionLoading: false });
         get().syncData();
       } else if (!adapter.loading && get().sessionLoading) {
         // ALWAYS clear sessionLoading once auth adapter finishes loading
@@ -113,8 +108,7 @@ export function createAuthSlice(set: SetState, get: GetState) {
           logger.warn('Failed to check maintenance mode during login', { error: String(e) });
         }
 
-        const defaultTab = user.role === 'super_admin' ? 'sa_dashboard' : 'dashboard';
-        set({ currentUser: user, tenantId: user.tenantId, activeTab: defaultTab });
+        set({ currentUser: user, tenantId: user.tenantId, activeTab: 'dashboard' });
         await get().syncData();
         await get().logAuditEvent('login', `${user.fullName} logged in successfully.`);
         return { success: true, error: null };
@@ -129,21 +123,19 @@ export function createAuthSlice(set: SetState, get: GetState) {
         if (!data.success || !data.user) {
           return { success: false, error: data.error || 'Failed to start demo session', code: data.code };
         }
-        const adapter = getAuthAdapter();
-        if (adapter?.loadSession) {
-          await adapter.loadSession();
-        }
+
         set({
           currentUser: data.user,
           tenantId: data.user.tenantId,
           activeTab: 'dashboard',
           sessionLoading: false,
+          dataLoading: false,
         });
+
         await get().syncData();
-        return { success: true, error: null };
-      } catch (err) {
-        logger.error('Failed to start demo session', { error: String(err) });
-        return { success: false, error: 'Network error establishing demo session' };
+        return { success: true, error: null, code: data.code };
+      } catch (err: unknown) {
+        return { success: false, error: (err as Error).message || 'Failed to start demo session' };
       }
     },
 
@@ -186,8 +178,7 @@ export function createAuthSlice(set: SetState, get: GetState) {
         await adapter.loadSession();
         if (adapter.user) {
           const user = adapter.user;
-          const defaultTab = user.role === 'super_admin' ? 'sa_dashboard' : 'dashboard';
-          set({ currentUser: user, tenantId: user.tenantId, activeTab: defaultTab });
+          set({ currentUser: user, tenantId: user.tenantId, activeTab: 'dashboard' });
           await get().syncData();
         }
       }
@@ -200,7 +191,7 @@ export function createAuthSlice(set: SetState, get: GetState) {
 
       set({ dataLoading: true });
       try {
-        if (user.role === 'super_admin' && !get().impersonateTenantId) {
+        if (user.role === 'super_admin') {
           const [tenants, tenantsWithStats, platformUsers, auditLogs] = await Promise.all([
             CRMDatabaseService.getTenants(),
             CRMDatabaseService.getTenantsWithStats(),

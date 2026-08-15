@@ -15,7 +15,7 @@ import { PaywallModal } from '@/components/paywall-modal';
 import { useMessageRealtime } from '@/hooks/use-message-realtime';
 import { motion, AnimatePresence } from 'framer-motion';
 
-// Code-split view components — only loaded when the tab is active
+// Code-split CRM view components — only loaded when the tab is active
 const DashboardView = lazy(() => import('@/components/dashboard-view').then((m) => ({ default: m.DashboardView })));
 const InquiriesView = lazy(() => import('@/components/inquiries-view').then((m) => ({ default: m.InquiriesView })));
 const PipelineView = lazy(() => import('@/components/pipeline-view').then((m) => ({ default: m.PipelineView })));
@@ -29,13 +29,6 @@ const AnalyticsView = lazy(() => import('@/components/analytics-view').then((m) 
 const SettingsView = lazy(() => import('@/components/settings-view').then((m) => ({ default: m.SettingsView })));
 const PerformanceView = lazy(() => import('@/components/performance-view').then((m) => ({ default: m.PerformanceView })));
 const SetterDashboard = lazy(() => import('@/components/setter-dashboard').then((m) => ({ default: m.SetterDashboard })));
-const SuperAdminTenantsView = lazy(() => import('@/components/super-admin/sa-tenants-view').then((m) => ({ default: m.SuperAdminTenantsView })));
-const SuperAdminAnalyticsView = lazy(() => import('@/components/super-admin/sa-analytics-view').then((m) => ({ default: m.SuperAdminAnalyticsView })));
-const SuperAdminSettingsView = lazy(() => import('@/components/super-admin/sa-settings-view').then((m) => ({ default: m.SuperAdminSettingsView })));
-const SuperAdminDashboardView = lazy(() => import('@/components/super-admin/sa-dashboard-view').then((m) => ({ default: m.SuperAdminDashboardView })));
-const SuperAdminUsersView = lazy(() => import('@/components/super-admin/sa-users-view').then((m) => ({ default: m.SuperAdminUsersView })));
-const SuperAdminAIGovernanceView = lazy(() => import('@/components/super-admin/sa-ai-governance-view').then((m) => ({ default: m.SuperAdminAIGovernanceView })));
-const SuperAdminAuditView = lazy(() => import('@/components/super-admin/sa-audit-view').then((m) => ({ default: m.SuperAdminAuditView })));
 
 function ViewSkeleton() {
   return (
@@ -83,10 +76,6 @@ export function CrmShell({ initialTab, useNewTravelersRead, useNewInquiriesRead 
 
   const [subscription, setSubscription] = useState<SubscriptionInfo | null>(null);
   const [showPaywall, setShowPaywall] = useState(false);
-
-  // NOTE: Do NOT call restoreSession() here. AuthBridge already handles
-  // session restore via setAuthAdapter. Calling it here causes an infinite
-  // loop because restoreSession changes reference on every store update.
 
   useEffect(() => {
     if (initialTab) setActiveTab(initialTab);
@@ -172,25 +161,20 @@ export function CrmShell({ initialTab, useNewTravelersRead, useNewInquiriesRead 
   }
 
   const renderActiveView = () => {
-    // Fail-closed UX guard: Non-super_admin users cannot render platform super_admin views
-    if (activeTab.startsWith('sa_') && currentUser?.role !== 'super_admin') {
-      return currentUser?.role === 'specialist' || currentUser?.role === 'setter'
-        ? <SetterDashboard />
-        : <DashboardView />;
-    }
-
     switch (activeTab) {
       case 'dashboard':
         return currentUser?.role === 'specialist' || currentUser?.role === 'setter'
           ? <SetterDashboard />
           : <DashboardView />;
       case 'inquiries':
+      case 'leads':
         return <InquiriesView useNewReadOverride={useNewInquiriesRead} />;
       case 'pipeline':
         return <PipelineView />;
       case 'bookings':
         return <BookingsView />;
       case 'travelers':
+      case 'clients':
         return <TravelersView useNewReadOverride={useNewTravelersRead} />;
       case 'conversations':
         return <ConversationsView />;
@@ -206,20 +190,6 @@ export function CrmShell({ initialTab, useNewTravelersRead, useNewInquiriesRead 
         return <AnalyticsView />;
       case 'settings':
         return <SettingsView />;
-      case 'sa_dashboard':
-        return <SuperAdminDashboardView />;
-      case 'sa_tenants':
-        return <SuperAdminTenantsView />;
-      case 'sa_users':
-        return <SuperAdminUsersView />;
-      case 'sa_analytics':
-        return <SuperAdminAnalyticsView />;
-      case 'sa_ai':
-        return <SuperAdminAIGovernanceView />;
-      case 'sa_audit':
-        return <SuperAdminAuditView />;
-      case 'sa_settings':
-        return <SuperAdminSettingsView />;
       default:
         return <DashboardView />;
     }

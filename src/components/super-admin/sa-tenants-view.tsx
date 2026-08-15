@@ -2,7 +2,7 @@
 
 import React, { useMemo, useState } from 'react';
 import { useCRMStore } from '@/hooks/use-crm-store';
-import { Building2, Power, PowerOff, Plus, Search, Pencil, Users, TrendingUp, Cpu, MessageSquare, Eye, Trash2, Crown } from 'lucide-react';
+import { Building2, Power, PowerOff, Plus, Search, Pencil, Users, TrendingUp, Cpu, MessageSquare, Trash2, Crown } from 'lucide-react';
 import { EmptyState } from '@/components/ui/empty-state';
 import { logger } from '@/lib/logger';
 import type { TenantFeatureFlags } from '@/types';
@@ -165,8 +165,6 @@ function DeleteConfirmModal({ name, onConfirm, onCancel, saving }: { name: strin
 export function SuperAdminTenantsView() {
   const tenantsWithStats = useCRMStore((state) => state.tenantsWithStats);
   const syncData = useCRMStore((state) => state.syncData);
-  const setImpersonateTenant = useCRMStore((state) => state.setImpersonateTenant);
-  const setActiveTab = useCRMStore((state) => state.setActiveTab);
 
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'suspended'>('all');
@@ -484,17 +482,8 @@ export function SuperAdminTenantsView() {
 
               <div className="flex gap-2 mt-auto flex-wrap">
                 <button
-                  onClick={() => {
-                    setImpersonateTenant(tenant.id, tenant.name);
-                    setActiveTab('dashboard');
-                  }}
-                  className="flex-1 flex items-center justify-center gap-1.5 py-2 text-sm font-medium rounded-lg border border-primary/30 text-primary hover:bg-primary/5"
-                >
-                  <Eye className="w-3.5 h-3.5" /> View As
-                </button>
-                <button
                   onClick={() => openEdit(tenant)}
-                  className="flex-1 flex items-center justify-center gap-1.5 py-2 text-sm font-medium rounded-lg border hover:bg-secondary/50"
+                  className="flex-1 flex items-center justify-center gap-1.5 py-2 text-sm font-medium rounded-lg border hover:bg-secondary/50 cursor-pointer"
                 >
                   <Pencil className="w-3.5 h-3.5" /> Edit
                 </button>

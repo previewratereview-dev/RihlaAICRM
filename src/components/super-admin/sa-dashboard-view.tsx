@@ -1,6 +1,8 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useCRMStore } from '@/hooks/use-crm-store';
 import { CRMDatabaseService } from '@/lib/db-service';
 import { motion } from 'framer-motion';
@@ -17,7 +19,7 @@ import {
 } from 'lucide-react';
 
 export function SuperAdminDashboardView() {
-  const setActiveTab = useCRMStore((s) => s.setActiveTab);
+  const router = useRouter();
   const tenantsWithStats = useCRMStore((s) => s.tenantsWithStats);
   const auditLogs = useCRMStore((s) => s.auditLogs);
   const syncData = useCRMStore((s) => s.syncData);
@@ -51,13 +53,13 @@ export function SuperAdminDashboardView() {
           <div className="flex gap-2">
             <button
               onClick={() => syncData()}
-              className="h-10 px-4 rounded-xl border border-border/60 text-sm font-medium hover:bg-secondary/50"
+              className="h-10 px-4 rounded-xl border border-border/60 text-sm font-medium hover:bg-secondary/50 cursor-pointer"
             >
               Refresh
             </button>
             <button
-              onClick={() => setActiveTab('sa_tenants')}
-              className="inline-flex items-center gap-2 h-10 px-4 rounded-xl bg-primary text-primary-foreground text-sm font-semibold"
+              onClick={() => router.push('/app/platform/agencies')}
+              className="inline-flex items-center gap-2 h-10 px-4 rounded-xl bg-primary text-primary-foreground text-sm font-semibold cursor-pointer"
             >
               <Plus className="h-4 w-4" />
               New Agency
@@ -66,14 +68,17 @@ export function SuperAdminDashboardView() {
         </div>
 
         {suspended.length > 0 && (
-          <div className="flex items-center gap-3 p-4 rounded-xl bg-amber-50 border border-amber-200">
-            <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0" />
-            <p className="text-sm text-amber-800">
+          <div className="flex items-center gap-3 p-4 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/50">
+            <AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-500 shrink-0" />
+            <p className="text-sm text-amber-800 dark:text-amber-300">
               <strong>{suspended.length}</strong> agenc{suspended.length === 1 ? 'y is' : 'ies are'} currently suspended.
             </p>
-            <button onClick={() => setActiveTab('sa_tenants')} className="ml-auto text-sm font-semibold text-amber-700 hover:underline">
+            <Link
+              href="/app/platform/agencies"
+              className="ml-auto text-sm font-semibold text-amber-700 dark:text-amber-400 hover:underline"
+            >
               Review
-            </button>
+            </Link>
           </div>
         )}
 
@@ -103,9 +108,9 @@ export function SuperAdminDashboardView() {
           <div className="rounded-2xl bg-card/80 border border-border/60 p-6">
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-bold">Top AI Spenders</h3>
-              <button onClick={() => setActiveTab('sa_ai')} className="text-xs text-primary font-semibold flex items-center gap-1">
+              <Link href="/app/platform/ai" className="text-xs text-primary font-semibold flex items-center gap-1 hover:underline">
                 View all <ArrowRight className="h-3 w-3" />
-              </button>
+              </Link>
             </div>
             {topSpenders.length === 0 ? (
               <p className="text-sm text-muted-foreground">No AI usage recorded yet.</p>
@@ -130,9 +135,9 @@ export function SuperAdminDashboardView() {
                 <Activity className="h-4 w-4 text-primary" />
                 Recent Platform Activity
               </h3>
-              <button onClick={() => setActiveTab('sa_audit')} className="text-xs text-primary font-semibold flex items-center gap-1">
+              <Link href="/app/platform/audit" className="text-xs text-primary font-semibold flex items-center gap-1 hover:underline">
                 Full log <ArrowRight className="h-3 w-3" />
-              </button>
+              </Link>
             </div>
             <div className="space-y-2 max-h-[280px] overflow-y-auto">
               {auditLogs.slice(0, 8).map((log) => (
@@ -156,19 +161,19 @@ export function SuperAdminDashboardView() {
 
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {[
-            { tab: 'sa_tenants', label: 'Manage Agencies', icon: Building2 },
-            { tab: 'sa_users', label: 'All Users', icon: Users },
-            { tab: 'sa_analytics', label: 'Analytics', icon: TrendingUp },
-            { tab: 'sa_ai', label: 'AI Governance', icon: MessageSquare },
+            { href: '/app/platform/agencies', label: 'Manage Agencies', icon: Building2 },
+            { href: '/app/platform/users', label: 'All Users', icon: Users },
+            { href: '/app/platform/analytics', label: 'Analytics', icon: TrendingUp },
+            { href: '/app/platform/ai', label: 'AI Governance', icon: MessageSquare },
           ].map((item) => (
-            <button
-              key={item.tab}
-              onClick={() => setActiveTab(item.tab)}
-              className="p-4 rounded-xl bg-card/80 border border-border/60 hover:border-primary/40 hover:shadow-md transition-all text-left group"
+            <Link
+              key={item.href}
+              href={item.href}
+              className="p-4 rounded-xl bg-card/80 border border-border/60 hover:border-primary/40 hover:shadow-md transition-all text-left group block"
             >
               <item.icon className="h-5 w-5 text-primary mb-2 group-hover:scale-110 transition-transform" />
               <p className="text-sm font-semibold">{item.label}</p>
-            </button>
+            </Link>
           ))}
         </div>
       </div>

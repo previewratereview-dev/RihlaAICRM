@@ -14,7 +14,6 @@ export const Permission_Matrix: Record<UserRole, Permission[]> = {
     'settings:users:write', 'settings:audit:read',
     'platform:tenants:write', 'platform:users:write',
     'platform:analytics:read', 'platform:settings:write',
-    'platform:impersonate',
   ],
   admin: [
     'leads:read', 'leads:write', 'leads:delete',

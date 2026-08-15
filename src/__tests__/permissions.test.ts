@@ -38,7 +38,7 @@ describe('Permission_Matrix completeness', () => {
     }
   });
 
-  it('super_admin has all 22 permissions', () => {
+  it('super_admin has all 21 permissions', () => {
     const allPermissions: Permission[] = [
       'leads:read', 'leads:write', 'leads:delete',
       'tasks:read', 'tasks:write',
@@ -50,7 +50,6 @@ describe('Permission_Matrix completeness', () => {
       'settings:users:write', 'settings:audit:read',
       'platform:tenants:write', 'platform:users:write',
       'platform:analytics:read', 'platform:settings:write',
-      'platform:impersonate',
     ];
     for (const perm of allPermissions) {
       expect(Permission_Matrix['super_admin']).toContain(perm);
@@ -79,7 +78,7 @@ describe('Permission_Matrix completeness', () => {
 // ---------------------------------------------------------------------------
 describe('can() correctness', () => {
   it('returns true for valid role-permission combinations in the matrix', () => {
-    expect(can('super_admin', 'platform:impersonate')).toBe(true);
+    expect(can('super_admin', 'platform:settings:write')).toBe(true);
     expect(can('admin', 'leads:write')).toBe(true);
     expect(can('manager', 'analytics:read')).toBe(true);
     expect(can('specialist', 'conversations:write')).toBe(true);
@@ -89,8 +88,8 @@ describe('can() correctness', () => {
 
   it('returns false for permissions not in the role matrix', () => {
     expect(can('viewer', 'leads:write')).toBe(false);
-    expect(can('viewer', 'platform:impersonate')).toBe(false);
-    expect(can('specialist', 'platform:impersonate')).toBe(false);
+    expect(can('viewer', 'platform:settings:write')).toBe(false);
+    expect(can('specialist', 'platform:settings:write')).toBe(false);
     expect(can('manager', 'settings:users:write')).toBe(false);
     expect(can('consultant', 'conversations:write')).toBe(false);
   });
@@ -122,7 +121,6 @@ describe('can() correctness', () => {
       'settings:users:write', 'settings:audit:read',
       'platform:tenants:write', 'platform:users:write',
       'platform:analytics:read', 'platform:settings:write',
-      'platform:impersonate',
     ];
 
     for (const role of roles) {

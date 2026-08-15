@@ -18,8 +18,6 @@ import {
   Award,
   TrendingUp,
   Settings,
-  ScrollText,
-  Cpu,
 } from 'lucide-react';
 
 const allItems = [
@@ -34,16 +32,6 @@ const allItems = [
   { id: 'performance', label: 'Performance', icon: Award },
   { id: 'analytics', label: 'Analytics', icon: TrendingUp },
   { id: 'settings', label: 'Settings', icon: Settings },
-];
-
-const superAdminItems = [
-  { id: 'sa_dashboard', label: 'Platform Overview', icon: LayoutDashboard },
-  { id: 'sa_tenants', label: 'Agencies', icon: Building2 },
-  { id: 'sa_users', label: 'Global Users', icon: Users },
-  { id: 'sa_analytics', label: 'Global Analytics', icon: TrendingUp },
-  { id: 'sa_ai', label: 'AI Governance', icon: Cpu },
-  { id: 'sa_audit', label: 'Audit Log', icon: ScrollText },
-  { id: 'sa_settings', label: 'Platform Settings', icon: Settings },
 ];
 
 const specialistItems = ['dashboard', 'leads', 'conversations', 'calendar', 'tasks'];
@@ -63,14 +51,12 @@ export function MobileNav() {
   const totalUnreadMessages = conversations.reduce((acc, c) => acc + c.unreadCount, 0);
   const pendingTasksCount = tasks.filter((t) => t.status === 'pending').length;
 
-  const items = currentUser?.role === 'super_admin'
-    ? superAdminItems
-    : allItems.filter((item) => {
-        if (currentUser?.role === 'specialist' || currentUser?.role === 'setter') {
-          return specialistItems.includes(item.id);
-        }
-        return true;
-      });
+  const items = allItems.filter((item) => {
+    if (currentUser?.role === 'specialist' || currentUser?.role === 'setter') {
+      return specialistItems.includes(item.id);
+    }
+    return true;
+  });
 
   const getRoleLabel = (role: string) => {
     if (role === 'super_admin') return 'Super Admin';

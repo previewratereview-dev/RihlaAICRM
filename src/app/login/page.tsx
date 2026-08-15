@@ -56,7 +56,8 @@ export default function LoginPage() {
   // Redirect if already authenticated and not in password-reset mode
   useEffect(() => {
     if (!sessionLoading && currentUser && flowView !== 'reset') {
-      router.push('/app');
+      const destination = currentUser.role === 'super_admin' ? '/app/platform/dashboard' : '/app/dashboard';
+      router.push(destination);
     }
   }, [currentUser, sessionLoading, router, flowView]);
 
