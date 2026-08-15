@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { createClient } from '@/lib/supabase/server';
 import { requirePlatformSuperAdmin } from '@/lib/auth/api-guard';
-import { isSafeCustomProviderUrl } from '@/lib/security/ssrf';
+import { validateCustomProviderUrlWithDns } from '@/lib/security/ssrf';
 import { open, type SealedSecret } from '@/lib/secrets/store';
 
 function isSameOrigin(request: NextRequest): boolean {
@@ -26,7 +26,7 @@ function resolveStoredApiKey(stored: unknown): string | null {
       return open(parsed) || null;
     }
   } catch {
-    // Legacy plaintext string
+    // Legacy plaintext fallback
   }
   return stored;
 }
@@ -35,7 +35,8 @@ function resolveStoredApiKey(stored: unknown): string | null {
  * POST /api/platform/settings/models
  *
  * Super-admin only model discovery endpoint for OpenAI-compatible and custom providers.
- * - Validates provider endpoint against SSRF (no localhost/internal network in prod).
+ * - Validates provider endpoint against SSRF (syntax, scheme, IP ranges, and async DNS resolution).
+ * - Enforces manual redirects to prevent credential forwarding and SSRF pivot bypasses.
  * - Resolves API key server-side: uses candidate key if supplied, or stored sealed key.
  * - Makes outbound request server-side; credentials never exposed to client.
  */
@@ -68,12 +69,13 @@ export async function POST(request: NextRequest) {
     .maybeSingle();
 
   const extra = (platformRow?.settings as Record<string, unknown>) || {};
-  const requestedEndpoint = typeof body.endpoint === 'string' && body.endpoint.trim().length > 0
-    ? body.endpoint.trim()
-    : String(extra.defaultAiBaseUrl || 'https://api.openai.com/v1');
+  const requestedEndpoint =
+    typeof body.endpoint === 'string' && body.endpoint.trim().length > 0
+      ? body.endpoint.trim()
+      : String(extra.defaultAiBaseUrl || 'https://api.openai.com/v1');
 
-  // 3. Validate Endpoint against SSRF
-  const urlCheck = isSafeCustomProviderUrl(requestedEndpoint);
+  // 3. Validate Endpoint against SSRF with DNS resolution
+  const urlCheck = await validateCustomProviderUrlWithDns(requestedEndpoint);
   if (!urlCheck.safe || !urlCheck.url) {
     return NextResponse.json(
       { error: urlCheck.error || 'Invalid or unsafe provider endpoint URL' },
@@ -108,7 +110,7 @@ export async function POST(request: NextRequest) {
   const urlObj = new URL(rawModelsUrl);
   urlObj.searchParams.set('limit', '1000');
 
-  // 6. Execute server-side fetch with timeout
+  // 6. Execute server-side fetch with timeout and manual redirect handling
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15000);
 
@@ -119,8 +121,16 @@ export async function POST(request: NextRequest) {
         Authorization: `Bearer ${activeApiKey}`,
         Accept: 'application/json',
       },
+      redirect: 'manual', // Prevent following unvalidated redirects and credential leaking
       signal: controller.signal,
     }).finally(() => clearTimeout(timeout));
+
+    if (response.status >= 300 && response.status < 400) {
+      return NextResponse.json(
+        { error: 'Provider endpoint returned an HTTP redirect; redirects are disabled for security' },
+        { status: 400 }
+      );
+    }
 
     if (!response.ok) {
       const errText = await response.text().catch(() => response.statusText);

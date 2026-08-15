@@ -53,7 +53,6 @@ export function SuperAdminSettingsView() {
   });
 
   const [apiKeyConfigured, setApiKeyConfigured] = useState(false);
-  const [apiKeyMasked, setApiKeyMasked] = useState<string | null>(null);
 
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -101,7 +100,6 @@ export function SuperAdminSettingsView() {
           });
 
           setApiKeyConfigured(Boolean(s.apiKeyConfigured));
-          setApiKeyMasked(s.apiKeyMasked || null);
         }
       })
       .catch((err) => {
@@ -231,7 +229,6 @@ export function SuperAdminSettingsView() {
       setMessage('Platform settings saved successfully.');
       if (data.settings) {
         setApiKeyConfigured(Boolean(data.settings.apiKeyConfigured));
-        setApiKeyMasked(data.settings.apiKeyMasked || null);
         setForm((prev) => ({ ...prev, defaultAiApiKey: '' })); // clear candidate key from memory
       }
     } catch (err) {
@@ -365,7 +362,7 @@ export function SuperAdminSettingsView() {
                       {apiKeyConfigured && (
                         <span className="inline-flex items-center gap-1 text-[10px] font-mono text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md font-semibold">
                           <CheckCircle2 className="h-3 w-3" />
-                          Configured {apiKeyMasked ? `(${apiKeyMasked})` : ''}
+                          Configured
                         </span>
                       )}
                     </div>
@@ -431,7 +428,7 @@ export function SuperAdminSettingsView() {
                       {apiKeyConfigured && (
                         <span className="inline-flex items-center gap-1 text-[10px] font-mono text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md font-semibold">
                           <CheckCircle2 className="h-3 w-3" />
-                          Configured {apiKeyMasked ? `(${apiKeyMasked})` : ''}
+                          Configured
                         </span>
                       )}
                     </div>
@@ -532,7 +529,7 @@ export function SuperAdminSettingsView() {
                       {apiKeyConfigured && (
                         <span className="inline-flex items-center gap-1 text-[10px] font-mono text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md font-semibold">
                           <CheckCircle2 className="h-3 w-3" />
-                          Configured {apiKeyMasked ? `(${apiKeyMasked})` : ''}
+                          Configured
                         </span>
                       )}
                     </div>
@@ -652,8 +649,8 @@ export function SuperAdminSettingsView() {
             <label className="flex items-center gap-3 p-4 rounded-xl bg-amber-50 border border-amber-200 dark:bg-amber-950 dark:border-amber-800 cursor-pointer">
               <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0" />
               <div className="flex-1">
-                <p className="text-sm font-semibold">Maintenance Mode</p>
-                <p className="text-xs text-muted-foreground">Blocks non-admin logins platform-wide</p>
+                <p className="text-sm font-semibold">Sign-in Lock (Maintenance)</p>
+                <p className="text-xs text-muted-foreground">Prevents new non-admin logins while maintenance is underway. Existing sessions remain active.</p>
               </div>
               <input type="checkbox" checked={form.maintenanceMode} onChange={(e) => setForm({ ...form, maintenanceMode: e.target.checked })} className="h-4 w-4 accent-primary" />
             </label>

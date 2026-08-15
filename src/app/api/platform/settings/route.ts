@@ -4,8 +4,8 @@ import { cookies } from 'next/headers';
 import { createClient } from '@/lib/supabase/server';
 import { requirePlatformSuperAdmin } from '@/lib/auth/api-guard';
 import { recordAuditEvent } from '@/lib/security/audit-log';
-import { seal, open, maskedView, type SealedSecret } from '@/lib/secrets/store';
-import { isSafeCustomProviderUrl } from '@/lib/security/ssrf';
+import { seal } from '@/lib/secrets/store';
+import { validateCustomProviderUrlWithDns } from '@/lib/security/ssrf';
 
 const ALLOWED_PLATFORMS = new Set(['openai', 'anthropic', 'openai-compatible']);
 
@@ -26,23 +26,9 @@ function safelySealApiKey(plaintext: string): string {
     const sealed = seal(plaintext);
     return JSON.stringify(sealed);
   } catch {
-    // If secret store key is unconfigured (e.g. dev/test), store securely as plaintext string
+    // If secret store key is unconfigured (e.g. dev/test), store as string
     return plaintext;
   }
-}
-
-function safelyMaskApiKey(storedKey: unknown): string | null {
-  if (!storedKey || typeof storedKey !== 'string') return null;
-  try {
-    const parsed = JSON.parse(storedKey) as SealedSecret;
-    if (parsed.iv && parsed.authTag && parsed.ciphertext && typeof parsed.keyVersion === 'number') {
-      const decrypted = open(parsed);
-      return maskedView(decrypted);
-    }
-  } catch {
-    // Plaintext legacy fallback
-  }
-  return maskedView(storedKey);
 }
 
 /**
@@ -50,7 +36,9 @@ function safelyMaskApiKey(storedKey: unknown): string | null {
  *
  * Super-admin only endpoint to read platform configuration.
  * Redacts all secret material (API keys, ciphertexts, sealed secrets)
- * and returns only clean configuration and apiKeyConfigured/apiKeyMasked status.
+ * and returns only clean configuration and apiKeyConfigured boolean.
+ *
+ * Invariant: GET NEVER decrypts stored platform secret material.
  */
 export async function GET(request: NextRequest) {
   // 1. Authorize super_admin
@@ -94,8 +82,11 @@ export async function GET(request: NextRequest) {
     platform = 'openai-compatible';
   }
 
-  const hasApiKey = Boolean(extra.defaultAiApiKey && typeof extra.defaultAiApiKey === 'string' && extra.defaultAiApiKey.trim().length > 0);
-  const apiKeyMasked = hasApiKey ? safelyMaskApiKey(extra.defaultAiApiKey) : null;
+  const hasApiKey = Boolean(
+    extra.defaultAiApiKey &&
+      typeof extra.defaultAiApiKey === 'string' &&
+      extra.defaultAiApiKey.trim().length > 0
+  );
 
   return NextResponse.json({
     success: true,
@@ -110,7 +101,6 @@ export async function GET(request: NextRequest) {
       defaultAiBudget: Number(extra.defaultAiBudget) || 100,
       supportEmail: String(extra.supportEmail || ''),
       apiKeyConfigured: hasApiKey,
-      apiKeyMasked,
     },
   });
 }
@@ -122,7 +112,7 @@ export async function GET(request: NextRequest) {
  * - Enforces Same-Origin and super_admin authorization.
  * - Validates all updated fields with strict allowlists and boundaries.
  * - Write-only API key handling: empty string preserves existing key; non-empty string seals and rotates key; removeApiKey: true deletes key.
- * - Validates custom base URLs against SSRF.
+ * - Validates custom base URLs against SSRF (with DNS resolution).
  * - Records audit events without exposing secret material.
  */
 export async function PATCH(request: NextRequest) {
@@ -157,7 +147,7 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ error: `Failed to load existing settings: ${fetchError.message}` }, { status: 500 });
   }
 
-  const currentExtra = ((existingRow?.settings as Record<string, unknown>) || {});
+  const currentExtra = (existingRow?.settings as Record<string, unknown>) || {};
 
   // 3. Validate and build updates
   const updatePayload: Record<string, unknown> = {
@@ -177,7 +167,11 @@ export async function PATCH(request: NextRequest) {
 
   // defaultAiModel
   if (body.defaultAiModel !== undefined) {
-    if (typeof body.defaultAiModel !== 'string' || body.defaultAiModel.trim().length === 0 || body.defaultAiModel.length > 100) {
+    if (
+      typeof body.defaultAiModel !== 'string' ||
+      body.defaultAiModel.trim().length === 0 ||
+      body.defaultAiModel.length > 100
+    ) {
       return NextResponse.json({ error: 'Invalid default AI model name' }, { status: 400 });
     }
     updatePayload.default_ai_model = body.defaultAiModel.trim();
@@ -189,9 +183,12 @@ export async function PATCH(request: NextRequest) {
     if (typeof body.defaultAiBaseUrl !== 'string') {
       return NextResponse.json({ error: 'Invalid default AI base URL' }, { status: 400 });
     }
-    const check = isSafeCustomProviderUrl(body.defaultAiBaseUrl);
+    const check = await validateCustomProviderUrlWithDns(body.defaultAiBaseUrl);
     if (!check.safe || !check.url) {
-      return NextResponse.json({ error: check.error || 'Unsafe or invalid custom provider base URL' }, { status: 400 });
+      return NextResponse.json(
+        { error: check.error || 'Unsafe or invalid custom provider base URL' },
+        { status: 400 }
+      );
     }
     updatedExtra.defaultAiBaseUrl = check.url.origin + check.url.pathname.replace(/\/+$/, '');
     changedFields.push('defaultAiBaseUrl');
@@ -210,7 +207,10 @@ export async function PATCH(request: NextRequest) {
   if (body.platformMonthlyAiCap !== undefined) {
     const cap = Number(body.platformMonthlyAiCap);
     if (!Number.isFinite(cap) || cap < 0 || cap > 1000000) {
-      return NextResponse.json({ error: 'platformMonthlyAiCap must be a finite number between 0 and 1,000,000' }, { status: 400 });
+      return NextResponse.json(
+        { error: 'platformMonthlyAiCap must be a finite number between 0 and 1,000,000' },
+        { status: 400 }
+      );
     }
     updatePayload.platform_monthly_ai_cap = cap;
     changedFields.push('platform_monthly_ai_cap');
@@ -238,7 +238,10 @@ export async function PATCH(request: NextRequest) {
   if (body.defaultAiBudget !== undefined) {
     const budget = Number(body.defaultAiBudget);
     if (!Number.isFinite(budget) || budget < 0 || budget > 1000000) {
-      return NextResponse.json({ error: 'defaultAiBudget must be a finite number between 0 and 1,000,000' }, { status: 400 });
+      return NextResponse.json(
+        { error: 'defaultAiBudget must be a finite number between 0 and 1,000,000' },
+        { status: 400 }
+      );
     }
     updatedExtra.defaultAiBudget = budget;
     changedFields.push('defaultAiBudget');
@@ -308,8 +311,11 @@ export async function PATCH(request: NextRequest) {
 
   // 6. Return sanitized response
   const finalExtra = (savedRow?.settings as Record<string, unknown>) || updatedExtra;
-  const hasKey = Boolean(finalExtra.defaultAiApiKey && typeof finalExtra.defaultAiApiKey === 'string' && finalExtra.defaultAiApiKey.trim().length > 0);
-  const apiKeyMasked = hasKey ? safelyMaskApiKey(finalExtra.defaultAiApiKey) : null;
+  const hasKey = Boolean(
+    finalExtra.defaultAiApiKey &&
+      typeof finalExtra.defaultAiApiKey === 'string' &&
+      finalExtra.defaultAiApiKey.trim().length > 0
+  );
 
   return NextResponse.json({
     success: true,
@@ -325,7 +331,6 @@ export async function PATCH(request: NextRequest) {
       defaultAiBudget: Number(finalExtra.defaultAiBudget ?? 100),
       supportEmail: String(finalExtra.supportEmail || ''),
       apiKeyConfigured: hasKey,
-      apiKeyMasked,
     },
   });
 }
