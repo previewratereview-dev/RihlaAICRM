@@ -3,7 +3,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
 import React from 'react';
 import { useCRMStore } from '@/hooks/use-crm-store';
-import { DevTools } from '@/components/dev-tools';
 import { DashboardView } from '@/components/dashboard-view';
 import { AdminUserManagement } from '@/components/admin-user-management';
 import { TeamView } from '@/components/team-view';
@@ -142,26 +141,11 @@ describe('Phase F1A: Product Truth & Shell Integrity', () => {
     expect(screen.getByText('Conversion Rate')).toBeDefined();
   });
 
-  // 3. DevTools Production Guard & Positioning
-  it('C. DevTools does NOT render in production (NODE_ENV=production)', () => {
-    vi.stubEnv('NODE_ENV', 'production');
-
-    const { container } = render(<DevTools />);
-    expect(container.firstChild).toBeNull();
-    expect(screen.queryByTestId('dev-tools-panel')).toBeNull();
-    vi.unstubAllEnvs();
-  });
-
-  it('D. DevTools renders in development mode and is positioned at bottom-left', () => {
-    vi.stubEnv('NODE_ENV', 'development');
-
-    render(<DevTools />);
-    const panel = screen.getByTestId('dev-tools-panel');
-    expect(panel).toBeDefined();
-    expect(panel.className).toContain('bottom-4');
-    expect(panel.className).toContain('left-4');
-    expect(panel.className).not.toContain('right-4');
-    vi.unstubAllEnvs();
+  // 3. DevTools Complete Removal
+  it('C. DevTools component is removed from the CRM shell', () => {
+    const crmShellFile = path.join(process.cwd(), 'src/components/crm-shell.tsx');
+    const crmShellContent = fs.readFileSync(crmShellFile, 'utf-8');
+    expect(crmShellContent).not.toMatch(/DevTools/);
   });
 
   // 4. User Management Truthfulness (Status removed, Last Login dash & Permissions preserved)

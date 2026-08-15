@@ -14,7 +14,6 @@ import { TrialBanner } from '@/components/trial-banner';
 import { PaywallModal } from '@/components/paywall-modal';
 import { useMessageRealtime } from '@/hooks/use-message-realtime';
 import { motion, AnimatePresence } from 'framer-motion';
-import { DevTools } from '@/components/dev-tools';
 
 // Code-split view components — only loaded when the tab is active
 const DashboardView = lazy(() => import('@/components/dashboard-view').then((m) => ({ default: m.DashboardView })));
@@ -263,7 +262,6 @@ export function CrmShell({ initialTab, useNewTravelersRead, useNewInquiriesRead 
       {currentUser?.role !== 'super_admin' && (
         <PaywallModal isOpen={showPaywall} onClose={() => setShowPaywall(false)} currentPlan={subscription?.plan} />
       )}
-      <DevTools />
     </TenantProvider>
   );
 }

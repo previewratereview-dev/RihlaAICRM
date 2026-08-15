@@ -45,9 +45,6 @@ vi.mock('@/components/dashboard-view', () => ({
 vi.mock('@/components/global-copilot', () => ({
   GlobalCopilot: () => React.createElement('div', { 'data-testid': 'global-copilot' }, 'Copilot'),
 }));
-vi.mock('@/components/dev-tools', () => ({
-  DevTools: () => React.createElement('div', { 'data-testid': 'dev-tools' }, 'DevTools'),
-}));
 vi.mock('sonner', () => ({
   Toaster: () => React.createElement('div', { 'data-testid': 'toaster' }),
 }));

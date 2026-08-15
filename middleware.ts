@@ -49,7 +49,13 @@ const PUBLIC_PAGE_PREFIXES = [
  * signature verification (Requirement 5.6/5.7), not a user session, so they are
  * not gated by this authentication middleware.
  */
-const PUBLIC_API_PREFIXES = ['/api/webhooks', '/api/register', '/api/auth'];
+const PUBLIC_API_PREFIXES = [
+  '/api/webhooks',
+  '/api/register',
+  '/api/auth',
+  '/api/inngest',
+  '/api/health',
+];
 
 function matchesPrefix(pathname: string, prefixes: string[]): boolean {
   return prefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
