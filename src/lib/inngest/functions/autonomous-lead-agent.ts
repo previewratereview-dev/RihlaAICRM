@@ -2,7 +2,7 @@ import { inngest, leadCreatedEvent } from "../client";
 import { executeAIRequest } from "@/lib/ai/route-helper";
 import { createClient } from "@supabase/supabase-js";
 import { buildAiRuntime } from "@/lib/ai/runtime";
-import { sendLeadFollowUpEmail } from "@/lib/integrations/email";
+import { generateId } from "@/lib/utils";
 
 export const processNewLead = inngest.createFunction(
   { id: "process-new-lead", triggers: [leadCreatedEvent] },
@@ -52,8 +52,7 @@ export const processNewLead = inngest.createFunction(
         return { status: "skipped", reason: blockReason };
       }
 
-      // Save as draft note to the lead in CRM
-      // Save as draft note to the lead in CRM
+      // Save AI-generated welcome draft as internal note (NOT a sent message)
       const now = new Date().toISOString();
       await adminDb.from('notes').insert({
         id: `note-${Date.now()}`,
@@ -61,66 +60,53 @@ export const processNewLead = inngest.createFunction(
         tenant_id: tenantId,
         author_id: 'system',
         author_name: 'AI Agent',
-        content: `**[Generated Auto-Reply / Itinerary]**\n\n${content}`,
+        content: `📝 **[AI Draft — Welcome Email (not sent)]**\n\nThe following welcome email was prepared by AI for your review. Copy it into the email composer to send it to the lead.\n\n---\n\n${content}`,
         created_at: now,
         updated_at: now,
       });
 
-      // Also record this outreach in conversations
-      const convId = `conv-${Date.now()}`;
-      await adminDb.from('conversations').insert({
-        id: convId,
-        lead_id: leadId,
-        lead_name: lead.full_name,
-        lead_email: lead.email,
-        channel: 'email',
-        status: 'open',
-        last_message: 'Automated Welcome Email Sent',
-        last_message_at: now,
-        tenant_id: tenantId,
-        created_at: now,
-        updated_at: now,
-      });
+      // AI-0 SAFETY: Do NOT insert into messages table.
+      // An unsent AI draft must not appear in conversation history as if the customer received it.
 
-      await adminDb.from('messages').insert({
-        id: `msg-${Date.now()}`,
-        conversation_id: convId,
-        sender_type: 'agent',
-        sender_id: 'system',
-        sender_name: 'AI Agent',
-        content,
-        message_type: 'email',
-        is_read: true,
-        tenant_id: tenantId,
-        created_at: now,
-      });
+      // AI-0 SAFETY: Do NOT call sendLeadFollowUpEmail.
+      // AI-generated content must not be automatically transmitted to customers.
 
-      // True Automation: Actually send the email if they have one
+      // AI-0 SAFETY: Do NOT set lead.status to 'contacted'.
+      // A prepared draft is NOT customer contact. Status must only advance
+      // when a human actually sends a message to the customer.
+
+      // Create a follow-up task so an agent reviews and sends the draft
       if (lead.email) {
-        await sendLeadFollowUpEmail({
-          tenantId,
-          fullName: lead.full_name,
-          email: lead.email,
-          destination: lead.destination,
-          template: content
-        });
-
-        // Advance pipeline status from 'new' to 'contacted'
-        await adminDb.from('leads').update({ status: 'contacted', updated_at: now }).eq('id', leadId);
-
-        // Record Activity Log
-        await adminDb.from('activities').insert({
-          id: `act-${Date.now()}`,
+        await adminDb.from('tasks').insert({
+          id: `task-${generateId()}`,
           lead_id: leadId,
+          lead_name: lead.full_name,
           tenant_id: tenantId,
-          user_id: 'system',
-          user_name: 'AI Agent',
-          type: 'status_change',
-          title: 'Automated Outreach Sent',
-          description: 'AI sent automated welcome email and moved lead to Contacted.',
-          created_at: now
+          title: `[AI Draft] Review & send welcome email to ${lead.full_name}`,
+          description: `AI prepared a welcome email draft for this new lead. Review the draft in the lead\'s notes and send via email composer if appropriate.\n\nDestination: ${lead.destination || 'Not specified'}\nSource: ${lead.lead_source || 'Website'}`,
+          type: 'email',
+          priority: 'high',
+          status: 'pending',
+          due_date: now.split('T')[0],
+          assigned_to: lead.assigned_to || null,
+          created_by: null,
+          created_at: now,
+          updated_at: now,
         });
       }
+
+      // Record activity reflecting draft preparation, not email delivery
+      await adminDb.from('activities').insert({
+        id: `act-${Date.now()}`,
+        lead_id: leadId,
+        tenant_id: tenantId,
+        user_id: 'system',
+        user_name: 'AI Agent',
+        type: 'ai_draft_prepared',
+        title: 'AI Welcome Draft Prepared',
+        description: `AI prepared a welcome email draft for review. No email was sent to the customer.`,
+        created_at: now
+      });
 
       return { status: "processed", leadId };
     });
