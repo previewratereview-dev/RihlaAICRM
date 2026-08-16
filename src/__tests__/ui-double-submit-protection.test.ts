@@ -46,13 +46,11 @@ describe.skipIf(!isDbConfigured)('UI-Level Rapid Double-Submit Safety & Idempote
 
   afterEach(async () => {
     if (pgClient) {
-      await pgClient.query(`SET session_replication_role = 'replica';`);
-      await pgClient.query(`DELETE FROM inquiries WHERE tenant_id = $1;`, [testTenantId]);
       await pgClient.query(`DELETE FROM bookings WHERE tenant_id = $1;`, [testTenantId]);
+      await pgClient.query(`DELETE FROM inquiries WHERE tenant_id = $1;`, [testTenantId]);
       await pgClient.query(`DELETE FROM leads WHERE tenant_id = $1;`, [testTenantId]);
       await pgClient.query(`DELETE FROM traveler_profiles WHERE tenant_id = $1;`, [testTenantId]);
       await pgClient.query(`DELETE FROM tenants WHERE id = $1;`, [testTenantId]);
-      await pgClient.query(`SET session_replication_role = 'origin';`);
       await pgClient.end();
     }
   });

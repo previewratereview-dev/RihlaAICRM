@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { Client } from 'pg';
 import * as fs from 'fs';
 import * as path from 'path';
-import { createHash, randomBytes } from 'crypto';
+import { createHash, randomBytes, randomUUID } from 'crypto';
 import { calculateQuotePricing } from '../lib/quotes-itineraries/pricing';
 
 /**
@@ -15,21 +15,23 @@ import { calculateQuotePricing } from '../lib/quotes-itineraries/pricing';
  */
 describe('Migration 018 Local PostgreSQL Secure Sharing Tests', () => {
   let client: Client;
-  const testTenantA = 'tenant_m18_a';
-  const testTenantB = 'tenant_m18_b';
+  const runId = Math.random().toString(36).substring(2, 8);
+  const testTenantA = 'tenant_m18_a_' + runId;
+  const testTenantB = 'tenant_m18_b_' + runId;
 
-  const adminUserId = '18181818-1111-1111-1111-111111111111';
-  const consultantUserId = '18181818-3333-3333-3333-333333333333';
-  const viewerUserId = '18181818-4444-4444-4444-444444444444';
-  const tenantBUserId = '18181818-6666-6666-6666-666666666666';
+  const adminUserId = randomUUID();
+  const consultantUserId = randomUUID();
+  const viewerUserId = randomUUID();
+  const tenantBUserId = randomUUID();
+  const travelerId = randomUUID();
+  const inquiryId = randomUUID();
 
   // Fixtures
   let itineraryVersionId: string;
   let quoteVersionId: string;
-  let inquiryId: string;
 
   function makeTokenHash(): string {
-    const raw = randomBytes(32).toString('hex');
+    const raw = randomBytes(32).toString('base64url');
     return createHash('sha256').update(raw, 'utf8').digest('hex');
   }
 
@@ -194,31 +196,11 @@ describe('Migration 018 Local PostgreSQL Secure Sharing Tests', () => {
         const m18 = fs.readFileSync(path.join(process.cwd(), 'supabase/migrations/018_secure_sharing_and_public_portal.sql'), 'utf8');
         await client.query(m18);
       }
-      // 4. Clean up test records
-      await client.query(`
-        SET session_replication_role = 'replica';
-
-        DELETE FROM public.quote_acceptances WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-        DELETE FROM public.quote_shares WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-        DELETE FROM public.itinerary_shares WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-        DELETE FROM public.quote_versions WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-        DELETE FROM public.quotes WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-        DELETE FROM public.itinerary_versions WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-        DELETE FROM public.itineraries WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-        DELETE FROM public.tenant_quote_sequences WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-        DELETE FROM public.inquiries WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-        DELETE FROM public.traveler_profiles WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-        DELETE FROM public.profiles WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-        DELETE FROM public.tenants WHERE id IN ('${testTenantA}', '${testTenantB}');
-
-        SET session_replication_role = 'origin';
-      `);
-
-      // 5. Seed fixtures
+      // 4. Seed fixtures for this isolated test run
       await client.query(`
         INSERT INTO public.tenants (id, name, slug) 
-        VALUES ('${testTenantA}', 'AI-5 Agency A', 'agency-m18-a'),
-               ('${testTenantB}', 'AI-5 Agency B', 'agency-m18-b')
+        VALUES ('${testTenantA}', 'AI-5 Agency A', 'agency-${testTenantA}'),
+               ('${testTenantB}', 'AI-5 Agency B', 'agency-${testTenantB}')
         ON CONFLICT (id) DO NOTHING;
 
         INSERT INTO public.profiles (id, tenant_id, role, full_name, email)
@@ -231,18 +213,16 @@ describe('Migration 018 Local PostgreSQL Secure Sharing Tests', () => {
 
         INSERT INTO public.traveler_profiles (id, tenant_id, display_name, email)
         VALUES 
-          ('18181818-0000-0000-0000-000000000001', '${testTenantA}', 'Traveler A1', 'a1@test.com')
+          ('${travelerId}', '${testTenantA}', 'Traveler A1', 'a1@test.com')
         ON CONFLICT (id) DO NOTHING;
 
         INSERT INTO public.inquiries (id, tenant_id, traveler_id, destination, number_of_travelers)
         VALUES
-          ('18181818-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '${testTenantA}', '18181818-0000-0000-0000-000000000001', 'Dubai', 2)
+          ('${inquiryId}', '${testTenantA}', '${travelerId}', 'Dubai', 2)
         ON CONFLICT (tenant_id, id) DO NOTHING;
       `);
 
-      inquiryId = '18181818-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
-
-      // 6. Create a finalized ItineraryVersion
+      // 5. Create a finalized ItineraryVersion
       const itinRes = await client.query(
         `SELECT public.rpc_create_itinerary_family_and_version($1, $2, $3, $4, $5) as result`,
         [
@@ -269,7 +249,7 @@ describe('Migration 018 Local PostgreSQL Secure Sharing Tests', () => {
       );
       itineraryVersionId = itinVerId;
 
-      // 7. Create an issued QuoteVersion
+      // 6. Create an issued QuoteVersion
       const pricing = calculateQuotePricing({
         lineItems: [
           { title: 'Desert Safari', category: 'activity', quantity: 2, unitPrice: '15000.00', supplierCost: '10000.00', supplierName: 'SECRET_TOUR_OP' },
@@ -318,24 +298,6 @@ describe('Migration 018 Local PostgreSQL Secure Sharing Tests', () => {
 
   afterAll(async () => {
     try {
-      await client.query(`
-        SET session_replication_role = 'replica';
-
-        DELETE FROM public.quote_acceptances WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-        DELETE FROM public.quote_shares WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-        DELETE FROM public.itinerary_shares WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-        DELETE FROM public.quote_versions WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-        DELETE FROM public.quotes WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-        DELETE FROM public.itinerary_versions WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-        DELETE FROM public.itineraries WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-        DELETE FROM public.tenant_quote_sequences WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-        DELETE FROM public.inquiries WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-        DELETE FROM public.traveler_profiles WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-        DELETE FROM public.profiles WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-        DELETE FROM public.tenants WHERE id IN ('${testTenantA}', '${testTenantB}');
-
-        SET session_replication_role = 'origin';
-      `);
       await client.end();
     } catch {
       // Ignored

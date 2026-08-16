@@ -15,8 +15,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { Client } from 'pg';
-
-const TOKEN_REGEX = /^[a-f0-9]{64}$/;
+import { SHARE_TOKEN_REGEX } from '@/lib/quotes-itineraries/sharing';
 
 // Simple in-memory rate limiter (per-IP, sliding window)
 const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
@@ -76,7 +75,7 @@ export async function GET(
   }
 
   // 2. Validate token format (fail fast, no DB hit)
-  if (!token || !TOKEN_REGEX.test(token)) {
+  if (!token || !SHARE_TOKEN_REGEX.test(token)) {
     return NextResponse.json(
       { error: 'Not found' },
       { status: 404, headers: securityHeaders() }

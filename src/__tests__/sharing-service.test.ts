@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
   generateShareToken,
   hashShareToken,
+  SHARE_TOKEN_REGEX,
+  isValidShareTokenFormat,
   shapeCustomerItineraryDTO,
   shapeCustomerQuoteDTO,
   DEFAULT_SHARE_EXPIRY_DAYS,
@@ -18,7 +20,7 @@ import type { CustomerItineraryDTO, CustomerQuoteDTO } from '../lib/quotes-itine
  * Phase AI-5B.3: Sharing Service & Customer DTO Leakage Protection Tests
  *
  * Validates:
- * 1. Cryptographic token generation (256-bit, uniqueness)
+ * 1. Cryptographic token generation (256-bit unpadded base64url, exactly 43 chars, uniqueness)
  * 2. SHA-256 hashing determinism
  * 3. CustomerItineraryDTO recursive internal-data stripping
  * 4. CustomerQuoteDTO recursive internal-data stripping
@@ -26,13 +28,14 @@ import type { CustomerItineraryDTO, CustomerQuoteDTO } from '../lib/quotes-itine
  */
 describe('Phase AI-5B.3: Sharing Service & Customer DTO Leakage Protection', () => {
   // ==========================================================================
-  // CRYPTOGRAPHIC TOKEN GENERATION
+  // CRYPTOGRAPHIC TOKEN GENERATION (43-CHAR BASE64URL CONTRACT)
   // ==========================================================================
   describe('Token Generation & Hashing', () => {
-    it('generates 64-character hex token (256-bit)', () => {
+    it('generates exactly 43-character URL-safe base64 token (256-bit entropy)', () => {
       const token = generateShareToken();
-      expect(token).toMatch(/^[a-f0-9]{64}$/);
-      expect(token.length).toBe(64);
+      expect(token).toMatch(SHARE_TOKEN_REGEX);
+      expect(token.length).toBe(43);
+      expect(isValidShareTokenFormat(token)).toBe(true);
     });
 
     it('generates unique tokens on successive calls', () => {
@@ -43,8 +46,8 @@ describe('Phase AI-5B.3: Sharing Service & Customer DTO Leakage Protection', () 
       expect(tokens.size).toBe(100);
     });
 
-    it('produces deterministic SHA-256 hash', () => {
-      const token = 'a'.repeat(64);
+    it('produces deterministic SHA-256 hash (64 hex characters)', () => {
+      const token = 'A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8S9t0U1v';
       const hash1 = hashShareToken(token);
       const hash2 = hashShareToken(token);
       expect(hash1).toBe(hash2);
@@ -52,15 +55,17 @@ describe('Phase AI-5B.3: Sharing Service & Customer DTO Leakage Protection', () 
     });
 
     it('produces different hashes for different tokens', () => {
-      const hash1 = hashShareToken('a'.repeat(64));
-      const hash2 = hashShareToken('b'.repeat(64));
+      const hash1 = hashShareToken('A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8S9t0U1a');
+      const hash2 = hashShareToken('A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8S9t0U1b');
       expect(hash1).not.toBe(hash2);
     });
 
-    it('token and hash are never the same value', () => {
+    it('token and hash are never the same value or length', () => {
       const token = generateShareToken();
       const hash = hashShareToken(token);
       expect(token).not.toBe(hash);
+      expect(token.length).toBe(43);
+      expect(hash.length).toBe(64);
     });
   });
 
@@ -491,7 +496,7 @@ describe('Phase AI-5B.3: Sharing Service & Customer DTO Leakage Protection', () 
       );
 
       expect(res.shareId).toBe('mock-share-1');
-      expect(res.rawToken).toMatch(/^[a-f0-9]{64}$/);
+      expect(res.rawToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
       expect(res.tokenHash).toMatch(/^[a-f0-9]{64}$/);
       expect(res.shareUrl).toContain(`/p/itinerary/${res.rawToken}`);
     });

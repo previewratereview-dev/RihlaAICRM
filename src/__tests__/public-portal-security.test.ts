@@ -1,4 +1,9 @@
 import { describe, it, expect } from 'vitest';
+import {
+  SHARE_TOKEN_REGEX,
+  isValidShareTokenFormat,
+  generateShareToken,
+} from '../lib/quotes-itineraries/sharing';
 
 /**
  * Phase AI-5B.3: Public Portal Route Security & Middleware Tests
@@ -77,42 +82,85 @@ describe('Phase AI-5B.3: Public Portal Route Security', () => {
   });
 
   // ==========================================================================
-  // TOKEN FORMAT VALIDATION
+  // TOKEN FORMAT VALIDATION (43-CHARACTER BASE64URL CONTRACT)
   // ==========================================================================
   describe('Token Format Pre-Validation', () => {
-    const TOKEN_REGEX = /^[a-f0-9]{64}$/;
-
-    it('accepts valid 64-char hex token', () => {
-      const validToken = 'a'.repeat(64);
-      expect(TOKEN_REGEX.test(validToken)).toBe(true);
+    it('generated token is exactly 43 characters long', () => {
+      const token = generateShareToken();
+      expect(token).toHaveLength(43);
+      expect(isValidShareTokenFormat(token)).toBe(true);
     });
 
-    it('rejects short token', () => {
-      expect(TOKEN_REGEX.test('abc123')).toBe(false);
+    it('accepts valid 43-char base64url token', () => {
+      const validToken = 'A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8S9t0U1v';
+      expect(validToken).toHaveLength(43);
+      expect(SHARE_TOKEN_REGEX.test(validToken)).toBe(true);
+      expect(isValidShareTokenFormat(validToken)).toBe(true);
     });
 
-    it('rejects long token', () => {
-      expect(TOKEN_REGEX.test('a'.repeat(65))).toBe(false);
+    it('accepts valid base64url token with underscores and hyphens', () => {
+      const validWithSymbols = 'abc-123_XYZ-789_def-456_GHI-jkl_mno-PQR_stu';
+      expect(validWithSymbols).toHaveLength(43);
+      expect(SHARE_TOKEN_REGEX.test(validWithSymbols)).toBe(true);
+      expect(isValidShareTokenFormat(validWithSymbols)).toBe(true);
     });
 
-    it('rejects uppercase hex', () => {
-      expect(TOKEN_REGEX.test('A'.repeat(64))).toBe(false);
+    it('rejects 42-character token (short)', () => {
+      const shortToken = 'a'.repeat(42);
+      expect(SHARE_TOKEN_REGEX.test(shortToken)).toBe(false);
+      expect(isValidShareTokenFormat(shortToken)).toBe(false);
     });
 
-    it('rejects non-hex characters', () => {
-      expect(TOKEN_REGEX.test('g'.repeat(64))).toBe(false);
+    it('rejects 44-character token (long)', () => {
+      const longToken = 'a'.repeat(44);
+      expect(SHARE_TOKEN_REGEX.test(longToken)).toBe(false);
+      expect(isValidShareTokenFormat(longToken)).toBe(false);
+    });
+
+    it('rejects standard base64 plus sign (+)', () => {
+      const tokenWithPlus = 'a'.repeat(42) + '+';
+      expect(SHARE_TOKEN_REGEX.test(tokenWithPlus)).toBe(false);
+      expect(isValidShareTokenFormat(tokenWithPlus)).toBe(false);
+    });
+
+    it('rejects standard base64 slash (/)', () => {
+      const tokenWithSlash = 'a'.repeat(42) + '/';
+      expect(SHARE_TOKEN_REGEX.test(tokenWithSlash)).toBe(false);
+      expect(isValidShareTokenFormat(tokenWithSlash)).toBe(false);
+    });
+
+    it('rejects base64 padding (=)', () => {
+      const tokenWithPadding = 'a'.repeat(42) + '=';
+      expect(SHARE_TOKEN_REGEX.test(tokenWithPadding)).toBe(false);
+      expect(isValidShareTokenFormat(tokenWithPadding)).toBe(false);
+    });
+
+    it('rejects invalid special characters (!, @, $, spaces, newlines)', () => {
+      expect(isValidShareTokenFormat('a'.repeat(42) + '!')).toBe(false);
+      expect(isValidShareTokenFormat('a'.repeat(42) + '@')).toBe(false);
+      expect(isValidShareTokenFormat('a'.repeat(42) + '$')).toBe(false);
+      expect(isValidShareTokenFormat('a'.repeat(42) + ' ')).toBe(false);
+      expect(isValidShareTokenFormat('a'.repeat(42) + '\n')).toBe(false);
     });
 
     it('rejects empty string', () => {
-      expect(TOKEN_REGEX.test('')).toBe(false);
+      expect(SHARE_TOKEN_REGEX.test('')).toBe(false);
+      expect(isValidShareTokenFormat('')).toBe(false);
     });
 
-    it('rejects SQL injection attempt', () => {
-      expect(TOKEN_REGEX.test("'; DROP TABLE shares; --")).toBe(false);
+    it('rejects null and undefined and non-strings', () => {
+      expect(isValidShareTokenFormat(null)).toBe(false);
+      expect(isValidShareTokenFormat(undefined)).toBe(false);
+      expect(isValidShareTokenFormat(12345)).toBe(false);
+      expect(isValidShareTokenFormat({})).toBe(false);
     });
 
-    it('rejects path traversal attempt', () => {
-      expect(TOKEN_REGEX.test('../../../etc/passwd' + 'a'.repeat(44))).toBe(false);
+    it('rejects SQL injection attempt without reaching database', () => {
+      expect(isValidShareTokenFormat("'; DROP TABLE shares; --")).toBe(false);
+    });
+
+    it('rejects path traversal attempt without reaching database', () => {
+      expect(isValidShareTokenFormat('../../../etc/passwd' + 'a'.repeat(24))).toBe(false);
     });
   });
 

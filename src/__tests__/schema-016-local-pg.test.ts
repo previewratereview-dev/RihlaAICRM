@@ -2,19 +2,29 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { Client } from 'pg';
 import * as fs from 'fs';
 import * as path from 'path';
+import { randomUUID } from 'crypto';
 
 describe('Migration 016 Local PostgreSQL Invariants & RLS Authorization', () => {
   let client: Client;
-  const testTenantA = 'tenant_m16_a';
-  const testTenantB = 'tenant_m16_b';
+  const runId = Math.random().toString(36).substring(2, 8);
+  const testTenantA = 'tenant_m16_a_' + runId;
+  const testTenantB = 'tenant_m16_b_' + runId;
 
   // User UUIDs for RLS tests
-  const adminUserId = '16161616-1111-1111-1111-111111111111';
-  const managerUserId = '16161616-2222-2222-2222-222222222222';
-  const consultantUserId = '16161616-3333-3333-3333-333333333333';
-  const viewerUserId = '16161616-4444-4444-4444-444444444444';
-  const superAdminUserId = '16161616-5555-5555-5555-555555555555';
-  const tenantBUserId = '16161616-6666-6666-6666-666666666666';
+  const adminUserId = randomUUID();
+  const managerUserId = randomUUID();
+  const consultantUserId = randomUUID();
+  const viewerUserId = randomUUID();
+  const superAdminUserId = randomUUID();
+  const tenantBUserId = randomUUID();
+
+  const travelerA1Id = randomUUID();
+  const travelerA2Id = randomUUID();
+  const travelerB1Id = randomUUID();
+
+  const inquiryA1Id = randomUUID();
+  const inquiryA2Id = randomUUID();
+  const inquiryB1Id = randomUUID();
 
   beforeAll(async () => {
     client = new Client({
@@ -159,10 +169,8 @@ describe('Migration 016 Local PostgreSQL Invariants & RLS Authorization', () => 
         GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO app_user;
       `);
 
-      // Clean up any stale records from previous runs
+      // Clean up any stale records from previous runs (dependency-ordered DELETE)
       await client.query(`
-        SET session_replication_role = 'replica';
-
         DELETE FROM public.bookings WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
         DELETE FROM public.quote_acceptances WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
         DELETE FROM public.quote_shares WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
@@ -176,15 +184,13 @@ describe('Migration 016 Local PostgreSQL Invariants & RLS Authorization', () => 
         DELETE FROM public.traveler_profiles WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
         DELETE FROM public.profiles WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
         DELETE FROM public.tenants WHERE id IN ('${testTenantA}', '${testTenantB}');
-
-        SET session_replication_role = 'origin';
       `);
 
       // 3. Seed test tenants and profiles
       await client.query(`
         INSERT INTO public.tenants (id, name, slug) 
-        VALUES ('${testTenantA}', 'AI-5 Agency A', 'agency-m16-a'),
-               ('${testTenantB}', 'AI-5 Agency B', 'agency-m16-b'),
+        VALUES ('${testTenantA}', 'AI-5 Agency A', 'agency-${testTenantA}'),
+               ('${testTenantB}', 'AI-5 Agency B', 'agency-${testTenantB}'),
                ('global', 'Platform Global', 'platform-global')
         ON CONFLICT (id) DO NOTHING;
 
@@ -200,16 +206,16 @@ describe('Migration 016 Local PostgreSQL Invariants & RLS Authorization', () => 
 
         INSERT INTO public.traveler_profiles (id, tenant_id, display_name, email, created_at, updated_at)
         VALUES 
-          ('11111111-1111-1111-1111-111111111111', '${testTenantA}', 'Traveler A1', 'a1@test.com', now(), now()),
-          ('22222222-2222-2222-2222-222222222222', '${testTenantA}', 'Traveler A2', 'a2@test.com', now(), now()),
-          ('33333333-3333-3333-3333-333333333333', '${testTenantB}', 'Traveler B1', 'b1@test.com', now(), now())
+          ('${travelerA1Id}', '${testTenantA}', 'Traveler A1', 'a1@test.com', now(), now()),
+          ('${travelerA2Id}', '${testTenantA}', 'Traveler A2', 'a2@test.com', now(), now()),
+          ('${travelerB1Id}', '${testTenantB}', 'Traveler B1', 'b1@test.com', now(), now())
         ON CONFLICT (id) DO NOTHING;
 
         INSERT INTO public.inquiries (id, tenant_id, traveler_id, destination, number_of_travelers, stage, created_at, updated_at)
         VALUES
-          ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '${testTenantA}', '11111111-1111-1111-1111-111111111111', 'Dubai', 2, 'quote_sent', now(), now()),
-          ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', '${testTenantA}', '22222222-2222-2222-2222-222222222222', 'Tokyo', 2, 'quote_sent', now(), now()),
-          ('cccccccc-cccc-cccc-cccc-cccccccccccc', '${testTenantB}', '33333333-3333-3333-3333-333333333333', 'Paris', 2, 'quote_sent', now(), now())
+          ('${inquiryA1Id}', '${testTenantA}', '${travelerA1Id}', 'Dubai', 2, 'quote_sent', now(), now()),
+          ('${inquiryA2Id}', '${testTenantA}', '${travelerA2Id}', 'Tokyo', 2, 'quote_sent', now(), now()),
+          ('${inquiryB1Id}', '${testTenantB}', '${travelerB1Id}', 'Paris', 2, 'quote_sent', now(), now())
         ON CONFLICT (id) DO NOTHING;
       `);
     } finally {
@@ -220,8 +226,6 @@ describe('Migration 016 Local PostgreSQL Invariants & RLS Authorization', () => 
   afterAll(async () => {
     try {
       await client.query(`
-        SET session_replication_role = 'replica';
-
         DELETE FROM public.bookings WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
         DELETE FROM public.quote_acceptances WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
         DELETE FROM public.quote_shares WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
@@ -235,8 +239,6 @@ describe('Migration 016 Local PostgreSQL Invariants & RLS Authorization', () => 
         DELETE FROM public.traveler_profiles WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
         DELETE FROM public.profiles WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
         DELETE FROM public.tenants WHERE id IN ('${testTenantA}', '${testTenantB}');
-
-        SET session_replication_role = 'origin';
       `);
       await client.end();
     } catch {
@@ -277,7 +279,7 @@ describe('Migration 016 Local PostgreSQL Invariants & RLS Authorization', () => 
         id, tenant_id, inquiry_id, traveler_id, booking_reference,
         total_amount, paid_amount, currency, booking_status, payment_status, financial_data_complete
       ) VALUES (
-        gen_random_uuid(), '${testTenantA}', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '11111111-1111-1111-1111-111111111111',
+        gen_random_uuid(), '${testTenantA}', '${inquiryA1Id}', '${travelerA1Id}',
         'LEGACY-REF-001', 120000.00, NULL, 'INR', 'confirmed', 'unknown', false
       ) RETURNING id, quote_acceptance_id, balance_due;
     `);
@@ -293,7 +295,7 @@ describe('Migration 016 Local PostgreSQL Invariants & RLS Authorization', () => 
     // 1. Create Itinerary
     const itinRes = await client.query(`
       INSERT INTO public.itineraries (tenant_id, inquiry_id, title)
-      VALUES ('${testTenantA}', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Dubai 5-Day Luxury')
+      VALUES ('${testTenantA}', '${inquiryA1Id}', 'Dubai 5-Day Luxury')
       RETURNING id;
     `);
     const itinId = itinRes.rows[0].id;
@@ -315,7 +317,7 @@ describe('Migration 016 Local PostgreSQL Invariants & RLS Authorization', () => 
     // 4. Create Quote
     const quoteRes = await client.query(`
       INSERT INTO public.quotes (tenant_id, inquiry_id, quote_number)
-      VALUES ('${testTenantA}', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'QT-2026-0001')
+      VALUES ('${testTenantA}', '${inquiryA1Id}', 'QT-2026-0001')
       RETURNING id;
     `);
     const quoteId = quoteRes.rows[0].id;
@@ -351,14 +353,14 @@ describe('Migration 016 Local PostgreSQL Invariants & RLS Authorization', () => 
     await expect(
       client.query(`
         INSERT INTO public.quotes (tenant_id, inquiry_id, quote_number)
-        VALUES ('${testTenantA}', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'QT-2026-0001');
+        VALUES ('${testTenantA}', '${inquiryA2Id}', 'QT-2026-0001');
       `)
     ).rejects.toThrow();
 
     // Same quote_number in tenant B must SUCCEED
     const resB = await client.query(`
       INSERT INTO public.quotes (tenant_id, inquiry_id, quote_number)
-      VALUES ('${testTenantB}', 'cccccccc-cccc-cccc-cccc-cccccccccccc', 'QT-2026-0001')
+      VALUES ('${testTenantB}', '${inquiryB1Id}', 'QT-2026-0001')
       RETURNING id;
     `);
     expect(resB.rows).toHaveLength(1);
@@ -369,7 +371,7 @@ describe('Migration 016 Local PostgreSQL Invariants & RLS Authorization', () => 
     await expect(
       client.query(`
         INSERT INTO public.quotes (tenant_id, inquiry_id, quote_number)
-        VALUES ('${testTenantA}', 'cccccccc-cccc-cccc-cccc-cccccccccccc', 'QT-2026-9999');
+        VALUES ('${testTenantA}', '${inquiryB1Id}', 'QT-2026-9999');
       `)
     ).rejects.toThrow();
   });
@@ -378,7 +380,7 @@ describe('Migration 016 Local PostgreSQL Invariants & RLS Authorization', () => 
     // Itinerary for Inquiry B
     const itinBRes = await client.query(`
       INSERT INTO public.itineraries (tenant_id, inquiry_id, title)
-      VALUES ('${testTenantA}', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'Tokyo 7-Day')
+      VALUES ('${testTenantA}', '${inquiryA2Id}', 'Tokyo 7-Day')
       RETURNING id;
     `);
     const itinVerBRes = await client.query(`
@@ -427,8 +429,8 @@ describe('Migration 016 Local PostgreSQL Invariants & RLS Authorization', () => 
           tenant_id, inquiry_id, quote_id, quote_version_id, itinerary_version_id, traveler_id,
           acceptance_type, accepted_grand_total, currency, customer_safe_snapshot, accepted_snapshot_hash
         ) VALUES (
-          '${testTenantA}', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '00000000-0000-0000-0000-000000000000', '${qvId}', '${ivId}',
-          '11111111-1111-1111-1111-111111111111', 'traveler_portal', 150000.00, 'INR',
+          '${testTenantA}', '${inquiryA1Id}', '00000000-0000-0000-0000-000000000000', '${qvId}', '${ivId}',
+          '${travelerA1Id}', 'traveler_portal', 150000.00, 'INR',
           '{"grandTotal":"150000.00"}'::jsonb, '1234567890123456789012345678901234567890123456789012345678901234'
         );
       `)
@@ -440,8 +442,8 @@ describe('Migration 016 Local PostgreSQL Invariants & RLS Authorization', () => 
         tenant_id, inquiry_id, quote_id, quote_version_id, itinerary_version_id, traveler_id,
         quote_share_id, acceptance_type, accepted_grand_total, currency, customer_safe_snapshot, accepted_snapshot_hash
       ) VALUES (
-        '${testTenantA}', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '${quoteId}', '${qvId}', '${ivId}',
-        '11111111-1111-1111-1111-111111111111', '${shareId}', 'traveler_portal', 150000.00, 'INR',
+        '${testTenantA}', '${inquiryA1Id}', '${quoteId}', '${qvId}', '${ivId}',
+        '${travelerA1Id}', '${shareId}', 'traveler_portal', 150000.00, 'INR',
         '{"grandTotal":"150000.00"}'::jsonb, '1234567890123456789012345678901234567890123456789012345678901234'
       ) RETURNING id;
     `);
@@ -568,7 +570,7 @@ describe('Migration 016 Local PostgreSQL Invariants & RLS Authorization', () => 
       await expect(
         client.query(`
           INSERT INTO public.itineraries (tenant_id, inquiry_id, title)
-          VALUES ('${testTenantA}', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Direct Client Hack');
+          VALUES ('${testTenantA}', '${inquiryA1Id}', 'Direct Client Hack');
         `)
       ).rejects.toThrow();
 

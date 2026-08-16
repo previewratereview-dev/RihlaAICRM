@@ -17,13 +17,12 @@ import { Client } from 'pg';
 import {
   hashShareToken,
   shapeCustomerQuoteDTO,
+  SHARE_TOKEN_REGEX,
 } from '@/lib/quotes-itineraries/sharing';
 import type { CustomerQuoteDTO } from '@/lib/quotes-itineraries/types';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
-
-const TOKEN_REGEX = /^[a-f0-9]{64}$/;
 
 interface PageProps {
   params: Promise<{ token: string }>;
@@ -42,7 +41,7 @@ async function resolveQuote(token: string): Promise<{
   agencyName: string;
   expiresAt: string;
 } | null> {
-  if (!TOKEN_REGEX.test(token)) return null;
+  if (!token || !SHARE_TOKEN_REGEX.test(token)) return null;
 
   const connectionString = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL;
   if (!connectionString) return null;

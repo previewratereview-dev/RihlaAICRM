@@ -26,16 +26,30 @@ import type {
 // ============================================================================
 
 /**
+ * Exact structural validation pattern for raw 256-bit unpadded base64url share tokens.
+ * 32 bytes encoded in base64url without padding yields exactly 43 characters: [A-Za-z0-9_-]
+ */
+export const SHARE_TOKEN_REGEX = /^[A-Za-z0-9_-]{43}$/;
+
+/**
+ * Validates whether an unknown value is a structurally valid 43-character base64url share token.
+ */
+export function isValidShareTokenFormat(token: unknown): token is string {
+  if (typeof token !== 'string') return false;
+  return SHARE_TOKEN_REGEX.test(token);
+}
+
+/**
  * Generates a cryptographically secure 256-bit (32-byte) random token.
- * Returns hex-encoded string (64 characters).
+ * Returns URL-safe base64 string (exactly 43 characters, unpadded).
  */
 export function generateShareToken(): string {
-  return randomBytes(32).toString('hex');
+  return randomBytes(32).toString('base64url');
 }
 
 /**
  * Computes SHA-256 hash of a raw token for database storage.
- * The raw token is NEVER stored — only this hash.
+ * The raw token is NEVER stored — only this 64-character lowercase hex hash.
  */
 export function hashShareToken(rawToken: string): string {
   return createHash('sha256').update(rawToken, 'utf8').digest('hex');

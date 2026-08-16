@@ -2,18 +2,25 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { Client } from 'pg';
 import * as fs from 'fs';
 import * as path from 'path';
+import { randomUUID } from 'crypto';
 import { calculateQuotePricing } from '../lib/quotes-itineraries/pricing';
 
 describe('Migration 017 Local PostgreSQL Domain Lifecycle & Lossless Concurrency Tests', () => {
   let client: Client;
-  const testTenantA = 'tenant_m17_a';
-  const testTenantB = 'tenant_m17_b';
+  const runId = Math.random().toString(36).substring(2, 8);
+  const testTenantA = 'tenant_m17_a_' + runId;
+  const testTenantB = 'tenant_m17_b_' + runId;
 
-  const adminUserId = '17171717-1111-1111-1111-111111111111';
-  const consultantUserId = '17171717-3333-3333-3333-333333333333';
-  const viewerUserId = '17171717-4444-4444-4444-444444444444';
-  const superAdminUserId = '17171717-5555-5555-5555-555555555555';
-  const tenantBUserId = '17171717-6666-6666-6666-666666666666';
+  const adminUserId = randomUUID();
+  const consultantUserId = randomUUID();
+  const viewerUserId = randomUUID();
+  const superAdminUserId = randomUUID();
+  const tenantBUserId = randomUUID();
+
+  const travelerAId = randomUUID();
+  const travelerBId = randomUUID();
+  const inquiryAId = randomUUID();
+  const inquiryBId = randomUUID();
 
   beforeAll(async () => {
     client = new Client({
@@ -140,31 +147,11 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Lossless Concurrency
         await client.query(m17);
       }
 
-      // Clean up test records
-      await client.query(`
-        SET session_replication_role = 'replica';
-
-        DELETE FROM public.quote_acceptances WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-        DELETE FROM public.quote_shares WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-        DELETE FROM public.itinerary_shares WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-        DELETE FROM public.quote_versions WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-        DELETE FROM public.quotes WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-        DELETE FROM public.itinerary_versions WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-        DELETE FROM public.itineraries WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-        DELETE FROM public.tenant_quote_sequences WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-        DELETE FROM public.inquiries WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-        DELETE FROM public.traveler_profiles WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-        DELETE FROM public.profiles WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-        DELETE FROM public.tenants WHERE id IN ('${testTenantA}', '${testTenantB}');
-
-        SET session_replication_role = 'origin';
-      `);
-
       // Seed test fixtures
       await client.query(`
         INSERT INTO public.tenants (id, name, slug) 
-        VALUES ('${testTenantA}', 'AI-5 Agency A', 'agency-m17-a'),
-               ('${testTenantB}', 'AI-5 Agency B', 'agency-m17-b'),
+        VALUES ('${testTenantA}', 'AI-5 Agency A', 'agency-${testTenantA}'),
+               ('${testTenantB}', 'AI-5 Agency B', 'agency-${testTenantB}'),
                ('global', 'Platform Global', 'platform-global')
         ON CONFLICT (id) DO NOTHING;
 
@@ -179,14 +166,14 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Lossless Concurrency
 
         INSERT INTO public.traveler_profiles (id, tenant_id, display_name, email)
         VALUES 
-          ('17171717-0000-0000-0000-000000000001', '${testTenantA}', 'Traveler A1', 'a1@test.com'),
-          ('33333333-3333-3333-3333-333333333333', '${testTenantB}', 'Traveler B1', 'b1@test.com')
+          ('${travelerAId}', '${testTenantA}', 'Traveler A1', 'a1@test.com'),
+          ('${travelerBId}', '${testTenantB}', 'Traveler B1', 'b1@test.com')
         ON CONFLICT (id) DO NOTHING;
 
         INSERT INTO public.inquiries (id, tenant_id, traveler_id, destination, number_of_travelers)
         VALUES
-          ('17171717-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '${testTenantA}', '17171717-0000-0000-0000-000000000001', 'Dubai', 2),
-          ('cccccccc-cccc-cccc-cccc-cccccccccccc', '${testTenantB}', '33333333-3333-3333-3333-333333333333', 'Paris', 2)
+          ('${inquiryAId}', '${testTenantA}', '${travelerAId}', 'Dubai', 2),
+          ('${inquiryBId}', '${testTenantB}', '${travelerBId}', 'Paris', 2)
         ON CONFLICT (id) DO NOTHING;
       `);
     } finally {
@@ -196,24 +183,6 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Lossless Concurrency
 
   afterAll(async () => {
     try {
-      await client.query(`
-        SET session_replication_role = 'replica';
-
-        DELETE FROM public.quote_acceptances WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-        DELETE FROM public.quote_shares WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-        DELETE FROM public.itinerary_shares WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-        DELETE FROM public.quote_versions WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-        DELETE FROM public.quotes WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-        DELETE FROM public.itinerary_versions WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-        DELETE FROM public.itineraries WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-        DELETE FROM public.tenant_quote_sequences WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-        DELETE FROM public.inquiries WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-        DELETE FROM public.traveler_profiles WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-        DELETE FROM public.profiles WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-        DELETE FROM public.tenants WHERE id IN ('${testTenantA}', '${testTenantB}');
-
-        SET session_replication_role = 'origin';
-      `);
       await client.end();
     } catch {
       // Ignored
@@ -242,7 +211,7 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Lossless Concurrency
 
     const res = await client.query(
       `SELECT public.rpc_create_itinerary_family_and_version($1, $2, $3, $4, $5) as result`,
-      [testTenantA, adminUserId, '17171717-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Dubai 5-Day Luxury', JSON.stringify(payload)]
+      [testTenantA, adminUserId, inquiryAId, 'Dubai 5-Day Luxury', JSON.stringify(payload)]
     );
 
     const result = res.rows[0].result;
@@ -430,7 +399,7 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Lossless Concurrency
 
     const res = await client.query(
       `SELECT public.rpc_create_quote_family_and_version($1, $2, $3, $4, $5) as result`,
-      [testTenantA, adminUserId, '17171717-aaaa-aaaa-aaaa-aaaaaaaaaaaa', itinVerId, JSON.stringify(quotePayload)]
+      [testTenantA, adminUserId, inquiryAId, itinVerId, JSON.stringify(quotePayload)]
     );
 
     const result = res.rows[0].result;
@@ -496,7 +465,7 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Lossless Concurrency
     await expect(
       client.query(
         `SELECT public.rpc_create_quote_family_and_version($1, $2, $3, $4, $5) as result`,
-        [testTenantA, adminUserId, '17171717-aaaa-aaaa-aaaa-aaaaaaaaaaaa', draftItinVerId, JSON.stringify(pricing)]
+        [testTenantA, adminUserId, inquiryAId, draftItinVerId, JSON.stringify(pricing)]
       )
     ).rejects.toThrow(/must be finalized before creating a quote/);
   });
@@ -612,8 +581,8 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Lossless Concurrency
         tenant_id, inquiry_id, quote_id, quote_version_id, itinerary_version_id, traveler_id,
         acceptance_type, accepted_grand_total, currency, customer_safe_snapshot, accepted_snapshot_hash
       ) VALUES (
-        '${testTenantA}', '17171717-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '${quoteId}', '${v2Id}', '${itinVerId}',
-        '17171717-0000-0000-0000-000000000001', 'traveler_portal', 96000.00, 'INR',
+        '${testTenantA}', '${inquiryAId}', '${quoteId}', '${v2Id}', '${itinVerId}',
+        '${travelerAId}', 'traveler_portal', 96000.00, 'INR',
         '{"grandTotal":"96000.00"}'::jsonb, '1234567890123456789012345678901234567890123456789012345678901234'
       );
     `);
@@ -645,7 +614,7 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Lossless Concurrency
       await expect(
         client.query(
           `SELECT public.rpc_create_itinerary_family_and_version($1, $2, $3, $4, $5) as result`,
-          [testTenantA, tenantBUserId, '17171717-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Cross-Tenant Hack', '{}']
+          [testTenantA, tenantBUserId, inquiryAId, 'Cross-Tenant Hack', '{}']
         )
       ).rejects.toThrow(/CROSS_TENANT_VIOLATION/);
     });
@@ -654,7 +623,7 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Lossless Concurrency
       await expect(
         client.query(
           `SELECT public.rpc_create_itinerary_family_and_version($1, $2, $3, $4, $5) as result`,
-          [testTenantA, '00000000-0000-0000-0000-000000000000', '17171717-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Fake User Hack', '{}']
+          [testTenantA, '00000000-0000-0000-0000-000000000000', inquiryAId, 'Fake User Hack', '{}']
         )
       ).rejects.toThrow(/UNAUTHORIZED/);
     });
@@ -663,7 +632,7 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Lossless Concurrency
       await expect(
         client.query(
           `SELECT public.rpc_create_itinerary_family_and_version($1, $2, $3, $4, $5) as result`,
-          [testTenantA, superAdminUserId, '17171717-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Super Admin Hack', '{}']
+          [testTenantA, superAdminUserId, inquiryAId, 'Super Admin Hack', '{}']
         )
       ).rejects.toThrow(/FORBIDDEN/);
     });
@@ -672,7 +641,7 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Lossless Concurrency
       await expect(
         client.query(
           `SELECT public.rpc_create_itinerary_family_and_version($1, $2, $3, $4, $5) as result`,
-          [testTenantA, viewerUserId, '17171717-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Viewer Mutation Hack', '{}']
+          [testTenantA, viewerUserId, inquiryAId, 'Viewer Mutation Hack', '{}']
         )
       ).rejects.toThrow(/FORBIDDEN/);
     });
@@ -684,7 +653,7 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Lossless Concurrency
       await expect(
         client.query(
           `SELECT public.rpc_create_itinerary_family_and_version($1, $2, $3, $4, $5) as result`,
-          [testTenantA, consultantUserId, '17171717-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Direct Client Call', '{}']
+          [testTenantA, consultantUserId, inquiryAId, 'Direct Client Call', '{}']
         )
       ).rejects.toThrow(/permission denied/);
 
