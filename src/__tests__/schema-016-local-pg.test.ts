@@ -5,16 +5,16 @@ import * as path from 'path';
 
 describe('Migration 016 Local PostgreSQL Invariants & RLS Authorization', () => {
   let client: Client;
-  const testTenantA = 'tenant_ai5_a';
-  const testTenantB = 'tenant_ai5_b';
+  const testTenantA = 'tenant_m16_a';
+  const testTenantB = 'tenant_m16_b';
 
   // User UUIDs for RLS tests
-  const adminUserId = 'aaaaaaaa-1111-1111-1111-111111111111';
-  const managerUserId = 'bbbbbbbb-2222-2222-2222-222222222222';
-  const consultantUserId = 'cccccccc-3333-3333-3333-333333333333';
-  const viewerUserId = 'dddddddd-4444-4444-4444-444444444444';
-  const superAdminUserId = 'eeeeeeee-5555-5555-5555-555555555555';
-  const tenantBUserId = 'ffffffff-6666-6666-6666-666666666666';
+  const adminUserId = '16161616-1111-1111-1111-111111111111';
+  const managerUserId = '16161616-2222-2222-2222-222222222222';
+  const consultantUserId = '16161616-3333-3333-3333-333333333333';
+  const viewerUserId = '16161616-4444-4444-4444-444444444444';
+  const superAdminUserId = '16161616-5555-5555-5555-555555555555';
+  const tenantBUserId = '16161616-6666-6666-6666-666666666666';
 
   beforeAll(async () => {
     client = new Client({
@@ -166,8 +166,8 @@ describe('Migration 016 Local PostgreSQL Invariants & RLS Authorization', () => 
       DELETE FROM public.tenant_quote_sequences WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
       DELETE FROM public.inquiries WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
       DELETE FROM public.traveler_profiles WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-      DELETE FROM public.profiles WHERE tenant_id IN ('${testTenantA}', '${testTenantB}', 'global');
-      DELETE FROM public.tenants WHERE id IN ('${testTenantA}', '${testTenantB}', 'global');
+      DELETE FROM public.profiles WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
+      DELETE FROM public.tenants WHERE id IN ('${testTenantA}', '${testTenantB}');
 
       DO $$ BEGIN
         ALTER TABLE public.quote_versions ENABLE TRIGGER ALL;
@@ -176,11 +176,11 @@ describe('Migration 016 Local PostgreSQL Invariants & RLS Authorization', () => 
       END $$;
     `);
 
-    // 3. Setup test fixtures (tenants, profiles, travelers, inquiries)
+    // 3. Seed test tenants and profiles
     await client.query(`
       INSERT INTO public.tenants (id, name, slug) 
-      VALUES ('${testTenantA}', 'AI-5 Agency A', 'agency-a'),
-             ('${testTenantB}', 'AI-5 Agency B', 'agency-b'),
+      VALUES ('${testTenantA}', 'AI-5 Agency A', 'agency-m16-a'),
+             ('${testTenantB}', 'AI-5 Agency B', 'agency-m16-b'),
              ('global', 'Platform Global', 'platform-global')
       ON CONFLICT (id) DO NOTHING;
 

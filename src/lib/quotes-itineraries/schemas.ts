@@ -85,3 +85,33 @@ export const QuoteAcceptanceSubmissionSchema = z.object({
   acceptedGrandTotal: DecimalStringSchema,
   currency: z.string().trim().length(3, 'Currency code must be 3 characters'),
 });
+
+/**
+ * Lossless Optimistic Concurrency Update Draft Schemas
+ */
+export const UpdateItineraryDraftInputSchema = z.object({
+  versionId: z.string().uuid(),
+  expectedLockVersion: z.number().int().nonnegative('Expected lock version must be a non-negative integer'),
+  title: z.string().trim().min(1).optional(),
+  destinationSummary: z.string().trim().nullable().optional(),
+  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  durationDays: z.number().int().positive().nullable().optional(),
+  passengerCount: z.number().int().positive().nullable().optional(),
+  days: ItineraryDaysArraySchema.optional(),
+  inclusions: z.array(z.string().trim()).optional(),
+  exclusions: z.array(z.string().trim()).optional(),
+});
+
+export const UpdateQuoteDraftInputSchema = z.object({
+  versionId: z.string().uuid(),
+  expectedLockVersion: z.number().int().nonnegative('Expected lock version must be a non-negative integer'),
+  itineraryVersionId: z.string().uuid().optional(),
+  currency: z.string().trim().length(3).optional(),
+  lineItems: QuoteLineItemsInputArraySchema,
+  discountAmount: DecimalStringSchema.optional(),
+  taxAmount: DecimalStringSchema.optional(),
+  validUntil: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  termsAndConditions: z.string().trim().nullable().optional(),
+  customerNotes: z.string().trim().nullable().optional(),
+});

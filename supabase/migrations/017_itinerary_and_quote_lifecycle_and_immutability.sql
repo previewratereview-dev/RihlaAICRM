@@ -1,14 +1,24 @@
 -- Migration 017: Itinerary & Quote Lifecycle, Concurrency & Immutability (Phase AI-5B.2)
 --
 -- Implements:
--- 1. Database-enforced content immutability triggers on frozen ItineraryVersion and QuoteVersion
--- 2. Single-current-version partial unique indexes (at most one 'finalized' ItineraryVersion and one 'issued' QuoteVersion)
--- 3. Atomic SECURITY DEFINER RPCs with database-side actor & role revalidation
--- 4. Inquiry-scoped active acceptance safety and valid_until freshness check at Quote issuance
--- 5. Strict EXECUTE permissions (REVOKE FROM PUBLIC, anon, authenticated; GRANT TO service_role, postgres)
+-- 1. Lossless monotonic integer optimistic concurrency token (lock_version bigint) on ItineraryVersion and QuoteVersion
+-- 2. Database-enforced content immutability triggers on frozen ItineraryVersion and QuoteVersion
+-- 3. Single-current-version partial unique indexes (at most one 'finalized' ItineraryVersion and one 'issued' QuoteVersion)
+-- 4. Atomic SECURITY DEFINER RPCs with database-side actor & role revalidation
+-- 5. Inquiry-scoped active acceptance safety and valid_until freshness check at Quote issuance
+-- 6. Strict EXECUTE permissions (REVOKE FROM PUBLIC, anon, authenticated; GRANT TO service_role, postgres)
 
 -- ============================================================================
--- 1. SINGLE-CURRENT-VERSION DATABASE PARTIAL UNIQUE INDEXES
+-- 1. ADD LOSSLESS CONCURRENCY TOKEN (LOCK_VERSION) TO DRAFT TABLES
+-- ============================================================================
+ALTER TABLE public.itinerary_versions
+  ADD COLUMN IF NOT EXISTS lock_version bigint NOT NULL DEFAULT 0;
+
+ALTER TABLE public.quote_versions
+  ADD COLUMN IF NOT EXISTS lock_version bigint NOT NULL DEFAULT 0;
+
+-- ============================================================================
+-- 2. SINGLE-CURRENT-VERSION DATABASE PARTIAL UNIQUE INDEXES
 -- ============================================================================
 CREATE UNIQUE INDEX IF NOT EXISTS uq_one_finalized_itinerary_version
   ON public.itinerary_versions (tenant_id, itinerary_id)
@@ -19,7 +29,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_one_issued_quote_version
   WHERE status = 'issued';
 
 -- ============================================================================
--- 2. ITINERARY VERSION IMMUTABILITY TRIGGER
+-- 3. ITINERARY VERSION IMMUTABILITY TRIGGER
 -- ============================================================================
 CREATE OR REPLACE FUNCTION public.protect_itinerary_version_immutability()
 RETURNS TRIGGER AS $$
@@ -42,6 +52,7 @@ BEGIN
       -- Check if any commercial/program content column has changed
       IF NEW.itinerary_id IS DISTINCT FROM OLD.itinerary_id OR
          NEW.version_number IS DISTINCT FROM OLD.version_number OR
+         NEW.lock_version IS DISTINCT FROM OLD.lock_version OR
          NEW.title IS DISTINCT FROM OLD.title OR
          NEW.destination_summary IS DISTINCT FROM OLD.destination_summary OR
          NEW.start_date IS DISTINCT FROM OLD.start_date OR
@@ -72,7 +83,7 @@ CREATE TRIGGER trg_protect_itinerary_version_immutability
   FOR EACH ROW EXECUTE FUNCTION public.protect_itinerary_version_immutability();
 
 -- ============================================================================
--- 3. QUOTE VERSION IMMUTABILITY TRIGGER
+-- 4. QUOTE VERSION IMMUTABILITY TRIGGER
 -- ============================================================================
 CREATE OR REPLACE FUNCTION public.protect_quote_version_immutability()
 RETURNS TRIGGER AS $$
@@ -95,6 +106,7 @@ BEGIN
       -- Check if any commercial content column has changed
       IF NEW.quote_id IS DISTINCT FROM OLD.quote_id OR
          NEW.version_number IS DISTINCT FROM OLD.version_number OR
+         NEW.lock_version IS DISTINCT FROM OLD.lock_version OR
          NEW.itinerary_version_id IS DISTINCT FROM OLD.itinerary_version_id OR
          NEW.currency IS DISTINCT FROM OLD.currency OR
          NEW.line_items IS DISTINCT FROM OLD.line_items OR
@@ -128,7 +140,7 @@ CREATE TRIGGER trg_protect_quote_version_immutability
   FOR EACH ROW EXECUTE FUNCTION public.protect_quote_version_immutability();
 
 -- ============================================================================
--- 4. DROP EXISTING FUNCTIONS FOR CLEAN SIGNATURE UPDATE
+-- 5. DROP EXISTING FUNCTIONS FOR CLEAN SIGNATURE UPDATE
 -- ============================================================================
 DO $$ 
 DECLARE
@@ -145,7 +157,7 @@ BEGIN
 END $$;
 
 -- ============================================================================
--- 5. DB-SIDE ACTOR & ROLE VALIDATION HELPER
+-- 6. DB-SIDE ACTOR & ROLE VALIDATION HELPER
 -- ============================================================================
 CREATE OR REPLACE FUNCTION public._validate_domain_actor(
   p_tenant_id text,
@@ -187,10 +199,10 @@ END;
 $$ LANGUAGE plpgsql STABLE SET search_path = public, pg_temp;
 
 -- ============================================================================
--- 5. ATOMIC ITINERARY RPCS
+-- 7. ATOMIC ITINERARY RPCS
 -- ============================================================================
 
--- 5.1 Create Itinerary Family and Version 1 Draft
+-- 7.1 Create Itinerary Family and Version 1 Draft
 CREATE OR REPLACE FUNCTION public.rpc_create_itinerary_family_and_version(
   p_tenant_id text,
   p_actor_user_id uuid,
@@ -220,9 +232,9 @@ BEGIN
     p_tenant_id, p_inquiry_id, p_title, p_actor_user_id
   ) RETURNING id INTO v_itinerary_id;
 
-  -- Create Version 1 Draft
+  -- Create Version 1 Draft with initial lock_version = 0
   INSERT INTO public.itinerary_versions (
-    tenant_id, itinerary_id, version_number, status, frozen_at,
+    tenant_id, itinerary_id, version_number, lock_version, status, frozen_at,
     title, destination_summary, start_date, end_date, duration_days,
     passenger_count, days, inclusions, exclusions, itinerary_schema_version,
     created_by
@@ -230,6 +242,7 @@ BEGIN
     p_tenant_id,
     v_itinerary_id,
     1,
+    0,
     'draft',
     NULL,
     COALESCE(p_version_payload->>'title', p_title),
@@ -249,6 +262,7 @@ BEGIN
     'itineraryId', v_itinerary_id,
     'versionId', v_version_row.id,
     'versionNumber', v_version_row.version_number,
+    'lockVersion', v_version_row.lock_version,
     'status', v_version_row.status,
     'title', v_version_row.title,
     'updatedAt', v_version_row.updated_at
@@ -256,12 +270,12 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 
--- 5.2 Update Itinerary Draft with Optimistic Concurrency
+-- 7.2 Update Itinerary Draft with Lossless Atomic Concurrency
 CREATE OR REPLACE FUNCTION public.rpc_update_itinerary_draft(
   p_tenant_id text,
   p_actor_user_id uuid,
   p_version_id uuid,
-  p_expected_updated_at timestamptz,
+  p_expected_lock_version bigint,
   p_payload jsonb
 )
 RETURNS jsonb AS $$
@@ -270,44 +284,46 @@ DECLARE
 BEGIN
   PERFORM public._validate_domain_actor(p_tenant_id, p_actor_user_id, false);
 
-  -- Lock the draft version row
-  SELECT * INTO v_version
-  FROM public.itinerary_versions
-  WHERE id = p_version_id AND tenant_id = p_tenant_id
-  FOR UPDATE;
-
-  IF NOT FOUND THEN
-    RAISE EXCEPTION 'ENTITY_NOT_FOUND: ItineraryVersion % not found in tenant %', p_version_id, p_tenant_id;
-  END IF;
-
-  IF v_version.status != 'draft' OR v_version.frozen_at IS NOT NULL THEN
-    RAISE EXCEPTION 'IMMUTABILITY_VIOLATION: Cannot edit ItineraryVersion % because it is %', p_version_id, v_version.status;
-  END IF;
-
-  -- Optimistic concurrency check
-  IF p_expected_updated_at IS NOT NULL AND date_trunc('milliseconds', v_version.updated_at) != date_trunc('milliseconds', p_expected_updated_at) THEN
-    RAISE EXCEPTION 'STALE_VERSION: The itinerary draft has been updated by another user (expected %, current %)',
-      p_expected_updated_at, v_version.updated_at;
-  END IF;
-
+  -- Atomic conditional update on status = 'draft' AND lock_version = expected
   UPDATE public.itinerary_versions SET
-    title = COALESCE(p_payload->>'title', v_version.title),
+    title = COALESCE(p_payload->>'title', title),
     destination_summary = p_payload->>'destinationSummary',
     start_date = (p_payload->>'startDate')::date,
     end_date = (p_payload->>'endDate')::date,
     duration_days = (p_payload->>'durationDays')::int,
     passenger_count = (p_payload->>'passengerCount')::int,
-    days = COALESCE(p_payload->'days', v_version.days),
+    days = COALESCE(p_payload->'days', days),
     inclusions = ARRAY(SELECT jsonb_array_elements_text(COALESCE(p_payload->'inclusions', '[]'::jsonb))),
     exclusions = ARRAY(SELECT jsonb_array_elements_text(COALESCE(p_payload->'exclusions', '[]'::jsonb))),
+    lock_version = lock_version + 1,
     updated_at = now()
-  WHERE id = p_version_id AND tenant_id = p_tenant_id
+  WHERE id = p_version_id 
+    AND tenant_id = p_tenant_id 
+    AND status = 'draft' 
+    AND lock_version = p_expected_lock_version
   RETURNING * INTO v_version;
+
+  -- If zero rows updated, diagnose exact reason
+  IF NOT FOUND THEN
+    SELECT * INTO v_version
+    FROM public.itinerary_versions
+    WHERE id = p_version_id AND tenant_id = p_tenant_id;
+
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'ENTITY_NOT_FOUND: ItineraryVersion % not found in tenant %', p_version_id, p_tenant_id;
+    ELSIF v_version.status != 'draft' OR v_version.frozen_at IS NOT NULL THEN
+      RAISE EXCEPTION 'IMMUTABILITY_VIOLATION: Cannot edit ItineraryVersion % because it is %', p_version_id, v_version.status;
+    ELSIF v_version.lock_version != p_expected_lock_version THEN
+      RAISE EXCEPTION 'STALE_VERSION: The itinerary draft has been updated by another user (expected %, current %)',
+        p_expected_lock_version, v_version.lock_version;
+    END IF;
+  END IF;
 
   RETURN jsonb_build_object(
     'itineraryId', v_version.itinerary_id,
     'versionId', v_version.id,
     'versionNumber', v_version.version_number,
+    'lockVersion', v_version.lock_version,
     'status', v_version.status,
     'title', v_version.title,
     'updatedAt', v_version.updated_at
@@ -315,7 +331,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 
--- 5.3 Create Itinerary Revision
+-- 7.3 Create Itinerary Revision
 CREATE OR REPLACE FUNCTION public.rpc_create_itinerary_revision(
   p_tenant_id text,
   p_actor_user_id uuid,
@@ -354,9 +370,9 @@ BEGIN
   FROM public.itinerary_versions
   WHERE itinerary_id = p_itinerary_id AND tenant_id = p_tenant_id;
 
-  -- Clone structured content into new Draft
+  -- Clone structured content into new Draft (initial lock_version = 0)
   INSERT INTO public.itinerary_versions (
-    tenant_id, itinerary_id, version_number, status, frozen_at,
+    tenant_id, itinerary_id, version_number, lock_version, status, frozen_at,
     title, destination_summary, start_date, end_date, duration_days,
     passenger_count, days, inclusions, exclusions, itinerary_schema_version,
     created_by
@@ -364,6 +380,7 @@ BEGIN
     p_tenant_id,
     p_itinerary_id,
     v_next_version,
+    0,
     'draft',
     NULL,
     v_source.title,
@@ -383,6 +400,7 @@ BEGIN
     'itineraryId', v_new_version.itinerary_id,
     'versionId', v_new_version.id,
     'versionNumber', v_new_version.version_number,
+    'lockVersion', v_new_version.lock_version,
     'status', v_new_version.status,
     'title', v_new_version.title,
     'updatedAt', v_new_version.updated_at
@@ -390,7 +408,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 
--- 5.4 Finalize Itinerary Version
+-- 7.4 Finalize Itinerary Version
 CREATE OR REPLACE FUNCTION public.rpc_finalize_itinerary_version(
   p_tenant_id text,
   p_actor_user_id uuid,
@@ -418,6 +436,7 @@ BEGIN
       'itineraryId', v_version.itinerary_id,
       'versionId', v_version.id,
       'versionNumber', v_version.version_number,
+      'lockVersion', v_version.lock_version,
       'status', v_version.status,
       'frozenAt', v_version.frozen_at,
       'updatedAt', v_version.updated_at
@@ -451,6 +470,7 @@ BEGIN
     'itineraryId', v_version.itinerary_id,
     'versionId', v_version.id,
     'versionNumber', v_version.version_number,
+    'lockVersion', v_version.lock_version,
     'status', v_version.status,
     'frozenAt', v_version.frozen_at,
     'updatedAt', v_version.updated_at
@@ -459,10 +479,10 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 
 -- ============================================================================
--- 6. ATOMIC QUOTE RPCS
+-- 8. ATOMIC QUOTE RPCS
 -- ============================================================================
 
--- 6.1 Create Quote Family and Version 1 Draft
+-- 8.1 Create Quote Family and Version 1 Draft
 CREATE OR REPLACE FUNCTION public.rpc_create_quote_family_and_version(
   p_tenant_id text,
   p_actor_user_id uuid,
@@ -521,9 +541,9 @@ BEGIN
     p_tenant_id, p_inquiry_id, v_quote_number, p_actor_user_id
   ) RETURNING id INTO v_quote_id;
 
-  -- Create Quote Version 1 Draft
+  -- Create Quote Version 1 Draft with initial lock_version = 0
   INSERT INTO public.quote_versions (
-    tenant_id, quote_id, version_number, itinerary_version_id, status, frozen_at,
+    tenant_id, quote_id, version_number, lock_version, itinerary_version_id, status, frozen_at,
     currency, line_items, quote_schema_version,
     subtotal, discount_amount, tax_amount, grand_total,
     internal_cost_total, gross_margin_amount,
@@ -533,6 +553,7 @@ BEGIN
     p_tenant_id,
     v_quote_id,
     1,
+    0,
     p_itinerary_version_id,
     'draft',
     NULL,
@@ -556,6 +577,7 @@ BEGIN
     'quoteNumber', v_quote_number,
     'versionId', v_quote_version.id,
     'versionNumber', v_quote_version.version_number,
+    'lockVersion', v_quote_version.lock_version,
     'itineraryVersionId', v_quote_version.itinerary_version_id,
     'status', v_quote_version.status,
     'grandTotal', v_quote_version.grand_total::text,
@@ -564,12 +586,12 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 
--- 6.2 Update Quote Draft with Optimistic Concurrency
+-- 8.2 Update Quote Draft with Lossless Atomic Concurrency
 CREATE OR REPLACE FUNCTION public.rpc_update_quote_draft(
   p_tenant_id text,
   p_actor_user_id uuid,
   p_version_id uuid,
-  p_expected_updated_at timestamptz,
+  p_expected_lock_version bigint,
   p_pricing_payload jsonb
 )
 RETURNS jsonb AS $$
@@ -582,24 +604,13 @@ DECLARE
 BEGIN
   PERFORM public._validate_domain_actor(p_tenant_id, p_actor_user_id, false);
 
-  -- Lock target draft version
+  -- Fetch current state for itinerary integrity check
   SELECT * INTO v_version
   FROM public.quote_versions
-  WHERE id = p_version_id AND tenant_id = p_tenant_id
-  FOR UPDATE;
+  WHERE id = p_version_id AND tenant_id = p_tenant_id;
 
   IF NOT FOUND THEN
     RAISE EXCEPTION 'ENTITY_NOT_FOUND: QuoteVersion % not found in tenant %', p_version_id, p_tenant_id;
-  END IF;
-
-  IF v_version.status != 'draft' OR v_version.frozen_at IS NOT NULL THEN
-    RAISE EXCEPTION 'IMMUTABILITY_VIOLATION: Cannot edit QuoteVersion % because it is %', p_version_id, v_version.status;
-  END IF;
-
-  -- Optimistic concurrency check
-  IF p_expected_updated_at IS NOT NULL AND date_trunc('milliseconds', v_version.updated_at) != date_trunc('milliseconds', p_expected_updated_at) THEN
-    RAISE EXCEPTION 'STALE_VERSION: The quote draft has been updated by another user (expected %, current %)',
-      p_expected_updated_at, v_version.updated_at;
   END IF;
 
   v_target_itinerary_version_id := COALESCE(
@@ -628,10 +639,11 @@ BEGIN
     END IF;
   END IF;
 
+  -- Atomic conditional update on status = 'draft' AND lock_version = expected
   UPDATE public.quote_versions SET
     itinerary_version_id = v_target_itinerary_version_id,
-    currency = COALESCE(p_pricing_payload->>'currency', v_version.currency),
-    line_items = COALESCE(p_pricing_payload->'lineItems', v_version.line_items),
+    currency = COALESCE(p_pricing_payload->>'currency', currency),
+    line_items = COALESCE(p_pricing_payload->'lineItems', line_items),
     subtotal = (p_pricing_payload->>'subtotal')::numeric(12, 2),
     discount_amount = (p_pricing_payload->>'discountAmount')::numeric(12, 2),
     tax_amount = (p_pricing_payload->>'taxAmount')::numeric(12, 2),
@@ -641,14 +653,35 @@ BEGIN
     valid_until = (p_pricing_payload->>'validUntil')::date,
     terms_and_conditions = p_pricing_payload->>'termsAndConditions',
     customer_notes = p_pricing_payload->>'customerNotes',
+    lock_version = lock_version + 1,
     updated_at = now()
-  WHERE id = p_version_id AND tenant_id = p_tenant_id
+  WHERE id = p_version_id 
+    AND tenant_id = p_tenant_id 
+    AND status = 'draft' 
+    AND lock_version = p_expected_lock_version
   RETURNING * INTO v_version;
+
+  -- If zero rows updated, diagnose exact reason
+  IF NOT FOUND THEN
+    SELECT * INTO v_version
+    FROM public.quote_versions
+    WHERE id = p_version_id AND tenant_id = p_tenant_id;
+
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'ENTITY_NOT_FOUND: QuoteVersion % not found in tenant %', p_version_id, p_tenant_id;
+    ELSIF v_version.status != 'draft' OR v_version.frozen_at IS NOT NULL THEN
+      RAISE EXCEPTION 'IMMUTABILITY_VIOLATION: Cannot edit QuoteVersion % because it is %', p_version_id, v_version.status;
+    ELSIF v_version.lock_version != p_expected_lock_version THEN
+      RAISE EXCEPTION 'STALE_VERSION: The quote draft has been updated by another user (expected %, current %)',
+        p_expected_lock_version, v_version.lock_version;
+    END IF;
+  END IF;
 
   RETURN jsonb_build_object(
     'quoteId', v_version.quote_id,
     'versionId', v_version.id,
     'versionNumber', v_version.version_number,
+    'lockVersion', v_version.lock_version,
     'itineraryVersionId', v_version.itinerary_version_id,
     'status', v_version.status,
     'grandTotal', v_version.grand_total::text,
@@ -657,7 +690,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 
--- 6.3 Create Quote Revision
+-- 8.3 Create Quote Revision
 CREATE OR REPLACE FUNCTION public.rpc_create_quote_revision(
   p_tenant_id text,
   p_actor_user_id uuid,
@@ -723,9 +756,9 @@ BEGIN
   FROM public.quote_versions
   WHERE quote_id = p_quote_id AND tenant_id = p_tenant_id;
 
-  -- Create new Draft revision
+  -- Create new Draft revision with initial lock_version = 0
   INSERT INTO public.quote_versions (
-    tenant_id, quote_id, version_number, itinerary_version_id, status, frozen_at,
+    tenant_id, quote_id, version_number, lock_version, itinerary_version_id, status, frozen_at,
     currency, line_items, quote_schema_version,
     subtotal, discount_amount, tax_amount, grand_total,
     internal_cost_total, gross_margin_amount,
@@ -735,6 +768,7 @@ BEGIN
     p_tenant_id,
     p_quote_id,
     v_next_version,
+    0,
     v_target_itin_id,
     'draft',
     NULL,
@@ -757,6 +791,7 @@ BEGIN
     'quoteId', v_new_version.quote_id,
     'versionId', v_new_version.id,
     'versionNumber', v_new_version.version_number,
+    'lockVersion', v_new_version.lock_version,
     'itineraryVersionId', v_new_version.itinerary_version_id,
     'status', v_new_version.status,
     'grandTotal', v_new_version.grand_total::text,
@@ -765,7 +800,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 
--- 6.4 Issue Quote Version
+-- 8.4 Issue Quote Version
 CREATE OR REPLACE FUNCTION public.rpc_issue_quote_version(
   p_tenant_id text,
   p_actor_user_id uuid,
@@ -795,6 +830,7 @@ BEGIN
       'quoteId', v_version.quote_id,
       'versionId', v_version.id,
       'versionNumber', v_version.version_number,
+      'lockVersion', v_version.lock_version,
       'status', v_version.status,
       'frozenAt', v_version.frozen_at,
       'updatedAt', v_version.updated_at
@@ -856,6 +892,7 @@ BEGIN
     'quoteId', v_version.quote_id,
     'versionId', v_version.id,
     'versionNumber', v_version.version_number,
+    'lockVersion', v_version.lock_version,
     'status', v_version.status,
     'frozenAt', v_version.frozen_at,
     'updatedAt', v_version.updated_at
@@ -864,24 +901,24 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 
 -- ============================================================================
--- 7. STRICT EXECUTE PRIVILEGES ON SECURITY DEFINER RPCS
+-- 9. STRICT EXECUTE PRIVILEGES ON SECURITY DEFINER RPCS
 -- ============================================================================
 REVOKE ALL ON FUNCTION public._validate_domain_actor(text, uuid, boolean) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.rpc_create_itinerary_family_and_version(text, uuid, uuid, text, jsonb) FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION public.rpc_update_itinerary_draft(text, uuid, uuid, timestamptz, jsonb) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.rpc_update_itinerary_draft(text, uuid, uuid, bigint, jsonb) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.rpc_create_itinerary_revision(text, uuid, uuid, uuid) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.rpc_finalize_itinerary_version(text, uuid, uuid) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.rpc_create_quote_family_and_version(text, uuid, uuid, uuid, jsonb) FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION public.rpc_update_quote_draft(text, uuid, uuid, timestamptz, jsonb) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.rpc_update_quote_draft(text, uuid, uuid, bigint, jsonb) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.rpc_create_quote_revision(text, uuid, uuid, uuid, uuid, jsonb) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.rpc_issue_quote_version(text, uuid, uuid) FROM PUBLIC, anon, authenticated;
 
 GRANT EXECUTE ON FUNCTION public._validate_domain_actor(text, uuid, boolean) TO service_role, postgres;
 GRANT EXECUTE ON FUNCTION public.rpc_create_itinerary_family_and_version(text, uuid, uuid, text, jsonb) TO service_role, postgres;
-GRANT EXECUTE ON FUNCTION public.rpc_update_itinerary_draft(text, uuid, uuid, timestamptz, jsonb) TO service_role, postgres;
+GRANT EXECUTE ON FUNCTION public.rpc_update_itinerary_draft(text, uuid, uuid, bigint, jsonb) TO service_role, postgres;
 GRANT EXECUTE ON FUNCTION public.rpc_create_itinerary_revision(text, uuid, uuid, uuid) TO service_role, postgres;
 GRANT EXECUTE ON FUNCTION public.rpc_finalize_itinerary_version(text, uuid, uuid) TO service_role, postgres;
 GRANT EXECUTE ON FUNCTION public.rpc_create_quote_family_and_version(text, uuid, uuid, uuid, jsonb) TO service_role, postgres;
-GRANT EXECUTE ON FUNCTION public.rpc_update_quote_draft(text, uuid, uuid, timestamptz, jsonb) TO service_role, postgres;
+GRANT EXECUTE ON FUNCTION public.rpc_update_quote_draft(text, uuid, uuid, bigint, jsonb) TO service_role, postgres;
 GRANT EXECUTE ON FUNCTION public.rpc_create_quote_revision(text, uuid, uuid, uuid, uuid, jsonb) TO service_role, postgres;
 GRANT EXECUTE ON FUNCTION public.rpc_issue_quote_version(text, uuid, uuid) TO service_role, postgres;

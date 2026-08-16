@@ -18,6 +18,7 @@ describe('AI-5B.2 Domain Service Security & Scoped Supplier-Cost Merge', () => {
     quote_id: '66666666-7777-8888-9999-000000000000',
     quote_number: 'QT-2026-0001',
     version_number: 1,
+    lock_version: 0,
     itinerary_version_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
     status: 'draft',
     frozen_at: null,
@@ -49,8 +50,9 @@ describe('AI-5B.2 Domain Service Security & Scoped Supplier-Cost Merge', () => {
     updated_at: new Date().toISOString(),
   };
 
-  it('shapes InternalQuoteVersionDTO for Admin/Manager with internal costs and margins', () => {
+  it('shapes InternalQuoteVersionDTO for Admin/Manager with internal costs, margins, and lockVersion', () => {
     const adminDTO = shapeQuoteVersionDTO(sampleQuoteRow, 'admin') as InternalQuoteVersionDTO;
+    expect(adminDTO.lockVersion).toBe(0);
     expect(adminDTO.internalCostTotal).toBe('70000.00');
     expect(adminDTO.grossMarginAmount).toBe('30000.00');
     expect(adminDTO.lineItems[0].supplierCost).toBe('35000.00');
@@ -58,12 +60,14 @@ describe('AI-5B.2 Domain Service Security & Scoped Supplier-Cost Merge', () => {
     expect(adminDTO.lineItems[0].marginPct).toBe(30);
 
     const managerDTO = shapeQuoteVersionDTO(sampleQuoteRow, 'manager') as InternalQuoteVersionDTO;
+    expect(managerDTO.lockVersion).toBe(0);
     expect(managerDTO.internalCostTotal).toBe('70000.00');
     expect(managerDTO.lineItems[0].supplierCost).toBe('35000.00');
   });
 
-  it('shapes StaffSafeQuoteVersionDTO for Consultant/Specialist/Viewer strictly omitting supplier cost and margins', () => {
+  it('shapes StaffSafeQuoteVersionDTO for Consultant/Specialist/Viewer strictly omitting supplier cost and margins but preserving lockVersion', () => {
     const consultantDTO = shapeQuoteVersionDTO(sampleQuoteRow, 'consultant') as StaffSafeQuoteVersionDTO;
+    expect(consultantDTO.lockVersion).toBe(0);
     expect((consultantDTO as unknown as Record<string, unknown>).internalCostTotal).toBeUndefined();
     expect((consultantDTO as unknown as Record<string, unknown>).grossMarginAmount).toBeUndefined();
     expect((consultantDTO.lineItems[0] as unknown as Record<string, unknown>).supplierCost).toBeUndefined();
@@ -73,10 +77,12 @@ describe('AI-5B.2 Domain Service Security & Scoped Supplier-Cost Merge', () => {
     expect(consultantDTO.lineItems[0].totalPrice).toBe('100000.00');
 
     const specialistDTO = shapeQuoteVersionDTO(sampleQuoteRow, 'specialist') as StaffSafeQuoteVersionDTO;
+    expect(specialistDTO.lockVersion).toBe(0);
     expect((specialistDTO as unknown as Record<string, unknown>).internalCostTotal).toBeUndefined();
     expect((specialistDTO.lineItems[0] as unknown as Record<string, unknown>).supplierCost).toBeUndefined();
 
     const viewerDTO = shapeQuoteVersionDTO(sampleQuoteRow, 'viewer') as StaffSafeQuoteVersionDTO;
+    expect(viewerDTO.lockVersion).toBe(0);
     expect((viewerDTO as unknown as Record<string, unknown>).internalCostTotal).toBeUndefined();
   });
 

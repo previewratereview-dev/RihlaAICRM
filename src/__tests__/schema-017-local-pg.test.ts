@@ -4,16 +4,16 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { calculateQuotePricing } from '../lib/quotes-itineraries/pricing';
 
-describe('Migration 017 Local PostgreSQL Domain Lifecycle & Immutability Integration Tests', () => {
+describe('Migration 017 Local PostgreSQL Domain Lifecycle & Lossless Concurrency Tests', () => {
   let client: Client;
-  const testTenantA = 'tenant_ai5_a';
-  const testTenantB = 'tenant_ai5_b';
+  const testTenantA = 'tenant_m17_a';
+  const testTenantB = 'tenant_m17_b';
 
-  const adminUserId = 'aaaaaaaa-1111-1111-1111-111111111111';
-  const consultantUserId = 'cccccccc-3333-3333-3333-333333333333';
-  const viewerUserId = 'dddddddd-4444-4444-4444-444444444444';
-  const superAdminUserId = 'eeeeeeee-5555-5555-5555-555555555555';
-  const tenantBUserId = 'ffffffff-6666-6666-6666-666666666666';
+  const adminUserId = '17171717-1111-1111-1111-111111111111';
+  const consultantUserId = '17171717-3333-3333-3333-333333333333';
+  const viewerUserId = '17171717-4444-4444-4444-444444444444';
+  const superAdminUserId = '17171717-5555-5555-5555-555555555555';
+  const tenantBUserId = '17171717-6666-6666-6666-666666666666';
 
   beforeAll(async () => {
     client = new Client({
@@ -147,8 +147,8 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Immutability Integra
       DELETE FROM public.tenant_quote_sequences WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
       DELETE FROM public.inquiries WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
       DELETE FROM public.traveler_profiles WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-      DELETE FROM public.profiles WHERE tenant_id IN ('${testTenantA}', '${testTenantB}', 'global');
-      DELETE FROM public.tenants WHERE id IN ('${testTenantA}', '${testTenantB}', 'global');
+      DELETE FROM public.profiles WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
+      DELETE FROM public.tenants WHERE id IN ('${testTenantA}', '${testTenantB}');
 
       DO $$ BEGIN
         ALTER TABLE public.quote_versions ENABLE TRIGGER ALL;
@@ -160,8 +160,8 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Immutability Integra
     // Seed test fixtures
     await client.query(`
       INSERT INTO public.tenants (id, name, slug) 
-      VALUES ('${testTenantA}', 'AI-5 Agency A', 'agency-a'),
-             ('${testTenantB}', 'AI-5 Agency B', 'agency-b'),
+      VALUES ('${testTenantA}', 'AI-5 Agency A', 'agency-m17-a'),
+             ('${testTenantB}', 'AI-5 Agency B', 'agency-m17-b'),
              ('global', 'Platform Global', 'platform-global')
       ON CONFLICT (id) DO NOTHING;
 
@@ -207,8 +207,8 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Immutability Integra
         DELETE FROM public.tenant_quote_sequences WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
         DELETE FROM public.inquiries WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
         DELETE FROM public.traveler_profiles WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-        DELETE FROM public.profiles WHERE tenant_id IN ('${testTenantA}', '${testTenantB}', 'global');
-        DELETE FROM public.tenants WHERE id IN ('${testTenantA}', '${testTenantB}', 'global');
+        DELETE FROM public.profiles WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
+        DELETE FROM public.tenants WHERE id IN ('${testTenantA}', '${testTenantB}');
 
         DO $$ BEGIN
           ALTER TABLE public.quote_versions ENABLE TRIGGER ALL;
@@ -222,7 +222,7 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Immutability Integra
     }
   });
 
-  it('atomically creates Itinerary family and Version 1 Draft via RPC with actor validation', async () => {
+  it('atomically creates Itinerary family and Version 1 Draft with initial lock_version = 0', async () => {
     const payload = {
       title: 'Dubai 5-Day Luxury Adventure',
       destinationSummary: 'Explore the Burj Khalifa and Desert Safari',
@@ -251,37 +251,53 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Immutability Integra
     expect(result.itineraryId).toBeDefined();
     expect(result.versionId).toBeDefined();
     expect(result.versionNumber).toBe(1);
+    expect(result.lockVersion).toBe(0);
     expect(result.status).toBe('draft');
   });
 
-  it('updates Itinerary draft and validates optimistic concurrency', async () => {
+  it('updates Itinerary draft and validates lossless monotonic optimistic concurrency (lock_version)', async () => {
     // 1. Get current v1
     const resV1 = await client.query(
-      `SELECT id, updated_at FROM public.itinerary_versions WHERE tenant_id = $1 AND version_number = 1 LIMIT 1`,
+      `SELECT id, lock_version FROM public.itinerary_versions WHERE tenant_id = $1 AND version_number = 1 LIMIT 1`,
       [testTenantA]
     );
     const versionId = resV1.rows[0].id;
-    const updatedAt = resV1.rows[0].updated_at;
+    const initialLock = resV1.rows[0].lock_version;
+    expect(Number(initialLock)).toBe(0);
 
-    // 2. Successful update with matching concurrency token
-    const updatePayload = {
+    // 2. Successful update with expectedLockVersion = 0 -> becomes lock_version = 1
+    const updatePayload1 = {
       title: 'Dubai 5-Day Luxury VIP Edition',
       destinationSummary: 'Upgraded with Helicopter Tour',
     };
 
-    const updateRes = await client.query(
+    const updateRes1 = await client.query(
       `SELECT public.rpc_update_itinerary_draft($1, $2, $3, $4, $5) as result`,
-      [testTenantA, adminUserId, versionId, updatedAt, JSON.stringify(updatePayload)]
+      [testTenantA, adminUserId, versionId, 0, JSON.stringify(updatePayload1)]
     );
-    expect(updateRes.rows[0].result.title).toBe('Dubai 5-Day Luxury VIP Edition');
+    expect(updateRes1.rows[0].result.title).toBe('Dubai 5-Day Luxury VIP Edition');
+    expect(updateRes1.rows[0].result.lockVersion).toBe(1);
 
-    // 3. Stale update attempt must FAIL with STALE_VERSION
+    // 3. Same-millisecond stale write test: Client B attempts to update with stale expectedLockVersion = 0
     await expect(
       client.query(
         `SELECT public.rpc_update_itinerary_draft($1, $2, $3, $4, $5) as result`,
-        [testTenantA, adminUserId, versionId, '2020-01-01T00:00:00Z', JSON.stringify({ title: 'Stale Overwrite' })]
+        [testTenantA, adminUserId, versionId, 0, JSON.stringify({ title: 'Stale Client Overwrite' })]
       )
     ).rejects.toThrow(/STALE_VERSION/);
+
+    // 4. Verify canonical database data remains Client A's value
+    const checkDb = await client.query(`SELECT title, lock_version FROM public.itinerary_versions WHERE id = $1`, [versionId]);
+    expect(checkDb.rows[0].title).toBe('Dubai 5-Day Luxury VIP Edition');
+    expect(Number(checkDb.rows[0].lock_version)).toBe(1);
+
+    // 5. Rapid successive update: Client A immediately updates with expectedLockVersion = 1 -> becomes 2
+    const updateRes2 = await client.query(
+      `SELECT public.rpc_update_itinerary_draft($1, $2, $3, $4, $5) as result`,
+      [testTenantA, adminUserId, versionId, 1, JSON.stringify({ title: 'Dubai 5-Day Luxury Ultra VIP' })]
+    );
+    expect(updateRes2.rows[0].result.title).toBe('Dubai 5-Day Luxury Ultra VIP');
+    expect(updateRes2.rows[0].result.lockVersion).toBe(2);
   });
 
   it('finalizes Itinerary and enforces database content immutability', async () => {
@@ -335,13 +351,14 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Immutability Integra
     ).rejects.toThrow(/uq_one_finalized_itinerary_version/);
   });
 
-  it('creates Itinerary Revision v2 without prematurely superseding finalized v1', async () => {
+  it('creates Itinerary Revision v2 with initial lock_version = 0 without inheriting source counter', async () => {
     const resV1 = await client.query(
-      `SELECT id, itinerary_id FROM public.itinerary_versions WHERE tenant_id = $1 AND version_number = 1 LIMIT 1`,
+      `SELECT id, itinerary_id, lock_version FROM public.itinerary_versions WHERE tenant_id = $1 AND version_number = 1 LIMIT 1`,
       [testTenantA]
     );
     const itinId = resV1.rows[0].itinerary_id;
     const v1Id = resV1.rows[0].id;
+    expect(Number(resV1.rows[0].lock_version)).toBe(2); // Source was at lock_version 2
 
     // 1. Create Revision v2
     const revRes = await client.query(
@@ -350,6 +367,7 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Immutability Integra
     );
     const v2Result = revRes.rows[0].result;
     expect(v2Result.versionNumber).toBe(2);
+    expect(v2Result.lockVersion).toBe(0); // Fresh draft starts at lock_version = 0!
     expect(v2Result.status).toBe('draft');
 
     // 2. Check v1 is STILL finalized (NOT superseded prematurely)
@@ -369,7 +387,7 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Immutability Integra
     expect(checkV2After.rows[0].status).toBe('finalized');
   });
 
-  it('atomically creates Quote family with sequential quote number and authoritative pricing', async () => {
+  it('atomically creates Quote family with sequential quote number and lock_version = 0', async () => {
     // 1. Get finalized itinerary version (v2)
     const itinRes = await client.query(
       `SELECT id FROM public.itinerary_versions WHERE tenant_id = $1 AND status = 'finalized' LIMIT 1`,
@@ -421,8 +439,44 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Immutability Integra
     expect(result.quoteId).toBeDefined();
     expect(result.quoteNumber).toMatch(/^QT-2026-\d{4}$/);
     expect(result.versionNumber).toBe(1);
+    expect(result.lockVersion).toBe(0);
     expect(result.status).toBe('draft');
     expect(result.grandTotal).toBe('126000.00');
+  });
+
+  it('updates Quote draft with atomic lock_version and rejects same-millisecond stale write', async () => {
+    const qvRes = await client.query(
+      `SELECT id, lock_version FROM public.quote_versions WHERE tenant_id = $1 AND version_number = 1 LIMIT 1`,
+      [testTenantA]
+    );
+    const qvId = qvRes.rows[0].id;
+    expect(Number(qvRes.rows[0].lock_version)).toBe(0);
+
+    // 1. Successful update: expectedLockVersion = 0 -> becomes 1
+    const updatePricing1 = calculateQuotePricing({
+      lineItems: [{ title: 'Resort Package VIP', category: 'accommodation', quantity: 2, unitPrice: '52000.00' }],
+    });
+    const updateRes1 = await client.query(
+      `SELECT public.rpc_update_quote_draft($1, $2, $3, $4, $5) as result`,
+      [testTenantA, adminUserId, qvId, 0, JSON.stringify(updatePricing1)]
+    );
+    expect(updateRes1.rows[0].result.lockVersion).toBe(1);
+    expect(updateRes1.rows[0].result.grandTotal).toBe('104000.00');
+
+    // 2. Stale write attempt with stale expectedLockVersion = 0 -> FAILS STALE_VERSION
+    await expect(
+      client.query(
+        `SELECT public.rpc_update_quote_draft($1, $2, $3, $4, $5) as result`,
+        [testTenantA, adminUserId, qvId, 0, JSON.stringify(updatePricing1)]
+      )
+    ).rejects.toThrow(/STALE_VERSION/);
+
+    // 3. Rapid successive update with expectedLockVersion = 1 -> becomes 2
+    const updateRes2 = await client.query(
+      `SELECT public.rpc_update_quote_draft($1, $2, $3, $4, $5) as result`,
+      [testTenantA, adminUserId, qvId, 1, JSON.stringify(updatePricing1)]
+    );
+    expect(updateRes2.rows[0].result.lockVersion).toBe(2);
   });
 
   it('rejects creating Quote referencing a DRAFT ItineraryVersion', async () => {
@@ -497,7 +551,7 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Immutability Integra
     ).rejects.toThrow(/uq_one_issued_quote_version/);
   });
 
-  it('creates Quote Revision v2 and issuing v2 atomically supersedes v1', async () => {
+  it('creates Quote Revision v2 with initial lock_version = 0 and issuing v2 atomically supersedes v1', async () => {
     const qvRes = await client.query(
       `SELECT id, quote_id, itinerary_version_id FROM public.quote_versions WHERE tenant_id = $1 AND version_number = 1 LIMIT 1`,
       [testTenantA]
@@ -525,6 +579,7 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Immutability Integra
     );
     const v2Result = revRes.rows[0].result;
     expect(v2Result.versionNumber).toBe(2);
+    expect(v2Result.lockVersion).toBe(0); // Fresh draft starts at lock_version = 0
     expect(v2Result.status).toBe('draft');
 
     // 2. Verify v1 remains issued while v2 is in draft

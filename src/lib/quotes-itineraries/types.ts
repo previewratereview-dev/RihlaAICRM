@@ -102,6 +102,7 @@ export interface ItineraryVersionEntity {
   tenantId: string;
   itineraryId: string;
   versionNumber: number;
+  lockVersion: number;
   status: ItineraryVersionStatus;
   frozenAt?: string | null;
   title: string;
@@ -176,6 +177,7 @@ export interface InternalQuoteVersionDTO {
   quoteId: string;
   quoteNumber: string;
   versionNumber: number;
+  lockVersion: number;
   itineraryVersionId: string;
   status: QuoteVersionStatus;
   frozenAt?: string | null;
@@ -208,6 +210,7 @@ export interface StaffSafeQuoteVersionDTO {
   quoteId: string;
   quoteNumber: string;
   versionNumber: number;
+  lockVersion: number;
   itineraryVersionId: string;
   status: QuoteVersionStatus;
   frozenAt?: string | null;

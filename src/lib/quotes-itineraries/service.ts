@@ -43,6 +43,20 @@ export interface UpdateItineraryDraftParams {
   exclusions?: string[];
 }
 
+export interface UpdateItineraryDraftParams {
+  versionId: string;
+  expectedLockVersion: number;
+  title?: string;
+  destinationSummary?: string | null;
+  startDate?: string | null;
+  endDate?: string | null;
+  durationDays?: number | null;
+  passengerCount?: number | null;
+  days?: ItineraryVersionEntity['days'];
+  inclusions?: string[];
+  exclusions?: string[];
+}
+
 export interface CreateQuoteDraftParams {
   inquiryId: string;
   itineraryVersionId: string;
@@ -57,7 +71,7 @@ export interface CreateQuoteDraftParams {
 
 export interface UpdateQuoteDraftParams {
   versionId: string;
-  expectedUpdatedAt?: string;
+  expectedLockVersion: number;
   itineraryVersionId?: string;
   currency?: string;
   lineItems: PricingLineItemInput[];
@@ -80,6 +94,7 @@ export function shapeQuoteVersionDTO(
     quote_id: string;
     quote_number?: string;
     version_number: number;
+    lock_version?: number | bigint | string;
     itinerary_version_id: string;
     status: string;
     frozen_at?: string | null;
@@ -105,6 +120,7 @@ export function shapeQuoteVersionDTO(
   role: string
 ): InternalQuoteVersionDTO | StaffSafeQuoteVersionDTO {
   const hasInternalPricing = can(role, 'quotes:internal_pricing:read');
+  const lockVersion = quoteRow.lock_version != null ? Number(quoteRow.lock_version) : 0;
 
   if (hasInternalPricing) {
     return {
@@ -113,6 +129,7 @@ export function shapeQuoteVersionDTO(
       quoteId: quoteRow.quote_id,
       quoteNumber: quoteRow.quote_number || '',
       versionNumber: quoteRow.version_number,
+      lockVersion,
       itineraryVersionId: quoteRow.itinerary_version_id,
       status: quoteRow.status as QuoteVersionStatus,
       frozenAt: quoteRow.frozen_at,
@@ -155,6 +172,7 @@ export function shapeQuoteVersionDTO(
     quoteId: quoteRow.quote_id,
     quoteNumber: quoteRow.quote_number || '',
     versionNumber: quoteRow.version_number,
+    lockVersion,
     itineraryVersionId: quoteRow.itinerary_version_id,
     status: quoteRow.status as QuoteVersionStatus,
     frozenAt: quoteRow.frozen_at,
