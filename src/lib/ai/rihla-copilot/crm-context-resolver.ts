@@ -11,6 +11,7 @@
  * - Preserves null/zero financial semantics and minimizes PII
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { z } from 'zod';
 import {
   loadInquiryAttentionFact,
   loadConversationAttentionFacts,
@@ -24,14 +25,48 @@ import type { AttentionSignalType, QualificationFieldKey } from '@/lib/attention
 
 export type CopilotContextType = 'none' | 'inquiry' | 'traveler' | 'booking' | 'conversation';
 
+export const VALID_COPILOT_INTENTS = [
+  'explain_attention',
+  'draft_reply',
+  'draft_follow_up',
+  'summarize_customer_need',
+  'suggest_next_step',
+  'review_missing_qualification',
+  'general',
+] as const;
+
+export type ValidCopilotIntent = (typeof VALID_COPILOT_INTENTS)[number];
+
+export const VALID_ATTENTION_SIGNAL_TYPES = [
+  'FOLLOW_UP_OVERDUE',
+  'UNANSWERED_INBOUND',
+  'MISSING_QUALIFICATION',
+  'UNASSIGNED_INQUIRY',
+  'NO_FOLLOW_UP_SCHEDULED',
+] as const;
+
+export type ValidAttentionSignalType = (typeof VALID_ATTENTION_SIGNAL_TYPES)[number];
+
+export const ClientContextHintSchema = z
+  .object({
+    pathname: z.string().max(255).optional(),
+    contextType: z.enum(['none', 'inquiry', 'traveler', 'booking', 'conversation']).optional(),
+    contextId: z.string().max(100).nullable().optional(),
+    activeContextType: z.enum(['none', 'inquiry', 'traveler', 'booking', 'conversation']).optional(),
+    activeContextId: z.string().max(100).nullable().optional(),
+    requestedIntent: z.enum(VALID_COPILOT_INTENTS).optional(),
+    requestedSignalType: z.enum(VALID_ATTENTION_SIGNAL_TYPES).nullable().optional(),
+  })
+  .strict();
+
 export interface ClientContextHint {
   pathname?: string;
   contextType?: CopilotContextType;
   contextId?: string | null;
   activeContextType?: CopilotContextType;
   activeContextId?: string | null;
-  requestedIntent?: 'explain_attention' | 'draft_reply' | 'summarize' | 'suggest_next_step' | 'general';
-  requestedSignalType?: string | null;
+  requestedIntent?: ValidCopilotIntent;
+  requestedSignalType?: ValidAttentionSignalType | string | null;
 }
 
 export interface UserContextDTO {
@@ -441,13 +476,14 @@ export async function resolveCopilotContext(
     if (convErr || !conversation) {
       entity = { type: 'conversation', data: null, recordUnavailable: true };
     } else {
-      // Fetch up to 5 recent messages for bounded window
+      // Fetch up to 5 recent messages for bounded window with deterministic unique ordering
       const { data: msgRows } = await supabase
         .from('messages')
-        .select('sender_type, sender_name, content, created_at')
+        .select('id, sender_type, sender_name, content, created_at')
         .eq('conversation_id', contextId)
         .eq('tenant_id', tenantId)
         .order('created_at', { ascending: false })
+        .order('id', { ascending: false })
         .limit(5);
 
       const recentMessages = (msgRows || [])

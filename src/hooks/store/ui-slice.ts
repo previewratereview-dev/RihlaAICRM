@@ -8,7 +8,7 @@ export function createUiSlice(set: SetState, _get: GetState) {
     copilotOpen: false,
     copilotInitialPrompt: null as {
       prompt: string;
-      requestedIntent?: 'explain_attention' | 'draft_reply' | 'summarize' | 'suggest_next_step' | 'general';
+      requestedIntent?: import('@/lib/ai/rihla-copilot/crm-context-resolver').ValidCopilotIntent;
       requestedSignalType?: string;
     } | null,
     sidebarExpanded: true,
@@ -42,7 +42,7 @@ export function createUiSlice(set: SetState, _get: GetState) {
     setCopilotOpen: (open: boolean) => set({ copilotOpen: open }),
     setCopilotInitialPrompt: (data: {
       prompt: string;
-      requestedIntent?: 'explain_attention' | 'draft_reply' | 'summarize' | 'suggest_next_step' | 'general';
+      requestedIntent?: import('@/lib/ai/rihla-copilot/crm-context-resolver').ValidCopilotIntent;
       requestedSignalType?: string;
     } | null) => set({ copilotInitialPrompt: data }),
     toggleSidebar: () => set((state) => ({ sidebarExpanded: !state.sidebarExpanded })),

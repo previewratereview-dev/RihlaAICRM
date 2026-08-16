@@ -286,6 +286,7 @@ export async function loadConversationAttentionFacts(
       .from('messages')
       .select('id, sender_type, created_at')
       .eq('conversation_id', conv.id)
+      .eq('tenant_id', tenantId)
       .order('created_at', { ascending: true })
       .order('id', { ascending: true });
 

@@ -74,12 +74,12 @@ export interface CRMStore {
   setCopilotOpen: (open: boolean) => void;
   copilotInitialPrompt: {
     prompt: string;
-    requestedIntent?: 'explain_attention' | 'draft_reply' | 'summarize' | 'suggest_next_step' | 'general';
+    requestedIntent?: import('@/lib/ai/rihla-copilot/crm-context-resolver').ValidCopilotIntent;
     requestedSignalType?: string;
   } | null;
   setCopilotInitialPrompt: (data: {
     prompt: string;
-    requestedIntent?: 'explain_attention' | 'draft_reply' | 'summarize' | 'suggest_next_step' | 'general';
+    requestedIntent?: import('@/lib/ai/rihla-copilot/crm-context-resolver').ValidCopilotIntent;
     requestedSignalType?: string;
   } | null) => void;
 

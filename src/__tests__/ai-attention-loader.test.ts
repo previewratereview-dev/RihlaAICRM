@@ -306,21 +306,20 @@ describe('AI-4B Server Facts Loader: loadConversationAttentionFacts', () => {
           };
         }
         if (table === 'messages') {
-          return {
-            select: vi.fn().mockReturnValue({
-              eq: vi.fn().mockReturnValue({
-                order: vi.fn().mockReturnValue({
-                  order: vi.fn().mockResolvedValue({
-                    data: [
-                      { id: 'msg-1', sender_type: 'contact', created_at: '2026-08-16T09:00:00Z' },
-                      { id: 'msg-2', sender_type: 'system', created_at: '2026-08-16T09:01:00Z' }, // System alert -> must NOT count as reply
-                    ],
-                    error: null,
-                  }),
-                }),
+          const query: Record<string, unknown> = {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            order: vi.fn().mockReturnThis(),
+            then: (resolve: (val: unknown) => unknown) =>
+              resolve({
+                data: [
+                  { id: 'msg-1', sender_type: 'contact', created_at: '2026-08-16T09:00:00Z' },
+                  { id: 'msg-2', sender_type: 'system', created_at: '2026-08-16T09:01:00Z' }, // System alert -> must NOT count as reply
+                ],
+                error: null,
               }),
-            }),
           };
+          return query;
         }
         throw new Error(`Unexpected table ${table}`);
       }),

@@ -76,7 +76,7 @@ export function GlobalCopilot() {
   const send = async (
     overrideText?: string,
     extraHints?: {
-      requestedIntent?: 'explain_attention' | 'draft_reply' | 'summarize' | 'suggest_next_step' | 'general';
+      requestedIntent?: import('@/lib/ai/rihla-copilot/crm-context-resolver').ValidCopilotIntent;
       requestedSignalType?: string;
     }
   ) => {

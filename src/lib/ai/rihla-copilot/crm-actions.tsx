@@ -26,6 +26,7 @@ import { executeAIRequest } from '@/lib/ai/route-helper';
 import {
   resolveCopilotContext,
   type ClientContextHint,
+  ClientContextHintSchema,
 } from './crm-context-resolver';
 import { buildCrmCopilotPrompt } from './crm-prompt';
 import {
@@ -108,11 +109,22 @@ export async function submitCrmCopilotMessage(
     };
   }
 
+  // Strict allowlist validation of client-provided routing hints
+  const parsedHint = ClientContextHintSchema.safeParse(clientHint);
+  if (!parsedHint.success) {
+    return {
+      id: `err-${Date.now()}`,
+      content: 'Invalid context routing parameters.',
+      error: 'invalid_argument',
+    };
+  }
+  const validatedHint = parsedHint.data;
+
   const cookieStore = await cookies();
   const supabase = createClient(cookieStore);
 
   // 1. Resolve server-authoritative context
-  const context = await resolveCopilotContext(supabase, clientHint);
+  const context = await resolveCopilotContext(supabase, validatedHint);
 
   if (!context.success) {
     return {
@@ -124,9 +136,25 @@ export async function submitCrmCopilotMessage(
     };
   }
 
+  // 1a. Foreign / Non-existent Entity Fail-Closed Check (Trust Boundary)
+  // If client requested intent or attention on an entity that does not exist in the tenant's workspace
+  if (
+    (validatedHint.contextId || validatedHint.activeContextId) &&
+    context.entity &&
+    'recordUnavailable' in context.entity &&
+    context.entity.recordUnavailable &&
+    (validatedHint.requestedIntent || validatedHint.requestedSignalType)
+  ) {
+    return {
+      id: `notfound-${Date.now()}`,
+      content: 'The requested record was not found in your workspace.',
+      error: 'not_found',
+    };
+  }
+
   // 1b. Stale Attention Signal Check (Phase AI-4D)
   // If the user explicitly asked about an attention signal that is no longer active, return a deterministic notice (0 LLM tokens)
-  if (clientHint.requestedSignalType && context.attentionContext?.staleSignalNotice) {
+  if (validatedHint.requestedSignalType && context.attentionContext?.staleSignalNotice) {
     return {
       id: `stale-${Date.now()}`,
       content: context.attentionContext.staleSignalNotice,

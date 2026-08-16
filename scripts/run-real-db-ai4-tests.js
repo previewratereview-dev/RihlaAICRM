@@ -403,9 +403,56 @@ async function runRealDbAttentionVerification() {
   }
   console.log(`✓ TEST 5 PASS: Paginated query fetched ${loadedRows.length} active inquiries without 1000-row truncation.`);
 
+  // ================================================================
+  // TEST 6: Message Content Cross-Tenant Isolation & Deterministic Ordering
+  // ================================================================
+  // Seed Conversation & Messages in Beta
+  await db.query(`
+    INSERT INTO public.conversations (id, tenant_id, inquiry_id, lead_name, channel, status)
+    VALUES ('conv-beta-1', 'agency-beta', '44444444-4444-4444-4444-444444444444', 'Omar Farooq', 'whatsapp', 'open')
+    ON CONFLICT (id) DO NOTHING;
+  `);
+
+  await db.query(`
+    INSERT INTO public.messages (id, conversation_id, tenant_id, sender_type, sender_name, content, created_at)
+    VALUES 
+      ('msg-b1', 'conv-beta-1', 'agency-beta', 'contact', 'Omar', 'Secret Beta Inbound Message 1', '2026-08-16 09:00:00+00'),
+      ('msg-b2', 'conv-beta-1', 'agency-beta', 'agent', 'Agent Beta', 'Secret Beta Reply 2', '2026-08-16 09:05:00+00')
+    ON CONFLICT (id) DO NOTHING;
+  `);
+
+  // Agency Alpha context attempting to query conv-beta-1 with tenant_id = 'agency-alpha'
+  const crossTenantMsgRes = await db.query(
+    `SELECT id, sender_type, sender_name, content, created_at
+     FROM public.messages
+     WHERE conversation_id = $1 AND tenant_id = $2
+     ORDER BY created_at DESC, id DESC
+     LIMIT 5;`,
+    ['conv-beta-1', 'agency-alpha']
+  );
+
+  if (crossTenantMsgRes.rows.length !== 0) {
+    throw new Error(`TEST 6 FAILED: Agency Alpha query returned foreign messages: ${JSON.stringify(crossTenantMsgRes.rows)}`);
+  }
+
+  // Agency Beta context querying conv-beta-1 with tenant_id = 'agency-beta'
+  const betaMsgRes = await db.query(
+    `SELECT id, sender_type, sender_name, content, created_at
+     FROM public.messages
+     WHERE conversation_id = $1 AND tenant_id = $2
+     ORDER BY created_at DESC, id DESC
+     LIMIT 5;`,
+    ['conv-beta-1', 'agency-beta']
+  );
+
+  if (betaMsgRes.rows.length !== 2 || betaMsgRes.rows[0].id !== 'msg-b2') {
+    throw new Error(`TEST 6 FAILED: Expected 2 messages with msg-b2 first (DESC), got: ${JSON.stringify(betaMsgRes.rows)}`);
+  }
+  console.log('✓ TEST 6 PASS: Real PostgreSQL message queries enforce tenant predicates and deterministic DESC ordering.');
+
   await db.end();
   console.log('\n======================================================================');
-  console.log('ALL 5/5 REAL LOCAL POSTGRESQL ATTENTION TESTS PASSED');
+  console.log('ALL 6/6 REAL LOCAL POSTGRESQL ATTENTION & TRUST-BOUNDARY TESTS PASSED');
   console.log('======================================================================\n');
 }
 
