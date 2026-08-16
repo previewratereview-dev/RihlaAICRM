@@ -13,6 +13,8 @@ import {
   buildShareUrl,
   issueItineraryShare,
   issueQuoteShare,
+  resolveItineraryShareToken,
+  resolveQuoteShareToken,
 } from '../lib/quotes-itineraries/sharing';
 import type { CustomerItineraryDTO, CustomerQuoteDTO } from '../lib/quotes-itineraries/types';
 
@@ -66,6 +68,82 @@ describe('Phase AI-5B.3: Sharing Service & Customer DTO Leakage Protection', () 
       expect(token).not.toBe(hash);
       expect(token.length).toBe(43);
       expect(hash.length).toBe(64);
+    });
+
+    it('proves exactly one SHA-256 operation between raw token and DB query parameter', async () => {
+      const rawToken = generateShareToken();
+      expect(rawToken).toHaveLength(43);
+
+      const expectedHash = hashShareToken(rawToken);
+      expect(expectedHash).toHaveLength(64);
+      expect(expectedHash).toMatch(/^[a-f0-9]{64}$/);
+
+      const doubleHash = hashShareToken(expectedHash);
+      expect(doubleHash).not.toBe(expectedHash);
+
+      let queriedParam = '';
+      const mockQuery = async (_sql: string, params: unknown[]) => {
+        queriedParam = String(params[0]);
+        return {
+          rows: [
+            {
+              result: {
+                share_id: 'mock-share',
+                version_id: 'mock-ver',
+                agency_name: 'Mock Agency',
+                expires_at: new Date().toISOString(),
+                title: 'Mock Title',
+                days: [],
+                inclusions: [],
+                exclusions: [],
+              },
+            },
+          ],
+        };
+      };
+
+      await resolveItineraryShareToken({ query: mockQuery }, rawToken);
+
+      // Verify the single expectedHash was passed, NOT the doubleHash
+      expect(queriedParam).toBe(expectedHash);
+      expect(queriedParam).not.toBe(doubleHash);
+      expect(queriedParam).not.toBe(rawToken);
+
+      // Also test quote resolution
+      let quoteQueriedParam = '';
+      const quoteMockQuery = async (_sql: string, params: unknown[]) => {
+        quoteQueriedParam = String(params[0]);
+        return {
+          rows: [
+            {
+              result: {
+                share_id: 'mock-share-q',
+                quote_version_id: 'mock-qv',
+                agency_name: 'Mock Agency',
+                expires_at: new Date().toISOString(),
+                quote_number: 'Q-001',
+                version_number: 1,
+                currency: 'USD',
+                line_items: [],
+                subtotal: '100.00',
+                discount_amount: '0.00',
+                tax_amount: '0.00',
+                grand_total: '100.00',
+                valid_until: null,
+                terms_and_conditions: null,
+                customer_notes: null,
+                is_acceptable: true,
+                itinerary: null,
+              },
+            },
+          ],
+        };
+      };
+
+      await resolveQuoteShareToken({ query: quoteMockQuery }, rawToken);
+      expect(quoteQueriedParam).toBe(expectedHash);
+      expect(quoteQueriedParam).not.toBe(doubleHash);
+      expect(quoteQueriedParam).not.toBe(rawToken);
     });
   });
 

@@ -490,3 +490,165 @@ export async function resolveQuoteShareToken(
     quote,
   };
 }
+
+// ============================================================================
+// 5. PUBLIC IN-MEMORY RATE LIMITER (BEST-EFFORT PER-PROCESS DEFENSE-IN-DEPTH)
+// ============================================================================
+
+const publicRateLimitMap = new Map<string, { count: number; resetAt: number }>();
+const PUBLIC_RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
+const PUBLIC_RATE_LIMIT_MAX = 60; // 60 requests per minute per IP
+
+/**
+ * Checks if a given client IP has exceeded the public capability resolution rate limit.
+ * Best-effort per-process defense-in-depth limiter.
+ */
+export function checkPublicRateLimit(ip: string): { limited: boolean; retryAfter?: number } {
+  const now = Date.now();
+  const entry = publicRateLimitMap.get(ip);
+
+  if (!entry || now >= entry.resetAt) {
+    publicRateLimitMap.set(ip, { count: 1, resetAt: now + PUBLIC_RATE_LIMIT_WINDOW_MS });
+    return { limited: false };
+  }
+
+  entry.count++;
+  if (entry.count > PUBLIC_RATE_LIMIT_MAX) {
+    const retryAfter = Math.ceil((entry.resetAt - now) / 1000);
+    return { limited: true, retryAfter };
+  }
+
+  return { limited: false };
+}
+
+/**
+ * Resets the in-memory public rate limiter map (for testing).
+ */
+export function resetPublicRateLimit(): void {
+  publicRateLimitMap.clear();
+}
+
+/**
+ * Single, unified server-side entry point for resolving an Itinerary capability token.
+ * Used by BOTH HTML Server Component (/p/itinerary/[token]) and API route (/api/p/itinerary/[token]).
+ *
+ * Enforces:
+ * 1. Rate limiting (fail fast before any DB hit)
+ * 2. Token format validation (^[A-Za-z0-9_-]{43}$, fail fast, zero DB lookups)
+ * 3. Single SHA-256 hash
+ * 4. Privileged DB resolution (via service-role connection)
+ * 5. Customer-safe DTO stripping
+ */
+export async function resolvePublicItineraryCapability(
+  rawToken: string,
+  clientIp: string
+): Promise<{
+  data: ResolvedItineraryShare | null;
+  status: 'ok' | 'rate_limited' | 'not_found' | 'error';
+  retryAfter?: number;
+}> {
+  // 1. Rate limiting
+  const limit = checkPublicRateLimit(clientIp);
+  if (limit.limited) {
+    return { data: null, status: 'rate_limited', retryAfter: limit.retryAfter };
+  }
+
+  // 2. Pre-DB Token format validation
+  if (!isValidShareTokenFormat(rawToken)) {
+    return { data: null, status: 'not_found' };
+  }
+
+  // 3. Database connection & single SHA-256 resolution
+  const connectionString = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL;
+  if (!connectionString) {
+    return { data: null, status: 'error' };
+  }
+
+  const { Client } = await import('pg');
+  let client: InstanceType<typeof Client> | null = null;
+  try {
+    client = new Client({ connectionString });
+    await client.connect();
+
+    const data = await resolveItineraryShareToken(
+      {
+        query: async (sql, params) => {
+          const res = await client!.query(sql, params as unknown[]);
+          return { rows: res.rows };
+        },
+      },
+      rawToken
+    );
+
+    return { data, status: 'ok' };
+  } catch {
+    return { data: null, status: 'not_found' };
+  } finally {
+    if (client) {
+      try {
+        await client.end();
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+}
+
+/**
+ * Single, unified server-side entry point for resolving a Quote capability token.
+ * Used by BOTH HTML Server Component (/p/quote/[token]) and API route (/api/p/quote/[token]).
+ */
+export async function resolvePublicQuoteCapability(
+  rawToken: string,
+  clientIp: string
+): Promise<{
+  data: ResolvedQuoteShare | null;
+  status: 'ok' | 'rate_limited' | 'not_found' | 'error';
+  retryAfter?: number;
+}> {
+  // 1. Rate limiting
+  const limit = checkPublicRateLimit(clientIp);
+  if (limit.limited) {
+    return { data: null, status: 'rate_limited', retryAfter: limit.retryAfter };
+  }
+
+  // 2. Pre-DB Token format validation
+  if (!isValidShareTokenFormat(rawToken)) {
+    return { data: null, status: 'not_found' };
+  }
+
+  // 3. Database connection & single SHA-256 resolution
+  const connectionString = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL;
+  if (!connectionString) {
+    return { data: null, status: 'error' };
+  }
+
+  const { Client } = await import('pg');
+  let client: InstanceType<typeof Client> | null = null;
+  try {
+    client = new Client({ connectionString });
+    await client.connect();
+
+    const data = await resolveQuoteShareToken(
+      {
+        query: async (sql, params) => {
+          const res = await client!.query(sql, params as unknown[]);
+          return { rows: res.rows };
+        },
+      },
+      rawToken
+    );
+
+    return { data, status: 'ok' };
+  } catch {
+    return { data: null, status: 'not_found' };
+  } finally {
+    if (client) {
+      try {
+        await client.end();
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+}

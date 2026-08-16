@@ -21,8 +21,11 @@ describe('Migration 018 Local PostgreSQL Secure Sharing Tests', () => {
 
   const adminUserId = randomUUID();
   const consultantUserId = randomUUID();
+  const specialistUserId = randomUUID();
   const viewerUserId = randomUUID();
+  const superAdminUserId = randomUUID();
   const tenantBUserId = randomUUID();
+  const specialistTenantBUserId = randomUUID();
   const travelerId = randomUUID();
   const inquiryId = randomUUID();
 
@@ -207,8 +210,11 @@ describe('Migration 018 Local PostgreSQL Secure Sharing Tests', () => {
         VALUES
           ('${adminUserId}', '${testTenantA}', 'admin', 'Agency Admin', 'admin@agency-a.com'),
           ('${consultantUserId}', '${testTenantA}', 'consultant', 'Agency Consultant', 'consultant@agency-a.com'),
+          ('${specialistUserId}', '${testTenantA}', 'specialist', 'Agency Specialist', 'specialist@agency-a.com'),
           ('${viewerUserId}', '${testTenantA}', 'viewer', 'Agency Viewer', 'viewer@agency-a.com'),
-          ('${tenantBUserId}', '${testTenantB}', 'admin', 'Agency B Admin', 'admin@agency-b.com')
+          ('${superAdminUserId}', 'global', 'super_admin', 'Platform Super Admin', 'sa@platform.com'),
+          ('${tenantBUserId}', '${testTenantB}', 'admin', 'Agency B Admin', 'admin@agency-b.com'),
+          ('${specialistTenantBUserId}', '${testTenantB}', 'specialist', 'Agency B Specialist', 'specialist@agency-b.com')
         ON CONFLICT (id) DO NOTHING;
 
         INSERT INTO public.traveler_profiles (id, tenant_id, display_name, email)
@@ -815,6 +821,142 @@ describe('Migration 018 Local PostgreSQL Secure Sharing Tests', () => {
       } finally {
         await client.query('ROLLBACK');
       }
+    });
+  });
+
+  // =========================================================================
+  // SPECIALIST & ROLE BOUNDARY AUTHORIZATION TESTS
+  // =========================================================================
+  describe('Specialist & Role Boundary Share Issuance Authorization', () => {
+    it('valid Specialist in same tenant successfully issues Itinerary share', async () => {
+      const tokenHash = makeTokenHash();
+      const res = await client.query(
+        `SELECT public.rpc_create_itinerary_share($1, $2, $3, $4, $5::timestamptz) as result`,
+        [testTenantA, specialistUserId, itineraryVersionId, tokenHash, futureTimestamp()]
+      );
+      expect(res.rows[0].result.share_id).toBeDefined();
+      expect(res.rows[0].result.itinerary_version_id).toBe(itineraryVersionId);
+    });
+
+    it('valid Specialist in same tenant successfully issues Quote share', async () => {
+      const tokenHash = makeTokenHash();
+      const res = await client.query(
+        `SELECT public.rpc_create_quote_share($1, $2, $3, $4, $5::timestamptz) as result`,
+        [testTenantA, specialistUserId, quoteVersionId, tokenHash, futureTimestamp()]
+      );
+      expect(res.rows[0].result.share_id).toBeDefined();
+      expect(res.rows[0].result.quote_version_id).toBe(quoteVersionId);
+    });
+
+    it('Viewer actor attempting share issuance is rejected with FORBIDDEN', async () => {
+      await expect(
+        client.query(
+          `SELECT public.rpc_create_itinerary_share($1, $2, $3, $4, $5::timestamptz) as result`,
+          [testTenantA, viewerUserId, itineraryVersionId, makeTokenHash(), futureTimestamp()]
+        )
+      ).rejects.toThrow(/FORBIDDEN/);
+
+      await expect(
+        client.query(
+          `SELECT public.rpc_create_quote_share($1, $2, $3, $4, $5::timestamptz) as result`,
+          [testTenantA, viewerUserId, quoteVersionId, makeTokenHash(), futureTimestamp()]
+        )
+      ).rejects.toThrow(/FORBIDDEN/);
+    });
+
+    it('Super Admin actor attempting operational share issuance is rejected with FORBIDDEN', async () => {
+      await expect(
+        client.query(
+          `SELECT public.rpc_create_itinerary_share($1, $2, $3, $4, $5::timestamptz) as result`,
+          [testTenantA, superAdminUserId, itineraryVersionId, makeTokenHash(), futureTimestamp()]
+        )
+      ).rejects.toThrow(/FORBIDDEN/);
+
+      await expect(
+        client.query(
+          `SELECT public.rpc_create_quote_share($1, $2, $3, $4, $5::timestamptz) as result`,
+          [testTenantA, superAdminUserId, quoteVersionId, makeTokenHash(), futureTimestamp()]
+        )
+      ).rejects.toThrow(/FORBIDDEN/);
+    });
+
+    it('Cross-tenant Specialist attempting share issuance is rejected with CROSS_TENANT_VIOLATION', async () => {
+      await expect(
+        client.query(
+          `SELECT public.rpc_create_itinerary_share($1, $2, $3, $4, $5::timestamptz) as result`,
+          [testTenantA, specialistTenantBUserId, itineraryVersionId, makeTokenHash(), futureTimestamp()]
+        )
+      ).rejects.toThrow(/CROSS_TENANT_VIOLATION/);
+
+      await expect(
+        client.query(
+          `SELECT public.rpc_create_quote_share($1, $2, $3, $4, $5::timestamptz) as result`,
+          [testTenantA, specialistTenantBUserId, quoteVersionId, makeTokenHash(), futureTimestamp()]
+        )
+      ).rejects.toThrow(/CROSS_TENANT_VIOLATION/);
+    });
+  });
+
+  // =========================================================================
+  // DETERMINISTIC SINGLE-HASH VS DOUBLE-HASH PROOFS
+  // =========================================================================
+  describe('Exact Token Hashing & Double-Hash Rejection Proofs', () => {
+    it('proves database resolver expects exact SHA-256 hash and rejects double-hashed token', async () => {
+      const rawToken = randomBytes(32).toString('base64url');
+      expect(rawToken).toHaveLength(43);
+
+      const expectedHash = createHash('sha256').update(rawToken, 'utf8').digest('hex');
+      expect(expectedHash).toHaveLength(64);
+      expect(expectedHash).toMatch(/^[a-f0-9]{64}$/);
+
+      const doubleHash = createHash('sha256').update(expectedHash, 'utf8').digest('hex');
+      expect(doubleHash).not.toBe(expectedHash);
+
+      // 1. Store share with single expectedHash
+      const shareRes = await client.query(
+        `SELECT public.rpc_create_itinerary_share($1, $2, $3, $4, $5::timestamptz) as result`,
+        [testTenantA, adminUserId, itineraryVersionId, expectedHash, futureTimestamp()]
+      );
+      expect(shareRes.rows[0].result.share_id).toBeDefined();
+
+      // 2. Lookup using exact expectedHash MUST SUCCEED
+      const resolveRes = await client.query(
+        `SELECT public.resolve_itinerary_share_token($1) as result`,
+        [expectedHash]
+      );
+      expect(resolveRes.rows[0].result.title).toBe('Dubai Desert Safari');
+      expect(resolveRes.rows[0].result.version_id).toBe(itineraryVersionId);
+
+      // 3. Lookup using doubleHash MUST FAIL (throws INVALID_TOKEN / Share not found)
+      await expect(
+        client.query(
+          `SELECT public.resolve_itinerary_share_token($1) as result`,
+          [doubleHash]
+        )
+      ).rejects.toThrow(/INVALID_TOKEN/);
+
+      // 4. Also prove Quote resolver behaves identically
+      const quoteToken = randomBytes(32).toString('base64url');
+      const quoteExpectedHash = createHash('sha256').update(quoteToken, 'utf8').digest('hex');
+      const quoteDoubleHash = createHash('sha256').update(quoteExpectedHash, 'utf8').digest('hex');
+
+      await client.query(
+        `SELECT public.rpc_create_quote_share($1, $2, $3, $4, $5::timestamptz) as result`,
+        [testTenantA, adminUserId, quoteVersionId, quoteExpectedHash, futureTimestamp()]
+      );
+
+      const quoteResolveRes = await client.query(
+        `SELECT public.resolve_quote_share_token($1) as result`,
+        [quoteExpectedHash]
+      );
+      expect(quoteResolveRes.rows[0].result.grand_total).toBeDefined();
+
+      await expect(
+        client.query(
+          `SELECT public.resolve_quote_share_token($1) as result`,
+          [quoteDoubleHash]
+        )
+      ).rejects.toThrow(/INVALID_TOKEN/);
     });
   });
 });

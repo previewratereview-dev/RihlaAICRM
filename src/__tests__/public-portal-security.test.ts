@@ -3,6 +3,11 @@ import {
   SHARE_TOKEN_REGEX,
   isValidShareTokenFormat,
   generateShareToken,
+  hashShareToken,
+  checkPublicRateLimit,
+  resetPublicRateLimit,
+  resolvePublicItineraryCapability,
+  resolvePublicQuoteCapability,
 } from '../lib/quotes-itineraries/sharing';
 
 /**
@@ -162,6 +167,14 @@ describe('Phase AI-5B.3: Public Portal Route Security', () => {
     it('rejects path traversal attempt without reaching database', () => {
       expect(isValidShareTokenFormat('../../../etc/passwd' + 'a'.repeat(24))).toBe(false);
     });
+
+    it('hashShareToken converts 43-char raw token to 64-char hex digest', () => {
+      const rawToken = generateShareToken();
+      expect(isValidShareTokenFormat(rawToken)).toBe(true);
+      const hash = hashShareToken(rawToken);
+      expect(hash).toHaveLength(64);
+      expect(hash).toMatch(/^[a-f0-9]{64}$/);
+    });
   });
 
   // ==========================================================================
@@ -201,50 +214,64 @@ describe('Phase AI-5B.3: Public Portal Route Security', () => {
   });
 
   // ==========================================================================
-  // RATE LIMITING
+  // RATE LIMITING (BEST-EFFORT PER-PROCESS DEFENSE-IN-DEPTH)
   // ==========================================================================
-  describe('Rate Limiting Logic', () => {
-    const RATE_LIMIT_WINDOW_MS = 60_000;
-    const RATE_LIMIT_MAX = 30;
+  describe('Public Shared Rate Limiting Logic', () => {
+    it('allows up to 60 requests per window and rejects 61st request with retryAfter', () => {
+      resetPublicRateLimit();
+      const testIp = '192.168.1.100';
 
-    function createRateLimiter() {
-      const map = new Map<string, { count: number; resetAt: number }>();
-      return {
-        isRateLimited(ip: string): boolean {
-          const now = Date.now();
-          const entry = map.get(ip);
-          if (!entry || now >= entry.resetAt) {
-            map.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
-            return false;
-          }
-          entry.count++;
-          return entry.count > RATE_LIMIT_MAX;
-        },
-      };
-    }
-
-    it('allows up to RATE_LIMIT_MAX requests per window', () => {
-      const limiter = createRateLimiter();
-      for (let i = 0; i < RATE_LIMIT_MAX; i++) {
-        expect(limiter.isRateLimited('1.2.3.4')).toBe(false);
+      for (let i = 0; i < 60; i++) {
+        const res = checkPublicRateLimit(testIp);
+        expect(res.limited).toBe(false);
       }
+
+      const blockedRes = checkPublicRateLimit(testIp);
+      expect(blockedRes.limited).toBe(true);
+      expect(blockedRes.retryAfter).toBeGreaterThan(0);
     });
 
-    it('rejects request exceeding limit', () => {
-      const limiter = createRateLimiter();
-      for (let i = 0; i < RATE_LIMIT_MAX; i++) {
-        limiter.isRateLimited('1.2.3.4');
+    it('rate limiting is isolated per IP address', () => {
+      resetPublicRateLimit();
+      const ipA = '10.0.0.1';
+      const ipB = '10.0.0.2';
+
+      for (let i = 0; i < 65; i++) {
+        checkPublicRateLimit(ipA);
       }
-      expect(limiter.isRateLimited('1.2.3.4')).toBe(true);
+
+      expect(checkPublicRateLimit(ipA).limited).toBe(true);
+      expect(checkPublicRateLimit(ipB).limited).toBe(false);
     });
 
-    it('does not cross-pollute between IPs', () => {
-      const limiter = createRateLimiter();
-      for (let i = 0; i < RATE_LIMIT_MAX + 5; i++) {
-        limiter.isRateLimited('1.2.3.4');
+    it('resolvePublicItineraryCapability enforces rate limiting across HTML page and API callers', async () => {
+      resetPublicRateLimit();
+      const testIp = '10.0.0.50';
+      const validDummyToken = generateShareToken();
+
+      for (let i = 0; i < 60; i++) {
+        checkPublicRateLimit(testIp);
       }
-      // Different IP should still be allowed
-      expect(limiter.isRateLimited('5.6.7.8')).toBe(false);
+
+      const res = await resolvePublicItineraryCapability(validDummyToken, testIp);
+      expect(res.status).toBe('rate_limited');
+      expect(res.data).toBeNull();
+      expect(res.retryAfter).toBeDefined();
+    });
+
+    it('resolvePublicQuoteCapability enforces rate limiting across HTML page and API callers', async () => {
+      resetPublicRateLimit();
+      const testIp = '10.0.0.60';
+      const validDummyToken = generateShareToken();
+
+      for (let i = 0; i < 60; i++) {
+        checkPublicRateLimit(testIp);
+      }
+
+      const res = await resolvePublicQuoteCapability(validDummyToken, testIp);
+      expect(res.status).toBe('rate_limited');
+      expect(res.data).toBeNull();
+      expect(res.retryAfter).toBeDefined();
     });
   });
 

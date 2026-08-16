@@ -13,13 +13,10 @@
 
 import { Metadata } from 'next';
 import { notFound } from 'next/navigation';
-import { Client } from 'pg';
+import { headers } from 'next/headers';
 import {
-  hashShareToken,
-  shapeCustomerQuoteDTO,
-  SHARE_TOKEN_REGEX,
+  resolvePublicQuoteCapability,
 } from '@/lib/quotes-itineraries/sharing';
-import type { CustomerQuoteDTO } from '@/lib/quotes-itineraries/types';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -36,69 +33,32 @@ export async function generateMetadata(): Promise<Metadata> {
   };
 }
 
-async function resolveQuote(token: string): Promise<{
-  quote: CustomerQuoteDTO;
-  agencyName: string;
-  expiresAt: string;
-} | null> {
-  if (!token || !SHARE_TOKEN_REGEX.test(token)) return null;
-
-  const connectionString = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL;
-  if (!connectionString) return null;
-
-  let client: Client | null = null;
-  try {
-    client = new Client({ connectionString });
-    await client.connect();
-
-    const tokenHash = hashShareToken(token);
-    const result = await client.query(
-      `SELECT public.resolve_quote_share_token($1) as result`,
-      [tokenHash]
-    );
-
-    const data = result.rows[0]?.result;
-    if (!data) return null;
-
-    const quote = shapeCustomerQuoteDTO({
-      quote_number: data.quote_number,
-      version_number: data.version_number,
-      currency: data.currency,
-      line_items: data.line_items,
-      subtotal: data.subtotal,
-      discount_amount: data.discount_amount,
-      tax_amount: data.tax_amount,
-      grand_total: data.grand_total,
-      valid_until: data.valid_until,
-      terms_and_conditions: data.terms_and_conditions,
-      customer_notes: data.customer_notes,
-      is_acceptable: data.is_acceptable,
-      itinerary: data.itinerary,
-    });
-
-    return {
-      quote,
-      agencyName: data.agency_name,
-      expiresAt: data.expires_at,
-    };
-  } catch {
-    return null;
-  } finally {
-    if (client) {
-      try { await client.end(); } catch { /* ignore */ }
-    }
-  }
-}
-
 export default async function PublicQuotePage({ params }: PageProps) {
   const { token } = await params;
-  const resolved = await resolveQuote(token);
+  const headerList = await headers();
+  const clientIp =
+    headerList.get('x-forwarded-for')?.split(',')[0]?.trim() ||
+    headerList.get('x-real-ip') ||
+    '127.0.0.1';
 
-  if (!resolved) {
+  const result = await resolvePublicQuoteCapability(token, clientIp);
+
+  if (result.status === 'rate_limited') {
+    return (
+      <main style={{ maxWidth: '600px', margin: '4rem auto', padding: '2rem', textAlign: 'center', fontFamily: 'system-ui, sans-serif' }}>
+        <h1 style={{ fontSize: '1.5rem', fontWeight: 600, color: '#e53e3e' }}>Too Many Requests</h1>
+        <p style={{ marginTop: '1rem', color: '#4a5568' }}>
+          You have exceeded the rate limit. Please wait {result.retryAfter ?? 60} seconds before trying again.
+        </p>
+      </main>
+    );
+  }
+
+  if (result.status !== 'ok' || !result.data) {
     notFound();
   }
 
-  const { quote, agencyName } = resolved;
+  const { quote, agencyName } = result.data;
 
   return (
     <main

@@ -12,13 +12,10 @@
 
 import { Metadata } from 'next';
 import { notFound } from 'next/navigation';
-import { Client } from 'pg';
+import { headers } from 'next/headers';
 import {
-  hashShareToken,
-  shapeCustomerItineraryDTO,
-  SHARE_TOKEN_REGEX,
+  resolvePublicItineraryCapability,
 } from '@/lib/quotes-itineraries/sharing';
-import type { CustomerItineraryDTO } from '@/lib/quotes-itineraries/types';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -35,65 +32,32 @@ export async function generateMetadata(): Promise<Metadata> {
   };
 }
 
-async function resolveItinerary(token: string): Promise<{
-  itinerary: CustomerItineraryDTO;
-  agencyName: string;
-  expiresAt: string;
-} | null> {
-  if (!token || !SHARE_TOKEN_REGEX.test(token)) return null;
-
-  const connectionString = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL;
-  if (!connectionString) return null;
-
-  let client: Client | null = null;
-  try {
-    client = new Client({ connectionString });
-    await client.connect();
-
-    const tokenHash = hashShareToken(token);
-    const result = await client.query(
-      `SELECT public.resolve_itinerary_share_token($1) as result`,
-      [tokenHash]
-    );
-
-    const data = result.rows[0]?.result;
-    if (!data) return null;
-
-    const itinerary = shapeCustomerItineraryDTO({
-      title: data.title,
-      destination_summary: data.destination_summary,
-      start_date: data.start_date,
-      end_date: data.end_date,
-      duration_days: data.duration_days,
-      passenger_count: data.passenger_count,
-      days: data.days,
-      inclusions: data.inclusions,
-      exclusions: data.exclusions,
-    });
-
-    return {
-      itinerary,
-      agencyName: data.agency_name,
-      expiresAt: data.expires_at,
-    };
-  } catch {
-    return null;
-  } finally {
-    if (client) {
-      try { await client.end(); } catch { /* ignore */ }
-    }
-  }
-}
-
 export default async function PublicItineraryPage({ params }: PageProps) {
   const { token } = await params;
-  const resolved = await resolveItinerary(token);
+  const headerList = await headers();
+  const clientIp =
+    headerList.get('x-forwarded-for')?.split(',')[0]?.trim() ||
+    headerList.get('x-real-ip') ||
+    '127.0.0.1';
 
-  if (!resolved) {
+  const result = await resolvePublicItineraryCapability(token, clientIp);
+
+  if (result.status === 'rate_limited') {
+    return (
+      <main style={{ maxWidth: '600px', margin: '4rem auto', padding: '2rem', textAlign: 'center', fontFamily: 'system-ui, sans-serif' }}>
+        <h1 style={{ fontSize: '1.5rem', fontWeight: 600, color: '#e53e3e' }}>Too Many Requests</h1>
+        <p style={{ marginTop: '1rem', color: '#4a5568' }}>
+          You have exceeded the rate limit. Please wait {result.retryAfter ?? 60} seconds before trying again.
+        </p>
+      </main>
+    );
+  }
+
+  if (result.status !== 'ok' || !result.data) {
     notFound();
   }
 
-  const { itinerary, agencyName } = resolved;
+  const { itinerary, agencyName } = result.data;
 
   return (
     <main
