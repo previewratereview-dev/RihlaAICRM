@@ -4,14 +4,17 @@
  * Verifies:
  * 1. Price Authority: Strict separation between AI estimate/suggestion and authoritative pricing.
  * 2. State A Unreachability: Structured catalog is unavailable in current product (knowledge_documents is RAG text).
- * 3. Direct Adapter Forgery Resistance: Directly calling adaptAIQuoteSuggestionsToPricingInput with forged
+ * 3. Direct Adapter Forgery Resistance: Calling adaptAIQuoteSuggestionsToPricingInput with forged
  *    authoritative_catalog and authoritativeUnitPrice yields draft unitPrice='0.00'.
  * 4. Knowledge Documents Grounding Only: Valid RAG knowledge_documents rows prove provenance only, not rate authority.
  * 5. RBAC & Internal Pricing Authorization: Strict role gating for proposal generation and internal pricing.
- * 6. Internal Provider Call Count: Unauthorized roles receive exactly 1 call (customer only, 0 internal calls).
- *    Authorized roles receive 2 calls (customer + internal).
- * 7. Customer Context Sentinels: Customer prompt contains ZERO secret supplier costs, margins, markups, or notes.
- * 8. Factual & Numeric Claim Bounding: Model-hallucinated numbers or percentages are bounded and rejected.
+ * 6. Provider Call Counts for Quote Difference Explanation:
+ *    - Consultant / Specialist / Viewer: Exactly 0 customer calls, 0 internal calls (Total: 0).
+ *    - Admin / Manager: Exactly 0 customer calls, 1 internal call (Total: 1).
+ * 7. Customer Explanation Deterministic Factuality:
+ *    - Pure deterministic rendering from customer-safe Quote diff.
+ *    - Causal hallucination is architecturally impossible (provider never invoked for customer prose).
+ * 8. Customer Context Sentinels: Customer output contains ZERO secret supplier costs, margins, markups, or notes.
  * 9. Proposal Staging & Immutability: Apply stages into draft with unitPrice='0.00', issued quotes spawn vN+1.
  * 10. Human Confirmation: Staff clicking 'Use Suggested Price' is an explicit human action, not automated authority.
  * 11. Zero Privileged AI Persistence: All QuoteVersion writes strictly flow through existing B2 actions.
@@ -35,7 +38,6 @@ import {
 } from '@/lib/ai/proposal/adapter';
 import {
   AIQuoteLineItemProposalSchema,
-  AIQuoteDifferenceExplanationSchema,
   type AIQuoteLineItemSuggestion,
 } from '@/lib/ai/proposal/contracts';
 import { calculateQuotePricing } from '@/lib/quotes-itineraries/pricing';
@@ -328,9 +330,9 @@ describe('Phase AI-5C.3: Grounded Quote Copilot & Deterministic Commercial Expla
   });
 
   // ==========================================================================
-  // 3. TWO-CONTEXT EXPLANATION SEPARATION & SENTINEL LEAKAGE
+  // 3. DETERMINISTIC CUSTOMER EXPLANATION & PROVIDER CALL COUNTS
   // ==========================================================================
-  describe('3. Two-Context Explanation Separation & Provider Call Counts', () => {
+  describe('3. Deterministic Customer Explanation & Provider Call Counts', () => {
     const SECRET_SUPPLIER_COST = '9999.88';
     const SECRET_MARGIN = '8888.77';
     const SECRET_MARKUP = '7777.66';
@@ -344,6 +346,8 @@ describe('Phase AI-5C.3: Grounded Quote Copilot & Deterministic Commercial Expla
       version_number: 1,
       currency: 'USD',
       itinerary_version_id: 'itin-v1',
+      valid_until: '2026-10-31',
+      terms_and_conditions: 'Deposit of 30% required',
       subtotal: '5000.00',
       discount_amount: '0.00',
       tax_amount: '500.00',
@@ -368,11 +372,25 @@ describe('Phase AI-5C.3: Grounded Quote Copilot & Deterministic Commercial Expla
       ...v1Row,
       id: 'qv-v2',
       version_number: 2,
+      valid_until: '2026-11-15',
+      terms_and_conditions: 'Deposit of 50% required upon confirmation',
       subtotal: '6000.00',
       grand_total: '6600.00',
+      line_items: [
+        {
+          id: 'item-1',
+          title: 'Luxury Villa',
+          category: 'accommodation',
+          quantity: 1,
+          unitPrice: '6000.00',
+          totalPrice: '6000.00',
+          supplierCost: '10500.00',
+          supplierName: SECRET_SUPPLIER_NAME,
+        },
+      ],
     };
 
-    it('consultant (unauthorized for internal pricing) makes EXACTLY 1 customer model call and ZERO internal model calls', async () => {
+    it('consultant/specialist/viewer: customer provider calls = 0, internal provider calls = 0, total calls = 0', async () => {
       mockStaffContext = { userId: 'user-consultant-1', tenantId: 'tenant-agency-a', role: 'consultant' };
 
       mockPgQuery.mockImplementation(async (sql: string) => {
@@ -380,13 +398,6 @@ describe('Phase AI-5C.3: Grounded Quote Copilot & Deterministic Commercial Expla
           return { rows: [v1Row, v2Row] };
         }
         return { rows: [] };
-      });
-
-      mockAIResponseText = JSON.stringify({
-        executiveSummary: 'Added extra day and upgraded room tier',
-        keyPriceDrivers: ['Upgraded accommodation tier'],
-        scopeChanges: ['Room upgrade'],
-        clientFacingExplanation: 'Your revised quote includes the upgraded suite.',
       });
 
       const res = await generateQuoteDiffExplanationAction({
@@ -398,22 +409,27 @@ describe('Phase AI-5C.3: Grounded Quote Copilot & Deterministic Commercial Expla
       expect(res.success).toBe(true);
       expect(res.explanation).toBeDefined();
 
-      // Consultant provider call count MUST be exactly 1 (customer call only, 0 internal calls)
-      expect(providerCallCount).toBe(1);
+      // Customer provider call count is STRICTLY ZERO. Total calls = 0.
+      expect(providerCallCount).toBe(0);
       expect(res.explanation!.internalStaffNotes).toBeNull();
 
-      // Assert customer prompt contained ZERO internal secret sentinels
-      const customerPrompt = capturedPrompts[0];
-      expect(customerPrompt).not.toContain(SECRET_SUPPLIER_COST);
-      expect(customerPrompt).not.toContain(SECRET_MARGIN);
-      expect(customerPrompt).not.toContain(SECRET_MARKUP);
-      expect(customerPrompt).not.toContain(SECRET_INTERNAL_NOTE);
-      expect(customerPrompt).not.toContain(SECRET_SUPPLIER_NAME);
-      expect(customerPrompt).not.toContain('v1SupplierCost');
-      expect(customerPrompt).not.toContain('v1InternalCostTotal');
+      // Explanation is derived purely from deterministic diff
+      expect(res.explanation!.clientFacingExplanation).toContain('QT-2026-0001');
+      expect(res.explanation!.clientFacingExplanation).toContain('5500.00');
+      expect(res.explanation!.clientFacingExplanation).toContain('6600.00');
+      expect(res.explanation!.clientFacingExplanation).toContain('1100.00');
+      expect(res.explanation!.clientFacingExplanation).toContain('2026-11-15');
+      expect(res.explanation!.clientFacingExplanation).toContain('Payment terms and conditions updated');
+
+      // Assert customer explanation contains ZERO internal secret sentinels
+      expect(res.explanation!.clientFacingExplanation).not.toContain(SECRET_SUPPLIER_COST);
+      expect(res.explanation!.clientFacingExplanation).not.toContain(SECRET_MARGIN);
+      expect(res.explanation!.clientFacingExplanation).not.toContain(SECRET_MARKUP);
+      expect(res.explanation!.clientFacingExplanation).not.toContain(SECRET_INTERNAL_NOTE);
+      expect(res.explanation!.clientFacingExplanation).not.toContain(SECRET_SUPPLIER_NAME);
     });
 
-    it('admin (authorized for internal pricing) makes EXACTLY 2 provider calls (1 customer-safe + 1 internal analysis)', async () => {
+    it('admin/manager: customer provider calls = 0, internal provider calls = 1, total calls = 1', async () => {
       mockStaffContext = { userId: 'user-admin-1', tenantId: 'tenant-agency-a', role: 'admin' };
 
       mockPgQuery.mockImplementation(async (sql: string) => {
@@ -423,12 +439,7 @@ describe('Phase AI-5C.3: Grounded Quote Copilot & Deterministic Commercial Expla
         return { rows: [] };
       });
 
-      mockAIResponseText = JSON.stringify({
-        executiveSummary: 'Added extra day',
-        keyPriceDrivers: ['Extended stay'],
-        scopeChanges: ['1 extra night'],
-        clientFacingExplanation: 'Your revised quote includes the extra night.',
-      });
+      mockAIResponseText = 'Internal margin analysis: Supplier cost increased by 500.00 USD, margin increased by 500.00 USD.';
 
       const res = await generateQuoteDiffExplanationAction({
         quoteId: 'q-1',
@@ -437,253 +448,48 @@ describe('Phase AI-5C.3: Grounded Quote Copilot & Deterministic Commercial Expla
       });
 
       expect(res.success).toBe(true);
-      // Admin receives 2 calls: Pass 1 (customer-safe) + Pass 2 (internal analysis)
-      expect(providerCallCount).toBe(2);
+      // Exactly 1 provider call (for internal analysis only, 0 for customer explanation)
+      expect(providerCallCount).toBe(1);
       expect(res.explanation!.internalStaffNotes).toBeDefined();
+      expect(res.explanation!.internalStaffNotes).toContain('Internal margin analysis');
 
-      // Pass 1 prompt (customer-safe) MUST NOT contain secrets
-      const pass1CustomerPrompt = capturedPrompts[0];
-      expect(pass1CustomerPrompt).not.toContain(SECRET_SUPPLIER_COST);
-      expect(pass1CustomerPrompt).not.toContain(SECRET_MARGIN);
-      expect(pass1CustomerPrompt).not.toContain('v1SupplierCost');
+      // Customer explanation is still pure deterministic
+      expect(res.explanation!.clientFacingExplanation).toContain('5500.00');
+      expect(res.explanation!.clientFacingExplanation).toContain('6600.00');
+    });
+
+    it('causal-hallucination architectural impossibility test: mocked adversarial model output cannot affect customer copy', async () => {
+      mockStaffContext = { userId: 'user-admin-1', tenantId: 'tenant-agency-a', role: 'admin' };
+
+      mockPgQuery.mockImplementation(async (sql: string) => {
+        if (sql.includes('FROM public.quote_versions')) {
+          return { rows: [v1Row, v2Row] };
+        }
+        return { rows: [] };
+      });
+
+      // Adversarial mock provider returning unverified causal claims
+      mockAIResponseText = 'The price rose because room inventory tightened due to seasonal supplier peak demand.';
+
+      const res = await generateQuoteDiffExplanationAction({
+        quoteId: 'q-1',
+        v1VersionId: 'qv-v1',
+        v2VersionId: 'qv-v2',
+      });
+
+      expect(res.success).toBe(true);
+      // Customer explanation is completely unaffected by model hallucination
+      expect(res.explanation!.clientFacingExplanation).not.toContain('room inventory tightened');
+      expect(res.explanation!.clientFacingExplanation).not.toContain('seasonal supplier peak demand');
+      expect(res.explanation!.clientFacingExplanation).not.toContain('because');
+      expect(res.explanation!.clientFacingExplanation).not.toContain('due to');
     });
   });
 
   // ==========================================================================
-  // 4. FACTUAL, NUMERIC & CAUSAL CLAIM BOUNDING
+  // 4. PROPOSAL STAGING, HUMAN CONFIRMATION & ZERO PRIVILEGED AI PERSISTENCE
   // ==========================================================================
-  describe('4. Factual, Numeric & Causal Claim Protection', () => {
-    const v1Row = {
-      id: 'qv-1',
-      quote_id: 'q-1',
-      quote_number: 'QT-100',
-      version_number: 1,
-      currency: 'USD',
-      itinerary_version_id: 'itin-v1',
-      valid_until: '2026-11-01',
-      subtotal: '10000.00',
-      discount_amount: '0.00',
-      tax_amount: '0.00',
-      grand_total: '10000.00',
-      line_items: [{ id: 'i-1', title: 'Grand Hotel', category: 'accommodation', quantity: 1, unitPrice: '10000.00', totalPrice: '10000.00' }],
-    };
-
-    const v2Row = {
-      id: 'qv-2',
-      quote_id: 'q-1',
-      quote_number: 'QT-100',
-      version_number: 2,
-      currency: 'USD',
-      itinerary_version_id: 'itin-v1',
-      valid_until: '2026-11-15',
-      subtotal: '12000.00',
-      discount_amount: '0.00',
-      tax_amount: '0.00',
-      grand_total: '12000.00',
-      line_items: [{ id: 'i-1', title: 'Grand Hotel', category: 'accommodation', quantity: 1, unitPrice: '12000.00', totalPrice: '12000.00' }],
-    };
-
-    it('unsupported supplier-reason test: rejects causal claims claiming the supplier raised seasonal rates', async () => {
-      mockStaffContext = { userId: 'user-consultant-1', tenantId: 'tenant-agency-a', role: 'consultant' };
-
-      mockPgQuery.mockImplementation(async (sql: string) => {
-        if (sql.includes('FROM public.quote_versions')) return { rows: [v1Row, v2Row] };
-        return { rows: [] };
-      });
-
-      mockAIResponseText = JSON.stringify({
-        executiveSummary: 'Hotel rate increased',
-        keyPriceDrivers: ['Seasonal rates'],
-        scopeChanges: [],
-        clientFacingExplanation: 'The hotel price increased because the supplier raised seasonal rates.',
-      });
-
-      const res = await generateQuoteDiffExplanationAction({
-        quoteId: 'q-1',
-        v1VersionId: 'qv-1',
-        v2VersionId: 'qv-2',
-      });
-
-      expect(res.success).toBe(true);
-      expect(res.explanation!.clientFacingExplanation).not.toContain('because the supplier raised seasonal rates');
-      expect(res.explanation!.clientFacingExplanation).not.toContain('seasonal rates');
-      expect(res.explanation!.clientFacingExplanation).not.toContain('supplier raised');
-    });
-
-    it('unsupported availability-reason test: rejects causal claims regarding reduced availability', async () => {
-      mockStaffContext = { userId: 'user-consultant-1', tenantId: 'tenant-agency-a', role: 'consultant' };
-
-      mockPgQuery.mockImplementation(async (sql: string) => {
-        if (sql.includes('FROM public.quote_versions')) return { rows: [v1Row, v2Row] };
-        return { rows: [] };
-      });
-
-      mockAIResponseText = JSON.stringify({
-        executiveSummary: 'Pricing adjusted',
-        keyPriceDrivers: ['Availability change'],
-        scopeChanges: [],
-        clientFacingExplanation: 'Flight pricing changed due to reduced availability.',
-      });
-
-      const res = await generateQuoteDiffExplanationAction({
-        quoteId: 'q-1',
-        v1VersionId: 'qv-1',
-        v2VersionId: 'qv-2',
-      });
-
-      expect(res.success).toBe(true);
-      expect(res.explanation!.clientFacingExplanation).not.toContain('due to reduced availability');
-      expect(res.explanation!.clientFacingExplanation).not.toContain('availability');
-    });
-
-    it('unsupported demand-reason test: rejects causal claims claiming additional cost reflects peak-season demand', async () => {
-      mockStaffContext = { userId: 'user-consultant-1', tenantId: 'tenant-agency-a', role: 'consultant' };
-
-      mockPgQuery.mockImplementation(async (sql: string) => {
-        if (sql.includes('FROM public.quote_versions')) return { rows: [v1Row, v2Row] };
-        return { rows: [] };
-      });
-
-      mockAIResponseText = JSON.stringify({
-        executiveSummary: 'High season rate',
-        keyPriceDrivers: ['Demand'],
-        scopeChanges: [],
-        clientFacingExplanation: 'The additional cost reflects peak-season demand.',
-      });
-
-      const res = await generateQuoteDiffExplanationAction({
-        quoteId: 'q-1',
-        v1VersionId: 'qv-1',
-        v2VersionId: 'qv-2',
-      });
-
-      expect(res.success).toBe(true);
-      expect(res.explanation!.clientFacingExplanation).not.toContain('peak-season demand');
-      expect(res.explanation!.clientFacingExplanation).not.toContain('demand');
-    });
-
-    it('unsupported legal/tax-reason test: rejects causal claims regarding updated government regulations', async () => {
-      mockStaffContext = { userId: 'user-consultant-1', tenantId: 'tenant-agency-a', role: 'consultant' };
-
-      mockPgQuery.mockImplementation(async (sql: string) => {
-        if (sql.includes('FROM public.quote_versions')) return { rows: [v1Row, v2Row] };
-        return { rows: [] };
-      });
-
-      mockAIResponseText = JSON.stringify({
-        executiveSummary: 'Tax update',
-        keyPriceDrivers: ['Regulations'],
-        scopeChanges: [],
-        clientFacingExplanation: 'Taxes increased because of updated government regulations.',
-      });
-
-      const res = await generateQuoteDiffExplanationAction({
-        quoteId: 'q-1',
-        v1VersionId: 'qv-1',
-        v2VersionId: 'qv-2',
-      });
-
-      expect(res.success).toBe(true);
-      expect(res.explanation!.clientFacingExplanation).not.toContain('government regulations');
-      expect(res.explanation!.clientFacingExplanation).not.toContain('regulations');
-    });
-
-    it('mixed safe + unsafe output test: retains deterministic fact (+2000.00) and strips unsupported causal reason', async () => {
-      mockStaffContext = { userId: 'user-consultant-1', tenantId: 'tenant-agency-a', role: 'consultant' };
-
-      mockPgQuery.mockImplementation(async (sql: string) => {
-        if (sql.includes('FROM public.quote_versions')) return { rows: [v1Row, v2Row] };
-        return { rows: [] };
-      });
-
-      // Model returns valid deterministic price delta (+2000.00) combined with unsupported causal reason
-      mockAIResponseText = JSON.stringify({
-        executiveSummary: 'Hotel increase',
-        keyPriceDrivers: ['Rate'],
-        scopeChanges: [],
-        clientFacingExplanation: 'The Grand Hotel price increased by 2000.00 because seasonal supplier rates rose.',
-      });
-
-      const res = await generateQuoteDiffExplanationAction({
-        quoteId: 'q-1',
-        v1VersionId: 'qv-1',
-        v2VersionId: 'qv-2',
-      });
-
-      expect(res.success).toBe(true);
-      // Retains the factual part ("The Grand Hotel price increased by 2000.00.")
-      expect(res.explanation!.clientFacingExplanation).toContain('2000.00');
-      // Strips the causal clause completely
-      expect(res.explanation!.clientFacingExplanation).not.toContain('because seasonal supplier rates rose');
-      expect(res.explanation!.clientFacingExplanation).not.toContain('seasonal supplier rates');
-    });
-
-    it('supported non-causal explanation test: allows factual non-causal descriptions matching deterministic diff', async () => {
-      mockStaffContext = { userId: 'user-consultant-1', tenantId: 'tenant-agency-a', role: 'consultant' };
-
-      mockPgQuery.mockImplementation(async (sql: string) => {
-        if (sql.includes('FROM public.quote_versions')) return { rows: [v1Row, v2Row] };
-        return { rows: [] };
-      });
-
-      // Model returns valid factual non-causal description
-      const factualExplanation = 'The Grand Hotel line item increased from 10000.00 to 12000.00, and validity was extended to 2026-11-15.';
-      mockAIResponseText = JSON.stringify({
-        executiveSummary: 'Price and validity revision',
-        keyPriceDrivers: ['Hotel rate', 'Validity extension'],
-        scopeChanges: [],
-        clientFacingExplanation: factualExplanation,
-      });
-
-      const res = await generateQuoteDiffExplanationAction({
-        quoteId: 'q-1',
-        v1VersionId: 'qv-1',
-        v2VersionId: 'qv-2',
-      });
-
-      expect(res.success).toBe(true);
-      // Valid non-causal explanation matching deterministic diff facts is preserved
-      expect(res.explanation!.clientFacingExplanation).toBe(factualExplanation);
-    });
-
-    it('unsupported numeric + causal combined test: safely falls back to deterministic copy when both are present', async () => {
-      mockStaffContext = { userId: 'user-consultant-1', tenantId: 'tenant-agency-a', role: 'consultant' };
-
-      mockPgQuery.mockImplementation(async (sql: string) => {
-        if (sql.includes('FROM public.quote_versions')) return { rows: [v1Row, v2Row] };
-        return { rows: [] };
-      });
-
-      // Adversarial model returns BOTH unsupported number (+9000 instead of 2000) AND unsupported causal claim
-      mockAIResponseText = JSON.stringify({
-        executiveSummary: 'Prices increased by 9000',
-        keyPriceDrivers: ['Rates went up 90%'],
-        scopeChanges: [],
-        clientFacingExplanation: 'Your quote total increased by 9000 (a 90% increase) because seasonal rates rose.',
-      });
-
-      const res = await generateQuoteDiffExplanationAction({
-        quoteId: 'q-1',
-        v1VersionId: 'qv-1',
-        v2VersionId: 'qv-2',
-      });
-
-      expect(res.success).toBe(true);
-      // Unsupported numbers and causal reasons are completely sanitized
-      expect(res.explanation!.clientFacingExplanation).not.toContain('9000');
-      expect(res.explanation!.clientFacingExplanation).not.toContain('90%');
-      expect(res.explanation!.clientFacingExplanation).not.toContain('because seasonal rates rose');
-      // Must contain deterministic truth
-      expect(res.explanation!.clientFacingExplanation).toContain('10000.00');
-      expect(res.explanation!.clientFacingExplanation).toContain('12000.00');
-      expect(res.explanation!.clientFacingExplanation).toContain('2000.00');
-    });
-  });
-
-  // ==========================================================================
-  // 5. PROPOSAL STAGING, HUMAN CONFIRMATION & ZERO PRIVILEGED AI PERSISTENCE
-  // ==========================================================================
-  describe('5. Proposal Staging & Zero Privileged Persistence', () => {
+  describe('4. Proposal Staging & Zero Privileged Persistence', () => {
     it('applying proposal stages into draft with unitPrice=0.00 without any DB mutation', async () => {
       const suggestions: AIQuoteLineItemSuggestion[] = [
         {
@@ -740,9 +546,9 @@ describe('Phase AI-5C.3: Grounded Quote Copilot & Deterministic Commercial Expla
   });
 
   // ==========================================================================
-  // 6. DETERMINISTIC QUOTE DIFF ENGINE
+  // 5. DETERMINISTIC QUOTE DIFF ENGINE
   // ==========================================================================
-  describe('6. Deterministic Quote Diff Calculations', () => {
+  describe('5. Deterministic Quote Diff Calculations', () => {
     it('accurately computes item additions, removals, modifications, validity, and terms changes', () => {
       const v1: RawQuoteVersionForDiff = {
         quoteId: 'q-1',
@@ -796,9 +602,9 @@ describe('Phase AI-5C.3: Grounded Quote Copilot & Deterministic Commercial Expla
   });
 
   // ==========================================================================
-  // 7. CROSS-TENANT ISOLATION MATRIX & FAILURE DEGRADATION
+  // 6. CROSS-TENANT ISOLATION MATRIX & FAILURE DEGRADATION
   // ==========================================================================
-  describe('7. Cross-Tenant Isolation & Failure Resilience', () => {
+  describe('6. Cross-Tenant Isolation & Failure Resilience', () => {
     it('fails closed when attempting to attach quote suggestion to cross-tenant itinerary', async () => {
       mockStaffContext = { userId: 'user-consultant-1', tenantId: 'tenant-agency-a', role: 'consultant' };
 

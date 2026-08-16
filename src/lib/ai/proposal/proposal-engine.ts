@@ -19,7 +19,6 @@ import {
 } from './context-builder';
 import {
   calculateQuoteDifference,
-  getCustomerSafeQuoteDiff,
   type RawQuoteVersionForDiff,
 } from './diff-engine';
 import {
@@ -751,52 +750,33 @@ export async function generateQuoteDifferenceExplanation(
     // 2. Compute pure deterministic diff
     const deterministicDiff = calculateQuoteDifference(v1, v2, ctx.role);
 
-    // TWO-CONTEXT SEPARATION:
-    // Pass 1: Customer-safe diff (ZERO supplier costs, margins, or internal notes in prompt)
-    const customerSafeDiff = getCustomerSafeQuoteDiff(deterministicDiff);
+    // DETERMINISTIC CUSTOMER-FACING EXPLANATION (0 Customer Provider Calls):
+    // Customer explanation is derived directly from deterministic diff facts.
+    const clientFacingExplanation = generateDeterministicCustomerExplanation(deterministicDiff);
 
-    // Omit internal fields when serializing customer-safe JSON for prompt hygiene
-    const cleanCustomerDiffJson = JSON.stringify(
-      customerSafeDiff,
-      (key, value) => {
-        if (
-          key === 'v1SupplierCost' ||
-          key === 'v2SupplierCost' ||
-          key === 'supplierCostDifference' ||
-          key === 'v1InternalCostTotal' ||
-          key === 'v2InternalCostTotal' ||
-          key === 'internalCostDifference' ||
-          key === 'v1GrossMarginAmount' ||
-          key === 'v2GrossMarginAmount' ||
-          key === 'grossMarginDifference'
-        ) {
-          return undefined;
-        }
-        return value;
-      },
-      2
-    );
+    const keyPriceDrivers = deterministicDiff.itemDiffs
+      .filter((i) => i.priceDifference && Number(i.priceDifference) !== 0)
+      .map((i) => `${i.title}: ${Number(i.priceDifference) > 0 ? '+' : ''}${i.priceDifference} ${deterministicDiff.currency}`);
 
-    const customerPrompt = `You are an expert commercial travel communicator.
-Explain the following verified customer-facing differences between Quote ${v1.quoteNumber} v${v1.versionNumber} and v${v2.versionNumber}.
+    if (keyPriceDrivers.length === 0 && deterministicDiff.grandTotalDifference !== '0.00') {
+      keyPriceDrivers.push(`Grand total difference: ${deterministicDiff.grandTotalDifference} ${deterministicDiff.currency}`);
+    }
 
-VERIFIED CUSTOMER-FACING DIFF (DO NOT ALTER ARITHMETIC):
-${cleanCustomerDiffJson}
+    const scopeChanges = deterministicDiff.itemDiffs
+      .filter((i) => i.changeType !== 'unchanged')
+      .map((i) => `${i.changeType.toUpperCase()}: ${i.title}`);
 
-CRITICAL RULES:
-1. Output MUST be valid JSON matching the exact schema below.
-2. DO NOT recalculate numbers. Rely strictly on the verified customer-facing diff.
-3. Provide an executive summary, key price drivers, scope changes, and a client-facing explanation.
-4. DO NOT mention internal pricing, confidential margins, or markups under any circumstances.
+    if (deterministicDiff.hasValidityChange && deterministicDiff.v2ValidUntil) {
+      scopeChanges.push(`Validity adjusted to ${deterministicDiff.v2ValidUntil}`);
+    }
 
-REQUIRED JSON STRUCTURE:
-{
-  "executiveSummary": "Summary of total change",
-  "keyPriceDrivers": ["Price driver 1", "Price driver 2"],
-  "scopeChanges": ["Scope change 1"],
-  "itineraryAlignmentNotes": "Notes if itinerary changed",
-  "clientFacingExplanation": "Clear, friendly explanation suitable to send to the customer"
-}`;
+    if (deterministicDiff.hasTermsChange) {
+      scopeChanges.push('Payment terms and conditions updated');
+    }
+
+    const itineraryAlignmentNotes = deterministicDiff.hasItineraryChange
+      ? `Itinerary version linkage updated (v${deterministicDiff.v1VersionNumber} → v${deterministicDiff.v2VersionNumber})`
+      : null;
 
     const aiSettings: TenantSettings['ai'] = {
       defaultModel: options?.model || 'gpt-4o-mini',
@@ -804,30 +784,20 @@ REQUIRED JSON STRUCTURE:
       budgets: { monthlyBudget: 500 },
     };
 
-    try {
-      // Pass 1: Customer-safe model call (0 internal pricing info in prompt)
-      const aiRes = await callAIWithFallback({
-        model: options?.model || 'gpt-4o-mini',
-        prompt: customerPrompt,
-        feature: 'quote_diff_explanation',
-        tenantAISettings: aiSettings,
-        currentSpend: { daily: 0, monthly: 0 },
-        maxTokens: 2000,
-      });
+    // INTERNAL STAFF ANALYSIS (ONLY if caller is authorized with quotes:internal_pricing:read)
+    // Admin / Manager: 1 internal AI provider call.
+    // Consultant / Specialist / Viewer: 0 internal AI provider calls (internalStaffNotes = null).
+    let internalStaffNotes: string | null = null;
+    let internalAiRes: {
+      model: string;
+      provider: string;
+      tokensIn?: number;
+      tokensOut?: number;
+      costEstimate?: number;
+    } | null = null;
 
-      const parsedCustomer = JSON.parse(cleanJsonString(aiRes.text));
-
-      // Factual & Numeric Bounding: Protect customer explanation from model hallucinated arithmetic or percentages
-      const boundedClientExplanation = sanitizeCustomerExplanation(
-        String(parsedCustomer.clientFacingExplanation || ''),
-        deterministicDiff
-      );
-
-      // Pass 2: Internal Staff Notes (ONLY if caller is authorized for internal pricing)
-      // For Consultant, Specialist, Viewer: internal provider call count is STRICTLY ZERO.
-      let internalStaffNotes: string | null = null;
-      if (can(ctx.role, 'quotes:internal_pricing:read')) {
-        const internalPrompt = `You are an internal commercial travel analyst.
+    if (can(ctx.role, 'quotes:internal_pricing:read')) {
+      const internalPrompt = `You are an internal commercial travel analyst.
 Analyze the following internal financial changes between Quote ${v1.quoteNumber} v${v1.versionNumber} and v${v2.versionNumber}.
 
 INTERNAL FINANCIAL DIFF:
@@ -842,72 +812,64 @@ CRITICAL RULES:
 1. Provide concise, strategic internal staff notes explaining margin and cost variances for agency management.
 2. Clearly distinguish between volume changes, supplier cost adjustments, and margin changes.`;
 
-        try {
-          const internalAiRes = await callAIWithFallback({
-            model: options?.model || 'gpt-4o-mini',
-            prompt: internalPrompt,
-            feature: 'quote_internal_explanation',
-            tenantAISettings: aiSettings,
-            currentSpend: { daily: 0, monthly: 0 },
-            maxTokens: 1000,
-          });
-          internalStaffNotes = internalAiRes.text.trim();
-        } catch {
-          const costDelta = deterministicDiff.internalCostDifference ?? '0.00';
-          const marginDelta = deterministicDiff.grossMarginDifference ?? '0.00';
-          internalStaffNotes = `Internal Commercial Summary: Supplier cost delta is ${costDelta} ${deterministicDiff.currency}. Gross margin delta is ${marginDelta} ${deterministicDiff.currency}. Subtotal change: ${deterministicDiff.subtotalDifference} ${deterministicDiff.currency}.`;
-        }
+      try {
+        const res = await callAIWithFallback({
+          model: options?.model || 'gpt-4o-mini',
+          prompt: internalPrompt,
+          feature: 'quote_internal_explanation',
+          tenantAISettings: aiSettings,
+          currentSpend: { daily: 0, monthly: 0 },
+          maxTokens: 1000,
+        });
+        internalAiRes = res;
+        internalStaffNotes = res.text.trim();
+      } catch {
+        const costDelta = deterministicDiff.internalCostDifference ?? '0.00';
+        const marginDelta = deterministicDiff.grossMarginDifference ?? '0.00';
+        internalStaffNotes = `Internal Commercial Summary: Supplier cost delta is ${costDelta} ${deterministicDiff.currency}. Gross margin delta is ${marginDelta} ${deterministicDiff.currency}. Subtotal change: ${deterministicDiff.subtotalDifference} ${deterministicDiff.currency}.`;
       }
-
-      const explanationPayload: AIQuoteDifferenceExplanation = {
-        quoteNumber: deterministicDiff.quoteNumber,
-        v1VersionNumber: deterministicDiff.v1VersionNumber,
-        v2VersionNumber: deterministicDiff.v2VersionNumber,
-        executiveSummary: String(parsedCustomer.executiveSummary || 'Quote revised'),
-        keyPriceDrivers: Array.isArray(parsedCustomer.keyPriceDrivers) ? parsedCustomer.keyPriceDrivers : ['Updated line items'],
-        scopeChanges: Array.isArray(parsedCustomer.scopeChanges) ? parsedCustomer.scopeChanges : [],
-        itineraryAlignmentNotes: parsedCustomer.itineraryAlignmentNotes ? String(parsedCustomer.itineraryAlignmentNotes) : null,
-        clientFacingExplanation: boundedClientExplanation,
-        internalStaffNotes,
-        deterministicDiff,
-        grounding: {
-          sources: [
-            { type: 'quote_version', id: v1.id },
-            { type: 'quote_version', id: v2.id },
-          ],
-          assumptions: [],
-          missingInformation: [],
-          confidenceScore: 1.0,
-        },
-      };
-
-      const validated = AIQuoteDifferenceExplanationSchema.parse(explanationPayload);
-
-      const metadata: AIProposalMetadata = {
-        proposalId: `prop-diff-${Date.now()}`,
-        taskType: 'quote_difference_explanation',
-        generatedAt: new Date().toISOString(),
-        model: aiRes.model,
-        provider: aiRes.provider,
-        latencyMs: Date.now() - startTime,
-        tokensIn: aiRes.tokensIn,
-        tokensOut: aiRes.tokensOut,
-        costEstimate: aiRes.costEstimate,
-      };
-
-      return {
-        success: true,
-        data: validated,
-        metadata,
-      };
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Failed to generate quote difference explanation';
-      return {
-        success: false,
-        data: null,
-        metadata: null,
-        error: { code: 'PROPOSAL_GENERATION_FAILED', message },
-      };
     }
+
+    const explanationPayload: AIQuoteDifferenceExplanation = {
+      quoteNumber: deterministicDiff.quoteNumber,
+      v1VersionNumber: deterministicDiff.v1VersionNumber,
+      v2VersionNumber: deterministicDiff.v2VersionNumber,
+      executiveSummary: `Quote ${deterministicDiff.quoteNumber} updated from ${deterministicDiff.currency} ${deterministicDiff.v1GrandTotal} to ${deterministicDiff.currency} ${deterministicDiff.v2GrandTotal} (difference of ${deterministicDiff.currency} ${deterministicDiff.grandTotalDifference})`,
+      keyPriceDrivers: keyPriceDrivers.length > 0 ? keyPriceDrivers : ['No line item rate adjustments'],
+      scopeChanges: scopeChanges,
+      itineraryAlignmentNotes: itineraryAlignmentNotes,
+      clientFacingExplanation,
+      internalStaffNotes,
+      deterministicDiff,
+      grounding: {
+        sources: [
+          { type: 'quote_version', id: v1.id },
+          { type: 'quote_version', id: v2.id },
+        ],
+        assumptions: [],
+        missingInformation: [],
+        confidenceScore: 1.0,
+      },
+    };
+
+    const validated = AIQuoteDifferenceExplanationSchema.parse(explanationPayload);
+
+    const metadata: AIProposalMetadata = {
+      proposalId: `prop-diff-${Date.now()}`,
+      taskType: 'quote_difference_explanation',
+      generatedAt: new Date().toISOString(),
+      model: internalAiRes ? internalAiRes.model : 'deterministic',
+      provider: internalAiRes ? internalAiRes.provider : 'system',
+      latencyMs: Date.now() - startTime,
+      tokensIn: internalAiRes?.tokensIn || 0,
+      tokensOut: internalAiRes?.tokensOut || 0,
+      costEstimate: internalAiRes?.costEstimate || 0,
+    };
+
+    return {
+      success: true,
+      data: validated,
+      metadata,
+    };
   });
 }

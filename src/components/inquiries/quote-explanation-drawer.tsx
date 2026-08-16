@@ -342,7 +342,7 @@ export function QuoteExplanationDrawer({
                     {explanation.clientFacingExplanation}
                   </div>
                   <p className="text-[10px] text-muted-foreground italic">
-                    This prose was generated from customer-safe facts only and contains zero supplier costs or internal margins.
+                    This explanation is derived from deterministic, customer-safe diff facts and contains zero supplier costs or internal margins.
                   </p>
                 </div>
               </div>
