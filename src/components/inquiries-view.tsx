@@ -16,6 +16,8 @@ import { InquiryDetailDrawer } from '@/components/inquiries/inquiry-detail-drawe
 import { Search, Loader2, RefreshCw, AlertTriangle, ChevronLeft, ChevronRight, Plus } from 'lucide-react';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { EmptyState } from '@/components/ui/empty-state';
+import { useAttention } from '@/hooks/use-attention';
+import { AttentionBadge } from '@/components/attention';
 
 // (Existing CSV_FIELD_MAP and functions omitted for brevity in thought, but included in output)
 const CSV_FIELD_MAP = {
@@ -116,9 +118,15 @@ export function InquiriesView({ useNewReadOverride }: InquiriesViewProps = {}) {
 
   const tenantId = currentUser?.tenantId;
 
+  const {
+    getSignalsForInquiry,
+    refresh: refreshAttention,
+  } = useAttention();
+
   const triggerRefresh = useCallback(() => {
     setRefreshCounter((c) => c + 1);
-  }, []);
+    refreshAttention();
+  }, [refreshAttention]);
 
   useEffect(() => {
     let isCancelled = false;
@@ -782,11 +790,12 @@ export function InquiriesView({ useNewReadOverride }: InquiriesViewProps = {}) {
                         />
                       </td>
                       <td className="px-4 py-3">
-                        <div className="font-medium text-foreground flex items-center gap-1.5">
-                          {inq.travelerDisplayName}
+                        <div className="font-medium text-foreground flex items-center gap-1.5 flex-wrap">
+                          <span>{inq.travelerDisplayName}</span>
+                          <AttentionBadge signals={getSignalsForInquiry(inq.inquiryId)} />
                           {inq.identityReviewRequired && (
                             <span title={`Identity review pending: ${inq.identityReviewReason || 'Unknown reason'}`}>
-                              <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
+                              <AlertTriangle className="h-3.5 w-3.5 text-amber-500 shrink-0" />
                             </span>
                           )}
                         </div>
@@ -930,6 +939,7 @@ export function InquiriesView({ useNewReadOverride }: InquiriesViewProps = {}) {
             onAddNote={addLeadNote}
             onDeleteNote={handleDeleteNoteFromNewRead}
             currentUser={currentUser}
+            attentionSignals={selectedInquiry ? getSignalsForInquiry(selectedInquiry.inquiryId) : []}
           />
         )}
       </AnimatePresence>

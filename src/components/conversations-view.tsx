@@ -10,6 +10,7 @@ import { useCRMStore } from '@/hooks/use-crm-store';
 import { useChatbot } from '@/hooks/use-chatbot';
 import { getInitials, formatRelativeTime } from '@/lib/utils';
 import { Skeleton } from '@/components/ui/skeleton';
+import { useAttention } from '@/hooks/use-attention';
 
 export function ConversationsView() {
   const conversations = useCRMStore((state) => state.conversations);
@@ -23,6 +24,8 @@ export function ConversationsView() {
   const setActiveContext = useCRMStore((state) => state.setActiveContext);
   const [editingMsgId, setEditingMsgId] = useState<string | null>(null);
   const [editContent, setEditContent] = useState('');
+
+  const { getSignalsForConversation } = useAttention();
 
   const {
     messages: aiMessages,
@@ -294,7 +297,19 @@ export function ConversationsView() {
                         {formatRelativeTime(conv.lastMessageAt)}
                       </span>
                     </div>
-                    <p className="text-xs text-muted-foreground truncate">{conv.lastMessage}</p>
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-xs text-muted-foreground truncate flex-1">{conv.lastMessage}</p>
+                      {getSignalsForConversation(conv.id).some((s) => s.signalType === 'UNANSWERED_INBOUND') && (
+                        <span
+                          className="inline-flex items-center gap-1 rounded-full bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800/50 px-1.5 py-0.5 text-[10px] font-medium shrink-0"
+                          title="Customer message awaiting agent reply"
+                          aria-label="Awaiting reply"
+                        >
+                          <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                          Awaiting reply
+                        </span>
+                      )}
+                    </div>
                   </div>
                   {conv.unreadCount > 0 && (
                     <div className="h-5 min-w-5 px-1 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center mt-1 shrink-0">

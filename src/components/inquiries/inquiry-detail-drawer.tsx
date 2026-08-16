@@ -17,6 +17,8 @@ import { formatCurrency, formatDate } from '@/lib/utils';
 import { useCRMStore } from '@/hooks/use-crm-store';
 import { EmailComposerModal } from '@/components/communication/email-composer-modal';
 import type { InquiryDirectoryItem, LeadNote, LeadActivity, User, Lead, LeadStatus } from '@/types';
+import type { AttentionSignal } from '@/lib/attention/types';
+import { AttentionDrawerSection } from '@/components/attention';
 
 interface InquiryDetailDrawerProps {
   inquiry: InquiryDirectoryItem;
@@ -31,6 +33,7 @@ interface InquiryDetailDrawerProps {
   onAddNote: (legacyLeadId: string, authorId: string, authorName: string, content: string) => void;
   onDeleteNote: (legacyLeadId: string, noteId: string) => void;
   currentUser: import('@/types').User | null;
+  attentionSignals?: AttentionSignal[];
 }
 
 export function InquiryDetailDrawer({
@@ -44,6 +47,7 @@ export function InquiryDetailDrawer({
   onAddNote,
   onDeleteNote,
   currentUser,
+  attentionSignals,
 }: InquiryDetailDrawerProps) {
   const [newNoteText, setNewNoteText] = useState('');
   const [isEmailModalOpen, setIsEmailModalOpen] = useState(false);
@@ -134,6 +138,20 @@ export function InquiryDetailDrawer({
             </button>
           </div>
         </div>
+
+        {/* Deterministic Proactive Attention Summary Section */}
+        <AttentionDrawerSection
+          signals={attentionSignals || []}
+          onActionClick={(action) => {
+            if (action.actionId === 'compose_reply' || action.actionId === 'open_conversation') {
+              handleStartConversation();
+            } else if (action.actionId === 'propose_assignment' && legacyLead) {
+              onEditLegacy(legacyLead);
+            } else if (action.actionId === 'propose_follow_up' && legacyLead) {
+              onEditLegacy(legacyLead);
+            }
+          }}
+        />
 
         <div className="flex-1 overflow-y-auto p-4 sm:p-6">
           <div className="space-y-6">

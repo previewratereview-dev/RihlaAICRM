@@ -31,6 +31,8 @@ import {
 import { getStatusColor, getStatusLabel } from '@/lib/utils';
 import { can } from '@/lib/permissions';
 import { Button } from '@/components/ui/button';
+import { useAttention } from '@/hooks/use-attention';
+import { DashboardNeedsAttention } from '@/components/attention';
 
 export function DashboardView() {
   const leads = useCRMStore((state) => state.leads);
@@ -42,6 +44,14 @@ export function DashboardView() {
   const dataLoading = useCRMStore((state) => state.dataLoading);
   const currentUser = useCRMStore((state) => state.currentUser);
   const canWrite = can(currentUser?.role ?? 'viewer', 'leads:write');
+
+  const {
+    summary: attentionSummary,
+    signals: attentionSignals,
+    isLoading: attentionLoading,
+    error: attentionError,
+    refresh: refreshAttention,
+  } = useAttention();
 
   const crmMetrics = useMemo(() => calculateCRMMetrics(leads), [leads]);
 
@@ -221,6 +231,23 @@ export function DashboardView() {
           </motion.div>
         ))}
       </div>
+
+      {/* Deterministic Proactive Attention Section */}
+      <motion.div variants={itemVariants}>
+        <DashboardNeedsAttention
+          summary={attentionSummary}
+          signals={attentionSignals}
+          isLoading={attentionLoading}
+          error={attentionError}
+          onRefresh={refreshAttention}
+          onNavigateInquiry={() => {
+            setActiveTab('inquiries');
+          }}
+          onNavigateConversation={() => {
+            setActiveTab('conversations');
+          }}
+        />
+      </motion.div>
 
       {/* Main Charts & Inbound distribution */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
