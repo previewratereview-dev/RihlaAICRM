@@ -31,7 +31,17 @@ export type Permission =
   | 'platform:tenants:write'
   | 'platform:users:write'
   | 'platform:analytics:read'
-  | 'platform:settings:write';
+  | 'platform:settings:write'
+  | 'itineraries:read'
+  | 'itineraries:write'
+  | 'itineraries:share'
+  | 'quotes:read'
+  | 'quotes:write'
+  | 'quotes:share'
+  | 'quotes:internal_pricing:read'
+  | 'quotes:acceptance:record'
+  | 'quotes:acceptance:void'
+  | 'bookings:convert';
 
 export interface User {
   id: string;

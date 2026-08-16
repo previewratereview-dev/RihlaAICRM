@@ -55,7 +55,7 @@ describe('Task 3.7: Restrict Manager permissions for audit logs and agency setti
     expect(can('manager', 'settings:profile:write')).toBe(true);
   });
 
-  it('Manager permission array has exactly 9 permissions (verification)', () => {
+  it('Manager permission array has all operational permissions (verification)', () => {
     const managerPerms = Permission_Matrix['manager'];
     const expectedPermissions = [
       'leads:read',
@@ -67,8 +67,18 @@ describe('Task 3.7: Restrict Manager permissions for audit logs and agency setti
       'team:read',
       'analytics:read',
       'settings:profile:write',
+      'itineraries:read',
+      'itineraries:write',
+      'itineraries:share',
+      'quotes:read',
+      'quotes:write',
+      'quotes:share',
+      'quotes:internal_pricing:read',
+      'quotes:acceptance:record',
+      'quotes:acceptance:void',
+      'bookings:convert',
     ];
-    expect(managerPerms).toHaveLength(9);
+    expect(managerPerms).toHaveLength(19);
     expect(managerPerms.sort()).toEqual(expectedPermissions.sort());
   });
 });

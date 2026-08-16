@@ -67,6 +67,7 @@ describe('Permission_Matrix completeness', () => {
     const expected: Permission[] = [
       'leads:read', 'tasks:read', 'conversations:read',
       'analytics:read', 'settings:profile:write',
+      'itineraries:read', 'quotes:read',
     ];
     expect(viewerPerms.sort()).toEqual(expected.sort());
   });
@@ -80,16 +81,29 @@ describe('can() correctness', () => {
   it('returns true for valid role-permission combinations in the matrix', () => {
     expect(can('super_admin', 'platform:settings:write')).toBe(true);
     expect(can('admin', 'leads:write')).toBe(true);
+    expect(can('admin', 'quotes:write')).toBe(true);
+    expect(can('admin', 'quotes:internal_pricing:read')).toBe(true);
     expect(can('manager', 'analytics:read')).toBe(true);
+    expect(can('manager', 'quotes:acceptance:void')).toBe(true);
     expect(can('specialist', 'conversations:write')).toBe(true);
+    expect(can('specialist', 'itineraries:write')).toBe(true);
     expect(can('consultant', 'leads:read')).toBe(true);
+    expect(can('consultant', 'quotes:share')).toBe(true);
     expect(can('viewer', 'leads:read')).toBe(true);
+    expect(can('viewer', 'itineraries:read')).toBe(true);
+    expect(can('viewer', 'quotes:read')).toBe(true);
   });
 
   it('returns false for permissions not in the role matrix', () => {
     expect(can('viewer', 'leads:write')).toBe(false);
+    expect(can('viewer', 'quotes:write')).toBe(false);
     expect(can('viewer', 'platform:settings:write')).toBe(false);
     expect(can('specialist', 'platform:settings:write')).toBe(false);
+    expect(can('specialist', 'quotes:internal_pricing:read')).toBe(false);
+    expect(can('specialist', 'bookings:convert')).toBe(false);
+    expect(can('consultant', 'quotes:internal_pricing:read')).toBe(false);
+    expect(can('consultant', 'quotes:acceptance:void')).toBe(false);
+    expect(can('consultant', 'bookings:convert')).toBe(false);
     expect(can('manager', 'settings:users:write')).toBe(false);
     expect(can('consultant', 'conversations:write')).toBe(false);
   });
@@ -121,6 +135,10 @@ describe('can() correctness', () => {
       'settings:users:write', 'settings:audit:read',
       'platform:tenants:write', 'platform:users:write',
       'platform:analytics:read', 'platform:settings:write',
+      'itineraries:read', 'itineraries:write', 'itineraries:share',
+      'quotes:read', 'quotes:write', 'quotes:share',
+      'quotes:internal_pricing:read', 'quotes:acceptance:record', 'quotes:acceptance:void',
+      'bookings:convert',
     ];
 
     for (const role of roles) {
