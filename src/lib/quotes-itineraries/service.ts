@@ -4,40 +4,16 @@ import {
   ItineraryVersionEntity,
   QuoteLineItem,
   InternalQuoteVersionDTO,
+  StaffSafeQuoteVersionDTO,
   QuoteVersionStatus,
 } from './types';
+
+export type { InternalQuoteVersionDTO, StaffSafeQuoteVersionDTO };
 
 export interface DomainContext {
   userId: string;
   tenantId: string;
   role: string;
-}
-
-export interface StaffSafeQuoteVersionDTO {
-  id: string;
-  tenantId: string;
-  quoteId: string;
-  quoteNumber: string;
-  versionNumber: number;
-  itineraryVersionId: string;
-  status: string;
-  frozenAt?: string | null;
-  currency: string;
-  lineItems: Array<Omit<QuoteLineItem, 'supplierCost' | 'markupAmount' | 'marginAmount' | 'marginPct' | 'markupPct'>>;
-  quoteSchemaVersion: number;
-  subtotal: string;
-  discountAmount: string;
-  taxAmount: string;
-  grandTotal: string;
-  validUntil?: string | null;
-  termsAndConditions?: string | null;
-  customerNotes?: string | null;
-  rejectedAt?: string | null;
-  cancelledAt?: string | null;
-  supersededAt?: string | null;
-  createdBy?: string | null;
-  createdAt: string;
-  updatedAt: string;
 }
 
 export interface CreateItineraryParams {
@@ -180,7 +156,7 @@ export function shapeQuoteVersionDTO(
     quoteNumber: quoteRow.quote_number || '',
     versionNumber: quoteRow.version_number,
     itineraryVersionId: quoteRow.itinerary_version_id,
-    status: quoteRow.status,
+    status: quoteRow.status as QuoteVersionStatus,
     frozenAt: quoteRow.frozen_at,
     currency: quoteRow.currency,
     lineItems: safeLineItems,

@@ -200,6 +200,36 @@ export interface InternalQuoteVersionDTO {
 }
 
 /**
+ * Sales-Safe Quote Version DTO (Consultant/Specialist view; supplier costs and margins omitted).
+ */
+export interface StaffSafeQuoteVersionDTO {
+  id: string;
+  tenantId: string;
+  quoteId: string;
+  quoteNumber: string;
+  versionNumber: number;
+  itineraryVersionId: string;
+  status: QuoteVersionStatus;
+  frozenAt?: string | null;
+  currency: string;
+  lineItems: Array<Omit<QuoteLineItem, 'supplierCost' | 'markupAmount' | 'marginAmount' | 'marginPct' | 'markupPct'>>;
+  quoteSchemaVersion: number;
+  subtotal: string;
+  discountAmount: string;
+  taxAmount: string;
+  grandTotal: string;
+  validUntil?: string | null;
+  termsAndConditions?: string | null;
+  customerNotes?: string | null;
+  rejectedAt?: string | null;
+  cancelledAt?: string | null;
+  supersededAt?: string | null;
+  createdBy?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
  * Customer-Safe Itinerary DTO (Public portal view; zero internal/staff notes).
  */
 export interface CustomerItineraryDTO {

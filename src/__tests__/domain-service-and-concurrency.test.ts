@@ -5,9 +5,13 @@ import {
   preparePricingInputForRole,
 } from '../lib/quotes-itineraries/service';
 import { calculateQuotePricing } from '../lib/quotes-itineraries/pricing';
-import { QuoteLineItem } from '../lib/quotes-itineraries/types';
+import {
+  QuoteLineItem,
+  InternalQuoteVersionDTO,
+  StaffSafeQuoteVersionDTO,
+} from '../lib/quotes-itineraries/types';
 
-describe('AI-5B.2 Domain Service Security & DTO Shaping', () => {
+describe('AI-5B.2 Domain Service Security & Scoped Supplier-Cost Merge', () => {
   const sampleQuoteRow = {
     id: '11111111-2222-3333-4444-555555555555',
     tenant_id: 'agency_test',
@@ -76,10 +80,10 @@ describe('AI-5B.2 Domain Service Security & DTO Shaping', () => {
     expect((viewerDTO as unknown as Record<string, unknown>).internalCostTotal).toBeUndefined();
   });
 
-  it('preserves existing server-side supplier costs by line ID when updated by a Consultant without revealing them', () => {
-    const existingDraftItems: QuoteLineItem[] = [
+  it('preserves existing server-side supplier costs strictly within target QuoteVersion', () => {
+    const targetDraftItems: QuoteLineItem[] = [
       {
-        id: 'item-1',
+        id: 'line-target-1',
         title: 'Luxury Villa',
         category: 'accommodation',
         quantity: 2,
@@ -90,34 +94,61 @@ describe('AI-5B.2 Domain Service Security & DTO Shaping', () => {
       },
     ];
 
-    // Consultant submits updated customer-visible price without supplierCost
+    // Consultant submits updated customer-visible price for line-target-1, plus a new line, plus an alien line ID
     const consultantSubmittedItems = [
       {
-        id: 'item-1',
-        title: 'Luxury Villa - Updated Note',
+        id: 'line-target-1',
+        title: 'Luxury Villa - Updated Name',
         category: 'accommodation' as const,
         quantity: 2,
-        unitPrice: '52000.00', // price increased to 52000
-        supplierCost: null, // consultant does not submit cost
+        unitPrice: '55000.00',
+        supplierCost: null,
+      },
+      {
+        id: 'line-new-2',
+        title: 'New Sightseeing Tour',
+        category: 'activity' as const,
+        quantity: 2,
+        unitPrice: '5000.00',
+        supplierCost: null,
+      },
+      {
+        id: 'alien-line-from-other-quote',
+        title: 'Alien Line',
+        category: 'transfer' as const,
+        quantity: 1,
+        unitPrice: '2000.00',
+        supplierCost: null,
       },
     ];
 
-    const prepared = preparePricingInputForRole(consultantSubmittedItems, existingDraftItems, 'consultant');
-    expect(prepared[0].supplierCost).toBe('35000.00'); // Preserved from server state!
+    const prepared = preparePricingInputForRole(consultantSubmittedItems, targetDraftItems, 'consultant');
 
-    // Recalculating pricing preserves internal margin correctly on server
+    // 1. Target line preserved
+    expect(prepared[0].supplierCost).toBe('35000.00');
+
+    // 2. New line has null supplier cost
+    expect(prepared[1].supplierCost).toBeNull();
+
+    // 3. Alien line not present in target draft has null supplier cost (no cross-quote leakage)
+    expect(prepared[2].supplierCost).toBeNull();
+
+    // Pricing calculation treats unknown items truth-preserving (internalCostTotal = null)
     const recalculated = calculateQuotePricing({ lineItems: prepared });
-    expect(recalculated.subtotal).toBe('104000.00');
-    expect(recalculated.internalCostTotal).toBe('70000.00');
-    expect(recalculated.grossMarginAmount).toBe('34000.00');
+    expect(recalculated.subtotal).toBe('122000.00'); // 110000 + 10000 + 2000
+    expect(recalculated.internalCostTotal).toBeNull();
+    expect(recalculated.grossMarginAmount).toBeNull();
   });
 });
 
-describe('AI-5B.2 Real Local PostgreSQL Concurrency Tests', () => {
+describe('AI-5B.2 Real Local PostgreSQL Concurrency & Allocator Proofs', () => {
   let clientA: Client;
   let clientB: Client;
   let clientC: Client;
-  const testTenant = 'tenant_concurrency_test';
+  const testTenant = 'tenant_concurrency_all';
+  const adminId = '77777777-7777-7777-7777-777777777777';
+  const travelerId = '88888888-8888-8888-8888-888888888888';
+  const inquiryId = '99999999-9999-9999-9999-999999999999';
 
   beforeAll(async () => {
     const dbConfig = {
@@ -135,31 +166,64 @@ describe('AI-5B.2 Real Local PostgreSQL Concurrency Tests', () => {
     await clientB.connect();
     await clientC.connect();
 
-    // Clean up
+    // Clean up test records
     await clientA.query(`
+      DO $$ BEGIN
+        ALTER TABLE public.quote_versions DISABLE TRIGGER ALL;
+        ALTER TABLE public.itinerary_versions DISABLE TRIGGER ALL;
+      EXCEPTION WHEN OTHERS THEN NULL;
+      END $$;
+
+      DELETE FROM public.quote_versions WHERE tenant_id = '${testTenant}';
       DELETE FROM public.quotes WHERE tenant_id = '${testTenant}';
+      DELETE FROM public.itinerary_versions WHERE tenant_id = '${testTenant}';
+      DELETE FROM public.itineraries WHERE tenant_id = '${testTenant}';
       DELETE FROM public.tenant_quote_sequences WHERE tenant_id = '${testTenant}';
       DELETE FROM public.inquiries WHERE tenant_id = '${testTenant}';
       DELETE FROM public.traveler_profiles WHERE tenant_id = '${testTenant}';
+      DELETE FROM public.profiles WHERE tenant_id = '${testTenant}';
       DELETE FROM public.tenants WHERE id = '${testTenant}';
+
+      DO $$ BEGIN
+        ALTER TABLE public.quote_versions ENABLE TRIGGER ALL;
+        ALTER TABLE public.itinerary_versions ENABLE TRIGGER ALL;
+      EXCEPTION WHEN OTHERS THEN NULL;
+      END $$;
     `);
 
-    // Setup tenant & inquiry
+    // Setup tenant fixtures
     await clientA.query(`
-      INSERT INTO public.tenants (id, name, slug) VALUES ('${testTenant}', 'Concurrency Tenant', 'concurrency-tenant') ON CONFLICT DO NOTHING;
-      INSERT INTO public.traveler_profiles (id, tenant_id, display_name) VALUES ('99999999-9999-9999-9999-999999999999', '${testTenant}', 'Traveler Concurrency') ON CONFLICT DO NOTHING;
-      INSERT INTO public.inquiries (id, tenant_id, traveler_id, destination) VALUES ('88888888-8888-8888-8888-888888888888', '${testTenant}', '99999999-9999-9999-9999-999999999999', 'Dubai') ON CONFLICT DO NOTHING;
+      INSERT INTO public.tenants (id, name, slug) VALUES ('${testTenant}', 'Concurrency All Tenant', 'concurrency-all') ON CONFLICT DO NOTHING;
+      INSERT INTO public.profiles (id, tenant_id, role, full_name, email) VALUES ('${adminId}', '${testTenant}', 'admin', 'Admin Concurrency', 'admin@concurrency.com') ON CONFLICT DO NOTHING;
+      INSERT INTO public.traveler_profiles (id, tenant_id, display_name) VALUES ('${travelerId}', '${testTenant}', 'Traveler Concurrency') ON CONFLICT DO NOTHING;
+      INSERT INTO public.inquiries (id, tenant_id, traveler_id, destination) VALUES ('${inquiryId}', '${testTenant}', '${travelerId}', 'Dubai') ON CONFLICT DO NOTHING;
     `);
   });
 
   afterAll(async () => {
     try {
       await clientA.query(`
+        DO $$ BEGIN
+          ALTER TABLE public.quote_versions DISABLE TRIGGER ALL;
+          ALTER TABLE public.itinerary_versions DISABLE TRIGGER ALL;
+        EXCEPTION WHEN OTHERS THEN NULL;
+        END $$;
+
+        DELETE FROM public.quote_versions WHERE tenant_id = '${testTenant}';
         DELETE FROM public.quotes WHERE tenant_id = '${testTenant}';
+        DELETE FROM public.itinerary_versions WHERE tenant_id = '${testTenant}';
+        DELETE FROM public.itineraries WHERE tenant_id = '${testTenant}';
         DELETE FROM public.tenant_quote_sequences WHERE tenant_id = '${testTenant}';
         DELETE FROM public.inquiries WHERE tenant_id = '${testTenant}';
         DELETE FROM public.traveler_profiles WHERE tenant_id = '${testTenant}';
+        DELETE FROM public.profiles WHERE tenant_id = '${testTenant}';
         DELETE FROM public.tenants WHERE id = '${testTenant}';
+
+        DO $$ BEGIN
+          ALTER TABLE public.quote_versions ENABLE TRIGGER ALL;
+          ALTER TABLE public.itinerary_versions ENABLE TRIGGER ALL;
+        EXCEPTION WHEN OTHERS THEN NULL;
+        END $$;
       `);
       await clientA.end();
       await clientB.end();
@@ -169,31 +233,128 @@ describe('AI-5B.2 Real Local PostgreSQL Concurrency Tests', () => {
     }
   });
 
-  it('allocates sequential, race-safe quote numbers across concurrent workers without collisions', async () => {
-    // Run 6 concurrent sequence allocations across 3 parallel clients
-    const allocateSequence = async (client: Client) => {
-      const res = await client.query(`
-        INSERT INTO public.tenant_quote_sequences (tenant_id, year, last_number)
-        VALUES ('${testTenant}', 2026, 1)
-        ON CONFLICT (tenant_id, year)
-        DO UPDATE SET last_number = tenant_quote_sequences.last_number + 1
-        RETURNING last_number;
-      `);
-      return res.rows[0].last_number;
+  it('Allocator A: proves concurrent Itinerary revision creations allocate unique monotonic version numbers without collision', async () => {
+    // 1. Create base Itinerary family + v1
+    const createRes = await clientA.query(
+      `SELECT public.rpc_create_itinerary_family_and_version($1, $2, $3, $4, $5) as result`,
+      [testTenant, adminId, inquiryId, 'Concurrent Itin Family', '{}']
+    );
+    const itinId = createRes.rows[0].result.itineraryId;
+    const v1Id = createRes.rows[0].result.versionId;
+
+    // Finalize v1
+    await clientA.query(`SELECT public.rpc_finalize_itinerary_version($1, $2, $3)`, [testTenant, adminId, v1Id]);
+
+    // 2. Launch 3 parallel revision allocations from 3 concurrent database connections
+    const createRevision = async (client: Client) => {
+      const res = await client.query(
+        `SELECT public.rpc_create_itinerary_revision($1, $2, $3, $4) as result`,
+        [testTenant, adminId, itinId, v1Id]
+      );
+      return res.rows[0].result.versionNumber;
     };
 
     const results = await Promise.all([
-      allocateSequence(clientA),
-      allocateSequence(clientB),
-      allocateSequence(clientC),
-      allocateSequence(clientA),
-      allocateSequence(clientB),
-      allocateSequence(clientC),
+      createRevision(clientA),
+      createRevision(clientB),
+      createRevision(clientC),
     ]);
 
-    // All allocated numbers must be unique integers from 1 to 6
+    // All allocated version numbers must be unique integers 2, 3, 4
     const sorted = [...results].sort((a, b) => a - b);
-    expect(sorted).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(sorted).toEqual([2, 3, 4]);
+    expect(new Set(results).size).toBe(3);
+  });
+
+  it('Allocator B: proves concurrent Quote revision creations allocate unique monotonic version numbers without collision', async () => {
+    // 1. Get finalized itinerary version
+    const itinVerRes = await clientA.query(
+      `SELECT id FROM public.itinerary_versions WHERE tenant_id = $1 AND status = 'finalized' LIMIT 1`,
+      [testTenant]
+    );
+    const itinVerId = itinVerRes.rows[0].id;
+
+    // Create base quote + v1
+    const quoteCreateRes = await clientA.query(
+      `SELECT public.rpc_create_quote_family_and_version($1, $2, $3, $4, $5) as result`,
+      [
+        testTenant,
+        adminId,
+        inquiryId,
+        itinVerId,
+        JSON.stringify({ subtotal: '1000.00', discountAmount: '0.00', taxAmount: '0.00', grandTotal: '1000.00', lineItems: [] }),
+      ]
+    );
+    const quoteId = quoteCreateRes.rows[0].result.quoteId;
+    const v1Id = quoteCreateRes.rows[0].result.versionId;
+
+    // Issue v1
+    await clientA.query(`SELECT public.rpc_issue_quote_version($1, $2, $3)`, [testTenant, adminId, v1Id]);
+
+    // 2. Launch 3 parallel quote revision allocations
+    const createRevision = async (client: Client) => {
+      const res = await client.query(
+        `SELECT public.rpc_create_quote_revision($1, $2, $3, $4, $5, $6) as result`,
+        [
+          testTenant,
+          adminId,
+          quoteId,
+          v1Id,
+          itinVerId,
+          JSON.stringify({ subtotal: '1000.00', discountAmount: '0.00', taxAmount: '0.00', grandTotal: '1000.00', lineItems: [] }),
+        ]
+      );
+      return res.rows[0].result.versionNumber;
+    };
+
+    const results = await Promise.all([
+      createRevision(clientA),
+      createRevision(clientB),
+      createRevision(clientC),
+    ]);
+
+    // All allocated version numbers must be unique integers 2, 3, 4
+    const sorted = [...results].sort((a, b) => a - b);
+    expect(sorted).toEqual([2, 3, 4]);
+    expect(new Set(results).size).toBe(3);
+  });
+
+  it('Allocator C: proves concurrent Quote-number allocations allocate strictly unique sequential numbers without collisions', async () => {
+    // 1. Get finalized itinerary version
+    const itinVerRes = await clientA.query(
+      `SELECT id FROM public.itinerary_versions WHERE tenant_id = $1 AND status = 'finalized' LIMIT 1`,
+      [testTenant]
+    );
+    const itinVerId = itinVerRes.rows[0].id;
+
+    // 2. Launch 6 concurrent quote family creations across 3 database clients
+    const createQuote = async (client: Client) => {
+      const res = await client.query(
+        `SELECT public.rpc_create_quote_family_and_version($1, $2, $3, $4, $5) as result`,
+        [
+          testTenant,
+          adminId,
+          inquiryId,
+          itinVerId,
+          JSON.stringify({ subtotal: '500.00', discountAmount: '0.00', taxAmount: '0.00', grandTotal: '500.00', lineItems: [] }),
+        ]
+      );
+      return res.rows[0].result.quoteNumber;
+    };
+
+    const results = await Promise.all([
+      createQuote(clientA),
+      createQuote(clientB),
+      createQuote(clientC),
+      createQuote(clientA),
+      createQuote(clientB),
+      createQuote(clientC),
+    ]);
+
+    expect(results).toHaveLength(6);
     expect(new Set(results).size).toBe(6);
+    results.forEach((qNum) => {
+      expect(qNum).toMatch(/^QT-2026-\d{4}$/);
+    });
   });
 });

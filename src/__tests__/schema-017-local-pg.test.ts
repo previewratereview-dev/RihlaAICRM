@@ -11,6 +11,9 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Immutability Integra
 
   const adminUserId = 'aaaaaaaa-1111-1111-1111-111111111111';
   const consultantUserId = 'cccccccc-3333-3333-3333-333333333333';
+  const viewerUserId = 'dddddddd-4444-4444-4444-444444444444';
+  const superAdminUserId = 'eeeeeeee-5555-5555-5555-555555555555';
+  const tenantBUserId = 'ffffffff-6666-6666-6666-666666666666';
 
   beforeAll(async () => {
     client = new Client({
@@ -158,13 +161,17 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Immutability Integra
     await client.query(`
       INSERT INTO public.tenants (id, name, slug) 
       VALUES ('${testTenantA}', 'AI-5 Agency A', 'agency-a'),
-             ('${testTenantB}', 'AI-5 Agency B', 'agency-b')
+             ('${testTenantB}', 'AI-5 Agency B', 'agency-b'),
+             ('global', 'Platform Global', 'platform-global')
       ON CONFLICT (id) DO NOTHING;
 
       INSERT INTO public.profiles (id, tenant_id, role, full_name, email)
       VALUES
         ('${adminUserId}', '${testTenantA}', 'admin', 'Agency Admin', 'admin@agency-a.com'),
-        ('${consultantUserId}', '${testTenantA}', 'consultant', 'Agency Consultant', 'consultant@agency-a.com')
+        ('${consultantUserId}', '${testTenantA}', 'consultant', 'Agency Consultant', 'consultant@agency-a.com'),
+        ('${viewerUserId}', '${testTenantA}', 'viewer', 'Agency Viewer', 'viewer@agency-a.com'),
+        ('${superAdminUserId}', 'global', 'super_admin', 'Platform Super Admin', 'sa@platform.com'),
+        ('${tenantBUserId}', '${testTenantB}', 'admin', 'Agency B Admin', 'admin@agency-b.com')
       ON CONFLICT (id) DO NOTHING;
 
       INSERT INTO public.traveler_profiles (id, tenant_id, display_name, email)
@@ -215,7 +222,7 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Immutability Integra
     }
   });
 
-  it('atomically creates Itinerary family and Version 1 Draft via RPC', async () => {
+  it('atomically creates Itinerary family and Version 1 Draft via RPC with actor validation', async () => {
     const payload = {
       title: 'Dubai 5-Day Luxury Adventure',
       destinationSummary: 'Explore the Burj Khalifa and Desert Safari',
@@ -237,7 +244,7 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Immutability Integra
 
     const res = await client.query(
       `SELECT public.rpc_create_itinerary_family_and_version($1, $2, $3, $4, $5) as result`,
-      [testTenantA, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Dubai 5-Day Luxury', adminUserId, JSON.stringify(payload)]
+      [testTenantA, adminUserId, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Dubai 5-Day Luxury', JSON.stringify(payload)]
     );
 
     const result = res.rows[0].result;
@@ -263,16 +270,16 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Immutability Integra
     };
 
     const updateRes = await client.query(
-      `SELECT public.rpc_update_itinerary_draft($1, $2, $3, $4) as result`,
-      [testTenantA, versionId, updatedAt, JSON.stringify(updatePayload)]
+      `SELECT public.rpc_update_itinerary_draft($1, $2, $3, $4, $5) as result`,
+      [testTenantA, adminUserId, versionId, updatedAt, JSON.stringify(updatePayload)]
     );
     expect(updateRes.rows[0].result.title).toBe('Dubai 5-Day Luxury VIP Edition');
 
     // 3. Stale update attempt must FAIL with STALE_VERSION
     await expect(
       client.query(
-        `SELECT public.rpc_update_itinerary_draft($1, $2, $3, $4) as result`,
-        [testTenantA, versionId, updatedAt, JSON.stringify({ title: 'Stale Overwrite' })] // passing old updatedAt
+        `SELECT public.rpc_update_itinerary_draft($1, $2, $3, $4, $5) as result`,
+        [testTenantA, adminUserId, versionId, '2020-01-01T00:00:00Z', JSON.stringify({ title: 'Stale Overwrite' })]
       )
     ).rejects.toThrow(/STALE_VERSION/);
   });
@@ -286,8 +293,8 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Immutability Integra
 
     // 1. Finalize version
     const finRes = await client.query(
-      `SELECT public.rpc_finalize_itinerary_version($1, $2) as result`,
-      [testTenantA, versionId]
+      `SELECT public.rpc_finalize_itinerary_version($1, $2, $3) as result`,
+      [testTenantA, adminUserId, versionId]
     );
     expect(finRes.rows[0].result.status).toBe('finalized');
     expect(finRes.rows[0].result.frozenAt).toBeDefined();
@@ -309,6 +316,25 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Immutability Integra
     ).rejects.toThrow(/IMMUTABILITY_VIOLATION/);
   });
 
+  it('enforces single-current-version partial unique index on ItineraryVersions', async () => {
+    const resV1 = await client.query(
+      `SELECT itinerary_id FROM public.itinerary_versions WHERE tenant_id = $1 AND status = 'finalized' LIMIT 1`,
+      [testTenantA]
+    );
+    const itinId = resV1.rows[0].itinerary_id;
+
+    // Attempting to manually insert a second 'finalized' version without superseding must FAIL on partial index
+    await expect(
+      client.query(`
+        INSERT INTO public.itinerary_versions (
+          tenant_id, itinerary_id, version_number, status, frozen_at, title, days
+        ) VALUES (
+          '${testTenantA}', '${itinId}', 99, 'finalized', now(), 'Duplicate Finalized', '[]'::jsonb
+        );
+      `)
+    ).rejects.toThrow(/uq_one_finalized_itinerary_version/);
+  });
+
   it('creates Itinerary Revision v2 without prematurely superseding finalized v1', async () => {
     const resV1 = await client.query(
       `SELECT id, itinerary_id FROM public.itinerary_versions WHERE tenant_id = $1 AND version_number = 1 LIMIT 1`,
@@ -320,7 +346,7 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Immutability Integra
     // 1. Create Revision v2
     const revRes = await client.query(
       `SELECT public.rpc_create_itinerary_revision($1, $2, $3, $4) as result`,
-      [testTenantA, itinId, v1Id, adminUserId]
+      [testTenantA, adminUserId, itinId, v1Id]
     );
     const v2Result = revRes.rows[0].result;
     expect(v2Result.versionNumber).toBe(2);
@@ -332,8 +358,8 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Immutability Integra
 
     // 3. Finalize v2 -> v1 atomically becomes superseded!
     await client.query(
-      `SELECT public.rpc_finalize_itinerary_version($1, $2) as result`,
-      [testTenantA, v2Result.versionId]
+      `SELECT public.rpc_finalize_itinerary_version($1, $2, $3) as result`,
+      [testTenantA, adminUserId, v2Result.versionId]
     );
 
     const checkV1After = await client.query(`SELECT status FROM public.itinerary_versions WHERE id = $1`, [v1Id]);
@@ -382,13 +408,13 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Immutability Integra
       grandTotal: pricing.grandTotal,
       internalCostTotal: pricing.internalCostTotal,
       grossMarginAmount: pricing.grossMarginAmount,
-      validUntil: '2026-11-01',
+      validUntil: '2026-12-31',
       termsAndConditions: 'Standard Rihla Luxury Terms',
     };
 
     const res = await client.query(
       `SELECT public.rpc_create_quote_family_and_version($1, $2, $3, $4, $5) as result`,
-      [testTenantA, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', itinVerId, adminUserId, JSON.stringify(quotePayload)]
+      [testTenantA, adminUserId, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', itinVerId, JSON.stringify(quotePayload)]
     );
 
     const result = res.rows[0].result;
@@ -396,7 +422,7 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Immutability Integra
     expect(result.quoteNumber).toMatch(/^QT-2026-\d{4}$/);
     expect(result.versionNumber).toBe(1);
     expect(result.status).toBe('draft');
-    expect(result.grandTotal).toBe('126000.00'); // 100000 + 25000 - 5000 + 6000 = 126000.00
+    expect(result.grandTotal).toBe('126000.00');
   });
 
   it('rejects creating Quote referencing a DRAFT ItineraryVersion', async () => {
@@ -407,7 +433,7 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Immutability Integra
     );
     const revRes = await client.query(
       `SELECT public.rpc_create_itinerary_revision($1, $2, $3, $4) as result`,
-      [testTenantA, itinRes.rows[0].itinerary_id, itinRes.rows[0].id, adminUserId]
+      [testTenantA, adminUserId, itinRes.rows[0].itinerary_id, itinRes.rows[0].id]
     );
     const draftItinVerId = revRes.rows[0].result.versionId;
 
@@ -418,12 +444,12 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Immutability Integra
     await expect(
       client.query(
         `SELECT public.rpc_create_quote_family_and_version($1, $2, $3, $4, $5) as result`,
-        [testTenantA, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', draftItinVerId, adminUserId, JSON.stringify(pricing)]
+        [testTenantA, adminUserId, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', draftItinVerId, JSON.stringify(pricing)]
       )
     ).rejects.toThrow(/must be finalized before creating a quote/);
   });
 
-  it('issues Quote and enforces commercial content immutability', async () => {
+  it('issues Quote, validates valid_until freshness, and enforces commercial content immutability', async () => {
     const qvRes = await client.query(
       `SELECT id FROM public.quote_versions WHERE tenant_id = $1 AND version_number = 1 LIMIT 1`,
       [testTenantA]
@@ -432,8 +458,8 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Immutability Integra
 
     // 1. Issue quote version
     const issueRes = await client.query(
-      `SELECT public.rpc_issue_quote_version($1, $2) as result`,
-      [testTenantA, qvId]
+      `SELECT public.rpc_issue_quote_version($1, $2, $3) as result`,
+      [testTenantA, adminUserId, qvId]
     );
     expect(issueRes.rows[0].result.status).toBe('issued');
     expect(issueRes.rows[0].result.frozenAt).toBeDefined();
@@ -447,6 +473,28 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Immutability Integra
     await expect(
       client.query(`DELETE FROM public.quote_versions WHERE id = $1`, [qvId])
     ).rejects.toThrow(/IMMUTABILITY_VIOLATION/);
+  });
+
+  it('enforces single-current-version partial unique index on QuoteVersions', async () => {
+    const qvRes = await client.query(
+      `SELECT quote_id, itinerary_version_id FROM public.quote_versions WHERE tenant_id = $1 AND status = 'issued' LIMIT 1`,
+      [testTenantA]
+    );
+    const quoteId = qvRes.rows[0].quote_id;
+    const itinVerId = qvRes.rows[0].itinerary_version_id;
+
+    // Attempting to manually insert a second 'issued' version without superseding must FAIL on partial index
+    await expect(
+      client.query(`
+        INSERT INTO public.quote_versions (
+          tenant_id, quote_id, version_number, itinerary_version_id, status, frozen_at,
+          subtotal, grand_total, line_items
+        ) VALUES (
+          '${testTenantA}', '${quoteId}', 99, '${itinVerId}', 'issued', now(),
+          50000.00, 50000.00, '[]'::jsonb
+        );
+      `)
+    ).rejects.toThrow(/uq_one_issued_quote_version/);
   });
 
   it('creates Quote Revision v2 and issuing v2 atomically supersedes v1', async () => {
@@ -473,7 +521,7 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Immutability Integra
 
     const revRes = await client.query(
       `SELECT public.rpc_create_quote_revision($1, $2, $3, $4, $5, $6) as result`,
-      [testTenantA, quoteId, v1Id, itinVerId, adminUserId, JSON.stringify(pricingV2)]
+      [testTenantA, adminUserId, quoteId, v1Id, itinVerId, JSON.stringify(pricingV2)]
     );
     const v2Result = revRes.rows[0].result;
     expect(v2Result.versionNumber).toBe(2);
@@ -485,8 +533,8 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Immutability Integra
 
     // 3. Issue v2 -> v1 transitions to 'superseded' atomically!
     await client.query(
-      `SELECT public.rpc_issue_quote_version($1, $2) as result`,
-      [testTenantA, v2Result.versionId]
+      `SELECT public.rpc_issue_quote_version($1, $2, $3) as result`,
+      [testTenantA, adminUserId, v2Result.versionId]
     );
 
     const checkV1After = await client.query(`SELECT status FROM public.quote_versions WHERE id = $1`, [v1Id]);
@@ -496,7 +544,7 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Immutability Integra
     expect(checkV2After.rows[0].status).toBe('issued');
   });
 
-  it('fails safe if active acceptance fixture exists when attempting to issue a revision', async () => {
+  it('enforces inquiry-scoped active acceptance safety when attempting to issue a quote', async () => {
     const qvRes = await client.query(
       `SELECT id, quote_id, itinerary_version_id FROM public.quote_versions WHERE tenant_id = $1 AND status = 'issued' LIMIT 1`,
       [testTenantA]
@@ -505,7 +553,7 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Immutability Integra
     const v2Id = qvRes.rows[0].id;
     const itinVerId = qvRes.rows[0].itinerary_version_id;
 
-    // Insert active acceptance fixture for this quote
+    // Insert active acceptance fixture for this inquiry
     await client.query(`
       INSERT INTO public.quote_acceptances (
         tenant_id, inquiry_id, quote_id, quote_version_id, itinerary_version_id, traveler_id,
@@ -523,16 +571,71 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Immutability Integra
     });
     const v3Res = await client.query(
       `SELECT public.rpc_create_quote_revision($1, $2, $3, $4, $5, $6) as result`,
-      [testTenantA, quoteId, v2Id, itinVerId, adminUserId, JSON.stringify(pricingV3)]
+      [testTenantA, adminUserId, quoteId, v2Id, itinVerId, JSON.stringify(pricingV3)]
     );
     const v3Id = v3Res.rows[0].result.versionId;
 
     // Attempting to issue v3 when active acceptance exists must FAIL
     await expect(
-      client.query(`SELECT public.rpc_issue_quote_version($1, $2) as result`, [testTenantA, v3Id])
+      client.query(`SELECT public.rpc_issue_quote_version($1, $2, $3) as result`, [testTenantA, adminUserId, v3Id])
     ).rejects.toThrow(/ACTIVE_ACCEPTANCE_EXISTS/);
 
     // Clean up acceptance fixture
     await client.query(`DELETE FROM public.quote_acceptances WHERE tenant_id = '${testTenantA}'`);
+  });
+
+  // =========================================================================
+  // REAL LOCAL POSTGRESQL RPC AUTHORIZATION TESTS
+  // =========================================================================
+  describe('RPC Privilege & Actor Authorization Security Tests', () => {
+    it('rejects cross-tenant actor parameter in RPC calls', async () => {
+      await expect(
+        client.query(
+          `SELECT public.rpc_create_itinerary_family_and_version($1, $2, $3, $4, $5) as result`,
+          [testTenantA, tenantBUserId, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Cross-Tenant Hack', '{}']
+        )
+      ).rejects.toThrow(/CROSS_TENANT_VIOLATION/);
+    });
+
+    it('rejects nonexistent actor user in RPC calls', async () => {
+      await expect(
+        client.query(
+          `SELECT public.rpc_create_itinerary_family_and_version($1, $2, $3, $4, $5) as result`,
+          [testTenantA, '00000000-0000-0000-0000-000000000000', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Fake User Hack', '{}']
+        )
+      ).rejects.toThrow(/UNAUTHORIZED/);
+    });
+
+    it('rejects Super Admin actor in operational RPC calls', async () => {
+      await expect(
+        client.query(
+          `SELECT public.rpc_create_itinerary_family_and_version($1, $2, $3, $4, $5) as result`,
+          [testTenantA, superAdminUserId, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Super Admin Hack', '{}']
+        )
+      ).rejects.toThrow(/FORBIDDEN/);
+    });
+
+    it('rejects Viewer actor in operational mutation RPC calls', async () => {
+      await expect(
+        client.query(
+          `SELECT public.rpc_create_itinerary_family_and_version($1, $2, $3, $4, $5) as result`,
+          [testTenantA, viewerUserId, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Viewer Mutation Hack', '{}']
+        )
+      ).rejects.toThrow(/FORBIDDEN/);
+    });
+
+    it('direct execution as non-privileged app_user fails closed (permission denied)', async () => {
+      await client.query('BEGIN');
+      await client.query('SET LOCAL ROLE app_user');
+
+      await expect(
+        client.query(
+          `SELECT public.rpc_create_itinerary_family_and_version($1, $2, $3, $4, $5) as result`,
+          [testTenantA, consultantUserId, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Direct Client Call', '{}']
+        )
+      ).rejects.toThrow(/permission denied/);
+
+      await client.query('ROLLBACK');
+    });
   });
 });

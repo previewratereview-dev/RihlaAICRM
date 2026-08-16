@@ -2,13 +2,24 @@
 --
 -- Implements:
 -- 1. Database-enforced content immutability triggers on frozen ItineraryVersion and QuoteVersion
--- 2. Atomic SECURITY DEFINER RPCs for family creation, revision branching, and optimistic concurrency
--- 3. Atomic year-scoped sequential quote number generation
--- 4. Idempotent finalization and issuance transitions with automatic prior-version supersession
--- 5. Strict search_path and role permission controls
+-- 2. Single-current-version partial unique indexes (at most one 'finalized' ItineraryVersion and one 'issued' QuoteVersion)
+-- 3. Atomic SECURITY DEFINER RPCs with database-side actor & role revalidation
+-- 4. Inquiry-scoped active acceptance safety and valid_until freshness check at Quote issuance
+-- 5. Strict EXECUTE permissions (REVOKE FROM PUBLIC, anon, authenticated; GRANT TO service_role, postgres)
 
 -- ============================================================================
--- 1. ITINERARY VERSION IMMUTABILITY TRIGGER
+-- 1. SINGLE-CURRENT-VERSION DATABASE PARTIAL UNIQUE INDEXES
+-- ============================================================================
+CREATE UNIQUE INDEX IF NOT EXISTS uq_one_finalized_itinerary_version
+  ON public.itinerary_versions (tenant_id, itinerary_id)
+  WHERE status = 'finalized';
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_one_issued_quote_version
+  ON public.quote_versions (tenant_id, quote_id)
+  WHERE status = 'issued';
+
+-- ============================================================================
+-- 2. ITINERARY VERSION IMMUTABILITY TRIGGER
 -- ============================================================================
 CREATE OR REPLACE FUNCTION public.protect_itinerary_version_immutability()
 RETURNS TRIGGER AS $$
@@ -23,7 +34,7 @@ BEGIN
   IF TG_OP = 'UPDATE' THEN
     -- If the record was already frozen/non-draft:
     IF OLD.status != 'draft' OR OLD.frozen_at IS NOT NULL THEN
-      -- Prohibit reviving back to draft or changing identity
+      -- Prohibit reverting to draft or changing immutable identity
       IF NEW.status = 'draft' THEN
         RAISE EXCEPTION 'LIFECYCLE_VIOLATION: Cannot revert frozen ItineraryVersion % from % to draft', OLD.id, OLD.status;
       END IF;
@@ -61,7 +72,7 @@ CREATE TRIGGER trg_protect_itinerary_version_immutability
   FOR EACH ROW EXECUTE FUNCTION public.protect_itinerary_version_immutability();
 
 -- ============================================================================
--- 2. QUOTE VERSION IMMUTABILITY TRIGGER
+-- 3. QUOTE VERSION IMMUTABILITY TRIGGER
 -- ============================================================================
 CREATE OR REPLACE FUNCTION public.protect_quote_version_immutability()
 RETURNS TRIGGER AS $$
@@ -76,7 +87,7 @@ BEGIN
   IF TG_OP = 'UPDATE' THEN
     -- If the record was already frozen/non-draft:
     IF OLD.status != 'draft' OR OLD.frozen_at IS NOT NULL THEN
-      -- Prohibit reviving back to draft
+      -- Prohibit reverting to draft
       IF NEW.status = 'draft' THEN
         RAISE EXCEPTION 'LIFECYCLE_VIOLATION: Cannot revert frozen QuoteVersion % from % to draft', OLD.id, OLD.status;
       END IF;
@@ -117,38 +128,99 @@ CREATE TRIGGER trg_protect_quote_version_immutability
   FOR EACH ROW EXECUTE FUNCTION public.protect_quote_version_immutability();
 
 -- ============================================================================
--- 3. ATOMIC ITINERARY CREATION & LIFECYCLE RPCS
+-- 4. DROP EXISTING FUNCTIONS FOR CLEAN SIGNATURE UPDATE
+-- ============================================================================
+DO $$ 
+DECLARE
+  r RECORD;
+BEGIN
+  FOR r IN (
+    SELECT p.proname, pg_get_function_identity_arguments(p.oid) as args
+    FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public' AND (p.proname LIKE 'rpc_%' OR p.proname = '_validate_domain_actor')
+  ) LOOP
+    EXECUTE 'DROP FUNCTION IF EXISTS public.' || quote_ident(r.proname) || '(' || r.args || ') CASCADE';
+  END LOOP;
+END $$;
+
+-- ============================================================================
+-- 5. DB-SIDE ACTOR & ROLE VALIDATION HELPER
+-- ============================================================================
+CREATE OR REPLACE FUNCTION public._validate_domain_actor(
+  p_tenant_id text,
+  p_actor_user_id uuid,
+  p_require_internal_pricing boolean DEFAULT false
+)
+RETURNS text AS $$
+DECLARE
+  v_role text;
+  v_actor_tenant text;
+BEGIN
+  SELECT role, tenant_id INTO v_role, v_actor_tenant
+  FROM public.profiles
+  WHERE id = p_actor_user_id;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'UNAUTHORIZED: Actor user % does not exist in profiles', p_actor_user_id;
+  END IF;
+
+  IF v_role = 'super_admin' THEN
+    RAISE EXCEPTION 'FORBIDDEN: Super Admin cannot perform direct agency operational actions';
+  END IF;
+
+  IF v_actor_tenant IS DISTINCT FROM p_tenant_id THEN
+    RAISE EXCEPTION 'CROSS_TENANT_VIOLATION: Actor % belongs to tenant %, not requested tenant %',
+      p_actor_user_id, v_actor_tenant, p_tenant_id;
+  END IF;
+
+  IF v_role NOT IN ('admin', 'manager', 'consultant', 'specialist') THEN
+    RAISE EXCEPTION 'FORBIDDEN: Role % is not permitted to perform agency operational mutations', v_role;
+  END IF;
+
+  IF p_require_internal_pricing AND v_role NOT IN ('admin', 'manager') THEN
+    RAISE EXCEPTION 'FORBIDDEN: Role % is not permitted to modify internal supplier pricing', v_role;
+  END IF;
+
+  RETURN v_role;
+END;
+$$ LANGUAGE plpgsql STABLE SET search_path = public, pg_temp;
+
+-- ============================================================================
+-- 5. ATOMIC ITINERARY RPCS
 -- ============================================================================
 
--- 3.1 Create Itinerary Family and Version 1 Draft
+-- 5.1 Create Itinerary Family and Version 1 Draft
 CREATE OR REPLACE FUNCTION public.rpc_create_itinerary_family_and_version(
   p_tenant_id text,
+  p_actor_user_id uuid,
   p_inquiry_id uuid,
   p_title text,
-  p_created_by uuid,
   p_version_payload jsonb
 )
 RETURNS jsonb AS $$
 DECLARE
   v_itinerary_id uuid;
-  v_version_id uuid;
   v_version_row public.itinerary_versions%ROWTYPE;
 BEGIN
-  -- 1. Validate Inquiry exists in tenant
+  -- Validate human actor
+  PERFORM public._validate_domain_actor(p_tenant_id, p_actor_user_id, false);
+
+  -- Validate Inquiry exists in tenant
   IF NOT EXISTS (
     SELECT 1 FROM public.inquiries WHERE id = p_inquiry_id AND tenant_id = p_tenant_id
   ) THEN
     RAISE EXCEPTION 'ENTITY_NOT_FOUND: Inquiry % does not exist in tenant %', p_inquiry_id, p_tenant_id;
   END IF;
 
-  -- 2. Create Itinerary Header
+  -- Create Itinerary Header (created_by bound strictly to validated actor)
   INSERT INTO public.itineraries (
     tenant_id, inquiry_id, title, created_by
   ) VALUES (
-    p_tenant_id, p_inquiry_id, p_title, p_created_by
+    p_tenant_id, p_inquiry_id, p_title, p_actor_user_id
   ) RETURNING id INTO v_itinerary_id;
 
-  -- 3. Create Version 1 Draft
+  -- Create Version 1 Draft
   INSERT INTO public.itinerary_versions (
     tenant_id, itinerary_id, version_number, status, frozen_at,
     title, destination_summary, start_date, end_date, duration_days,
@@ -170,7 +242,7 @@ BEGIN
     ARRAY(SELECT jsonb_array_elements_text(COALESCE(p_version_payload->'inclusions', '[]'::jsonb))),
     ARRAY(SELECT jsonb_array_elements_text(COALESCE(p_version_payload->'exclusions', '[]'::jsonb))),
     COALESCE((p_version_payload->>'itinerarySchemaVersion')::int, 1),
-    p_created_by
+    p_actor_user_id
   ) RETURNING * INTO v_version_row;
 
   RETURN jsonb_build_object(
@@ -184,9 +256,10 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 
--- 3.2 Update Itinerary Draft with Optimistic Concurrency
+-- 5.2 Update Itinerary Draft with Optimistic Concurrency
 CREATE OR REPLACE FUNCTION public.rpc_update_itinerary_draft(
   p_tenant_id text,
+  p_actor_user_id uuid,
   p_version_id uuid,
   p_expected_updated_at timestamptz,
   p_payload jsonb
@@ -195,6 +268,8 @@ RETURNS jsonb AS $$
 DECLARE
   v_version public.itinerary_versions%ROWTYPE;
 BEGIN
+  PERFORM public._validate_domain_actor(p_tenant_id, p_actor_user_id, false);
+
   -- Lock the draft version row
   SELECT * INTO v_version
   FROM public.itinerary_versions
@@ -209,9 +284,8 @@ BEGIN
     RAISE EXCEPTION 'IMMUTABILITY_VIOLATION: Cannot edit ItineraryVersion % because it is %', p_version_id, v_version.status;
   END IF;
 
-  -- Optimistic concurrency check (within 1 ms precision to avoid microsecond rounding diffs)
-  IF p_expected_updated_at IS NOT NULL AND 
-     abs(extract(epoch from (v_version.updated_at - p_expected_updated_at))) > 0.001 THEN
+  -- Optimistic concurrency check
+  IF p_expected_updated_at IS NOT NULL AND date_trunc('milliseconds', v_version.updated_at) != date_trunc('milliseconds', p_expected_updated_at) THEN
     RAISE EXCEPTION 'STALE_VERSION: The itinerary draft has been updated by another user (expected %, current %)',
       p_expected_updated_at, v_version.updated_at;
   END IF;
@@ -241,12 +315,12 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 
--- 3.3 Create Itinerary Revision (Clones source version into new Draft)
+-- 5.3 Create Itinerary Revision
 CREATE OR REPLACE FUNCTION public.rpc_create_itinerary_revision(
   p_tenant_id text,
+  p_actor_user_id uuid,
   p_itinerary_id uuid,
-  p_source_version_id uuid,
-  p_created_by uuid
+  p_source_version_id uuid
 )
 RETURNS jsonb AS $$
 DECLARE
@@ -254,6 +328,8 @@ DECLARE
   v_next_version int;
   v_new_version public.itinerary_versions%ROWTYPE;
 BEGIN
+  PERFORM public._validate_domain_actor(p_tenant_id, p_actor_user_id, false);
+
   -- Lock family header
   PERFORM 1 FROM public.itineraries 
   WHERE id = p_itinerary_id AND tenant_id = p_tenant_id
@@ -273,7 +349,7 @@ BEGIN
       p_source_version_id, p_itinerary_id, p_tenant_id;
   END IF;
 
-  -- Allocate next version number atomically
+  -- Allocate next version number atomically under header lock
   SELECT COALESCE(MAX(version_number), 0) + 1 INTO v_next_version
   FROM public.itinerary_versions
   WHERE itinerary_id = p_itinerary_id AND tenant_id = p_tenant_id;
@@ -300,7 +376,7 @@ BEGIN
     v_source.inclusions,
     v_source.exclusions,
     v_source.itinerary_schema_version,
-    p_created_by
+    p_actor_user_id
   ) RETURNING * INTO v_new_version;
 
   RETURN jsonb_build_object(
@@ -314,15 +390,18 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 
--- 3.4 Finalize Itinerary Version
+-- 5.4 Finalize Itinerary Version
 CREATE OR REPLACE FUNCTION public.rpc_finalize_itinerary_version(
   p_tenant_id text,
+  p_actor_user_id uuid,
   p_version_id uuid
 )
 RETURNS jsonb AS $$
 DECLARE
   v_version public.itinerary_versions%ROWTYPE;
 BEGIN
+  PERFORM public._validate_domain_actor(p_tenant_id, p_actor_user_id, false);
+
   -- Select version for update
   SELECT * INTO v_version
   FROM public.itinerary_versions
@@ -349,7 +428,7 @@ BEGIN
     RAISE EXCEPTION 'LIFECYCLE_VIOLATION: Cannot finalize ItineraryVersion % with status %', p_version_id, v_version.status;
   END IF;
 
-  -- Lock family header to serialize transitions
+  -- Lock family header to serialize concurrent finalizations
   PERFORM 1 FROM public.itineraries 
   WHERE id = v_version.itinerary_id AND tenant_id = p_tenant_id 
   FOR UPDATE;
@@ -380,15 +459,15 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 
 -- ============================================================================
--- 4. ATOMIC QUOTE CREATION & LIFECYCLE RPCS
+-- 6. ATOMIC QUOTE RPCS
 -- ============================================================================
 
--- 4.1 Create Quote Family and Version 1 Draft
+-- 6.1 Create Quote Family and Version 1 Draft
 CREATE OR REPLACE FUNCTION public.rpc_create_quote_family_and_version(
   p_tenant_id text,
+  p_actor_user_id uuid,
   p_inquiry_id uuid,
   p_itinerary_version_id uuid,
-  p_created_by uuid,
   p_pricing_payload jsonb
 )
 RETURNS jsonb AS $$
@@ -400,14 +479,16 @@ DECLARE
   v_itin_version public.itinerary_versions%ROWTYPE;
   v_quote_version public.quote_versions%ROWTYPE;
 BEGIN
-  -- 1. Validate Inquiry exists in tenant
+  PERFORM public._validate_domain_actor(p_tenant_id, p_actor_user_id, false);
+
+  -- Validate Inquiry exists in tenant
   IF NOT EXISTS (
     SELECT 1 FROM public.inquiries WHERE id = p_inquiry_id AND tenant_id = p_tenant_id
   ) THEN
     RAISE EXCEPTION 'ENTITY_NOT_FOUND: Inquiry % does not exist in tenant %', p_inquiry_id, p_tenant_id;
   END IF;
 
-  -- 2. Validate attached ItineraryVersion is finalized and belongs to the same inquiry
+  -- Validate attached ItineraryVersion is finalized and belongs to the same inquiry
   SELECT iv.* INTO v_itin_version
   FROM public.itinerary_versions iv
   JOIN public.itineraries i ON i.id = iv.itinerary_id AND i.tenant_id = iv.tenant_id
@@ -423,7 +504,7 @@ BEGIN
       p_itinerary_version_id, v_itin_version.status;
   END IF;
 
-  -- 3. Atomically allocate tenant/year quote number
+  -- Atomically allocate tenant/year quote number
   v_year := EXTRACT(YEAR FROM now())::int;
   INSERT INTO public.tenant_quote_sequences (tenant_id, year, last_number)
   VALUES (p_tenant_id, v_year, 1)
@@ -433,14 +514,14 @@ BEGIN
 
   v_quote_number := format('QT-%s-%s', v_year, lpad(v_seq::text, 4, '0'));
 
-  -- 4. Create Quote Header
+  -- Create Quote Header
   INSERT INTO public.quotes (
     tenant_id, inquiry_id, quote_number, created_by
   ) VALUES (
-    p_tenant_id, p_inquiry_id, v_quote_number, p_created_by
+    p_tenant_id, p_inquiry_id, v_quote_number, p_actor_user_id
   ) RETURNING id INTO v_quote_id;
 
-  -- 5. Create Quote Version 1 Draft
+  -- Create Quote Version 1 Draft
   INSERT INTO public.quote_versions (
     tenant_id, quote_id, version_number, itinerary_version_id, status, frozen_at,
     currency, line_items, quote_schema_version,
@@ -467,7 +548,7 @@ BEGIN
     (p_pricing_payload->>'validUntil')::date,
     p_pricing_payload->>'termsAndConditions',
     p_pricing_payload->>'customerNotes',
-    p_created_by
+    p_actor_user_id
   ) RETURNING * INTO v_quote_version;
 
   RETURN jsonb_build_object(
@@ -483,9 +564,10 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 
--- 4.2 Update Quote Draft with Optimistic Concurrency
+-- 6.2 Update Quote Draft with Optimistic Concurrency
 CREATE OR REPLACE FUNCTION public.rpc_update_quote_draft(
   p_tenant_id text,
+  p_actor_user_id uuid,
   p_version_id uuid,
   p_expected_updated_at timestamptz,
   p_pricing_payload jsonb
@@ -498,6 +580,8 @@ DECLARE
   v_itin_status text;
   v_target_itinerary_version_id uuid;
 BEGIN
+  PERFORM public._validate_domain_actor(p_tenant_id, p_actor_user_id, false);
+
   -- Lock target draft version
   SELECT * INTO v_version
   FROM public.quote_versions
@@ -513,8 +597,7 @@ BEGIN
   END IF;
 
   -- Optimistic concurrency check
-  IF p_expected_updated_at IS NOT NULL AND 
-     abs(extract(epoch from (v_version.updated_at - p_expected_updated_at))) > 0.001 THEN
+  IF p_expected_updated_at IS NOT NULL AND date_trunc('milliseconds', v_version.updated_at) != date_trunc('milliseconds', p_expected_updated_at) THEN
     RAISE EXCEPTION 'STALE_VERSION: The quote draft has been updated by another user (expected %, current %)',
       p_expected_updated_at, v_version.updated_at;
   END IF;
@@ -574,13 +657,13 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 
--- 4.3 Create Quote Revision
+-- 6.3 Create Quote Revision
 CREATE OR REPLACE FUNCTION public.rpc_create_quote_revision(
   p_tenant_id text,
+  p_actor_user_id uuid,
   p_quote_id uuid,
   p_source_version_id uuid,
   p_itinerary_version_id uuid,
-  p_created_by uuid,
   p_pricing_payload jsonb
 )
 RETURNS jsonb AS $$
@@ -593,6 +676,8 @@ DECLARE
   v_itin_inquiry_id uuid;
   v_itin_status text;
 BEGIN
+  PERFORM public._validate_domain_actor(p_tenant_id, p_actor_user_id, false);
+
   -- Lock family header
   PERFORM 1 FROM public.quotes 
   WHERE id = p_quote_id AND tenant_id = p_tenant_id
@@ -665,7 +750,7 @@ BEGIN
     COALESCE((p_pricing_payload->>'validUntil')::date, v_source.valid_until),
     COALESCE(p_pricing_payload->>'termsAndConditions', v_source.terms_and_conditions),
     COALESCE(p_pricing_payload->>'customerNotes', v_source.customer_notes),
-    p_created_by
+    p_actor_user_id
   ) RETURNING * INTO v_new_version;
 
   RETURN jsonb_build_object(
@@ -680,16 +765,20 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 
--- 4.4 Issue Quote Version
+-- 6.4 Issue Quote Version
 CREATE OR REPLACE FUNCTION public.rpc_issue_quote_version(
   p_tenant_id text,
+  p_actor_user_id uuid,
   p_version_id uuid
 )
 RETURNS jsonb AS $$
 DECLARE
   v_version public.quote_versions%ROWTYPE;
   v_itin_status text;
+  v_inquiry_id uuid;
 BEGIN
+  PERFORM public._validate_domain_actor(p_tenant_id, p_actor_user_id, false);
+
   -- Select version for update
   SELECT * INTO v_version
   FROM public.quote_versions
@@ -716,6 +805,11 @@ BEGIN
     RAISE EXCEPTION 'LIFECYCLE_VIOLATION: Cannot issue QuoteVersion % with status %', p_version_id, v_version.status;
   END IF;
 
+  -- Validate valid_until date is not already expired
+  IF v_version.valid_until IS NOT NULL AND v_version.valid_until < CURRENT_DATE THEN
+    RAISE EXCEPTION 'INVALID_VALIDITY_DATE: Cannot issue Quote with an expired valid_until date (%)', v_version.valid_until;
+  END IF;
+
   -- Verify attached itinerary is finalized
   SELECT status INTO v_itin_status
   FROM public.itinerary_versions
@@ -726,18 +820,23 @@ BEGIN
       v_version.itinerary_version_id, v_itin_status;
   END IF;
 
+  -- Get inquiry_id for this quote
+  SELECT inquiry_id INTO v_inquiry_id
+  FROM public.quotes
+  WHERE id = v_version.quote_id AND tenant_id = p_tenant_id;
+
+  -- Fail safe if ANY active (non-void) acceptance exists on this inquiry across ANY quote family
+  IF EXISTS (
+    SELECT 1 FROM public.quote_acceptances
+    WHERE inquiry_id = v_inquiry_id AND tenant_id = p_tenant_id AND voided_at IS NULL
+  ) THEN
+    RAISE EXCEPTION 'ACTIVE_ACCEPTANCE_EXISTS: Cannot issue new quote version while an active acceptance exists on Inquiry %', v_inquiry_id;
+  END IF;
+
   -- Lock family header
   PERFORM 1 FROM public.quotes 
   WHERE id = v_version.quote_id AND tenant_id = p_tenant_id 
   FOR UPDATE;
-
-  -- Fail safe if an active acceptance exists on a prior version of this quote
-  IF EXISTS (
-    SELECT 1 FROM public.quote_acceptances
-    WHERE quote_id = v_version.quote_id AND tenant_id = p_tenant_id AND voided_at IS NULL
-  ) THEN
-    RAISE EXCEPTION 'ACTIVE_ACCEPTANCE_EXISTS: Cannot issue new version while an active quote acceptance exists on this inquiry.';
-  END IF;
 
   -- Atomically supersede previous issued version in the same quote family
   UPDATE public.quote_versions
@@ -763,3 +862,26 @@ BEGIN
   );
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
+
+-- ============================================================================
+-- 7. STRICT EXECUTE PRIVILEGES ON SECURITY DEFINER RPCS
+-- ============================================================================
+REVOKE ALL ON FUNCTION public._validate_domain_actor(text, uuid, boolean) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.rpc_create_itinerary_family_and_version(text, uuid, uuid, text, jsonb) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.rpc_update_itinerary_draft(text, uuid, uuid, timestamptz, jsonb) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.rpc_create_itinerary_revision(text, uuid, uuid, uuid) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.rpc_finalize_itinerary_version(text, uuid, uuid) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.rpc_create_quote_family_and_version(text, uuid, uuid, uuid, jsonb) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.rpc_update_quote_draft(text, uuid, uuid, timestamptz, jsonb) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.rpc_create_quote_revision(text, uuid, uuid, uuid, uuid, jsonb) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.rpc_issue_quote_version(text, uuid, uuid) FROM PUBLIC, anon, authenticated;
+
+GRANT EXECUTE ON FUNCTION public._validate_domain_actor(text, uuid, boolean) TO service_role, postgres;
+GRANT EXECUTE ON FUNCTION public.rpc_create_itinerary_family_and_version(text, uuid, uuid, text, jsonb) TO service_role, postgres;
+GRANT EXECUTE ON FUNCTION public.rpc_update_itinerary_draft(text, uuid, uuid, timestamptz, jsonb) TO service_role, postgres;
+GRANT EXECUTE ON FUNCTION public.rpc_create_itinerary_revision(text, uuid, uuid, uuid) TO service_role, postgres;
+GRANT EXECUTE ON FUNCTION public.rpc_finalize_itinerary_version(text, uuid, uuid) TO service_role, postgres;
+GRANT EXECUTE ON FUNCTION public.rpc_create_quote_family_and_version(text, uuid, uuid, uuid, jsonb) TO service_role, postgres;
+GRANT EXECUTE ON FUNCTION public.rpc_update_quote_draft(text, uuid, uuid, timestamptz, jsonb) TO service_role, postgres;
+GRANT EXECUTE ON FUNCTION public.rpc_create_quote_revision(text, uuid, uuid, uuid, uuid, jsonb) TO service_role, postgres;
+GRANT EXECUTE ON FUNCTION public.rpc_issue_quote_version(text, uuid, uuid) TO service_role, postgres;
