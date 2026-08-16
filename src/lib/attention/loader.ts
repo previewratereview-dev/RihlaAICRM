@@ -108,29 +108,29 @@ export async function validateAttentionAuth(
 }
 
 /**
- * Helper to parse various legacy budget formats into min/max numeric values.
+ * Helper to parse legacy budget strings into min/max numeric values.
+ * 
+ * IMPORTANT: Derives budget ONLY from customer-supplied qualification input (leads.budget).
+ * NEVER falls back to inquiries.expected_value or leads.deal_value (opportunity pipeline value).
  */
 export function parseBudgetValue(
-  budgetString: string | null | undefined,
-  expectedValue: number | string | null | undefined
+  budgetString: string | null | undefined
 ): { min: number | null; max: number | null } {
   let min: number | null = null;
   let max: number | null = null;
 
-  if (expectedValue !== null && expectedValue !== undefined) {
-    const num = typeof expectedValue === 'number' ? expectedValue : parseFloat(String(expectedValue));
-    if (!isNaN(num) && num > 0) {
-      min = num;
-      max = num;
-    }
-  }
-
   if (budgetString && budgetString.trim() !== '') {
     const cleaned = budgetString.replace(/[₹$,]/g, '').trim();
-    const isLakh = /lakh|lac|\bl\b/i.test(cleaned);
-    const isThousands = /(?<!la[kc]h?)\bk\b|(?<=\d)k/i.test(cleaned);
 
-    // Check for range: "50000 - 100000" or "50k - 100k"
+    // Ambiguous non-numeric strings ("unknown", "flexible", "tbd", "n/a", etc.)
+    if (!/\d/.test(cleaned)) {
+      return { min: null, max: null };
+    }
+
+    const isLakh = /lakh|lac|(?<=\d)l\b|\bl\b/i.test(cleaned);
+    const isThousands = /(?<!la[kc]h?)\bk\b|(?<=\d)k\b/i.test(cleaned);
+
+    // Check for range: "50000 - 100000", "50k - 100k", "1-2 lakh", "1.5L - 2L"
     const rangeMatch = cleaned.match(/(\d+(?:\.\d+)?)\s*(?:k|lakh|lac|l)?\s*[-–to]\s*(\d+(?:\.\d+)?)\s*(k|lakh|lac|l)?/i);
     if (rangeMatch) {
       let rMin = parseFloat(rangeMatch[1]);
@@ -145,7 +145,7 @@ export function parseBudgetValue(
       if (!isNaN(rMin) && rMin > 0) min = rMin;
       if (!isNaN(rMax) && rMax > 0) max = rMax;
     } else {
-      // Single number match
+      // Single number match: "200000", "2 lakh", "50k", "1.5L"
       const singleMatch = cleaned.match(/(\d+(?:\.\d+)?)/);
       if (singleMatch) {
         let val = parseFloat(singleMatch[1]);
@@ -180,6 +180,7 @@ export async function loadInquiryAttentionFact(
     )
     .eq('tenant_id', tenantId)
     .eq('id', inquiryId)
+    .is('archived_at', null)
     .maybeSingle();
 
   if (inqErr || !inq) {
@@ -212,10 +213,8 @@ export async function loadInquiryAttentionFact(
     }
   }
 
-  const { min: budgetMin, max: budgetMax } = parseBudgetValue(
-    budgetString,
-    inq.expected_value
-  );
+  // Pure qualification budget derivation (never falls back to expected_value)
+  const { min: budgetMin, max: budgetMax } = parseBudgetValue(budgetString);
 
   return {
     inquiryId: inq.id,
@@ -254,7 +253,8 @@ export async function loadConversationAttentionFacts(
     .eq('tenant_id', tenantId)
     .or(
       `id.eq.${inquiryIdOrConversationId},inquiry_id.eq.${inquiryIdOrConversationId},legacy_lead_id.eq.${inquiryIdOrConversationId}`
-    );
+    )
+    .order('id', { ascending: true });
 
   if (error || !conversations || conversations.length === 0) {
     return [];
@@ -314,7 +314,7 @@ export async function loadTenantAttentionFacts(
 }> {
   const batchSize = 1000;
 
-  // 1. Paginated load of all active inquiries
+  // 1. Paginated load of all active inquiries with deterministic unique ordering
   const rawInquiries: Array<{
     id: string;
     tenant_id: string;
@@ -339,6 +339,7 @@ export async function loadTenantAttentionFacts(
       .eq('tenant_id', tenantId)
       .is('archived_at', null)
       .in('pipeline_stage', ACTIVE_INQUIRY_STAGES as unknown as string[])
+      .order('id', { ascending: true })
       .range(inqOffset, inqOffset + batchSize - 1);
 
     if (error) {
@@ -391,10 +392,8 @@ export async function loadTenantAttentionFacts(
       numberOfTravelers = !isNaN(num) && num > 0 ? num : null;
     }
 
-    const { min: budgetMin, max: budgetMax } = parseBudgetValue(
-      lead?.budget,
-      inq.expected_value
-    );
+    // Pure qualification budget derivation (never falls back to expected_value)
+    const { min: budgetMin, max: budgetMax } = parseBudgetValue(lead?.budget);
 
     return {
       inquiryId: inq.id,
@@ -417,7 +416,7 @@ export async function loadTenantAttentionFacts(
     };
   });
 
-  // 3. Paginated load of open conversations
+  // 3. Paginated load of open conversations with deterministic unique ordering
   const rawConversations: Array<{
     id: string;
     tenant_id: string;
@@ -434,6 +433,7 @@ export async function loadTenantAttentionFacts(
       .select('id, tenant_id, inquiry_id, legacy_lead_id, channel, status')
       .eq('tenant_id', tenantId)
       .eq('status', 'open')
+      .order('id', { ascending: true })
       .range(convOffset, convOffset + batchSize - 1);
 
     if (error) {
@@ -445,7 +445,7 @@ export async function loadTenantAttentionFacts(
     convOffset += batchSize;
   }
 
-  // 4. Batch fetch messages metadata for open conversations
+  // 4. Batch fetch messages metadata for open conversations with pagination protection
   const conversationFacts: NormalizedConversationFact[] = [];
   const convIds = rawConversations.map((c) => c.id);
 
@@ -453,19 +453,30 @@ export async function loadTenantAttentionFacts(
 
   for (let i = 0; i < convIds.length; i += chunkSize) {
     const chunk = convIds.slice(i, i + chunkSize);
-    const { data: msgs } = await supabase
-      .from('messages')
-      .select('conversation_id, sender_type, created_at')
-      .in('conversation_id', chunk)
-      .order('created_at', { ascending: true });
+    let msgOffset = 0;
+    const msgLimit = 1000;
 
-    if (msgs) {
+    while (true) {
+      const { data: msgs, error: msgErr } = await supabase
+        .from('messages')
+        .select('conversation_id, sender_type, created_at')
+        .in('conversation_id', chunk)
+        .order('conversation_id', { ascending: true })
+        .order('created_at', { ascending: true })
+        .range(msgOffset, msgOffset + msgLimit - 1);
+
+      if (msgErr) throw msgErr;
+      if (!msgs || msgs.length === 0) break;
+
       for (const m of msgs) {
         if (!messagesByConv.has(m.conversation_id)) {
           messagesByConv.set(m.conversation_id, []);
         }
         messagesByConv.get(m.conversation_id)!.push(m);
       }
+
+      if (msgs.length < msgLimit) break;
+      msgOffset += msgLimit;
     }
   }
 

@@ -1,12 +1,14 @@
 /**
  * Phase AI-4B: Server Attention Facts Loader Tests
  * 
- * Classification: MOCKED DATA ACCESS TEST
+ * Classification: MOCKED DATA ACCESS TEST & STATIC ASSERTION
  * Verifies server-side query construction, tenant scoping, Super Admin rejection,
- * pagination completeness, and DTO normalization.
+ * pagination completeness, message completeness, budget parser truth table, and DTO normalization.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+import fs from 'fs';
+import path from 'path';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   validateAttentionAuth,
@@ -18,14 +20,46 @@ import {
   parseBudgetValue,
 } from '@/lib/attention/loader';
 
-describe('AI-4B Server Facts Loader: Budget Parser', () => {
-  it('parses numeric values, ranges, lakh/k notation correctly', () => {
-    expect(parseBudgetValue('₹2,50,000', null)).toEqual({ min: 250000, max: 250000 });
-    expect(parseBudgetValue('50k - 100k', null)).toEqual({ min: 50000, max: 100000 });
-    expect(parseBudgetValue('1.5 Lakh - 2 Lakh', null)).toEqual({ min: 150000, max: 200000 });
-    expect(parseBudgetValue(null, 300000)).toEqual({ min: 300000, max: 300000 });
-    expect(parseBudgetValue('', null)).toEqual({ min: null, max: null });
-    expect(parseBudgetValue(null, null)).toEqual({ min: null, max: null });
+describe('AI-4B Server Facts Loader: Budget Parser Truth Table', () => {
+  it('parses all required canonical and informal budget string formats', () => {
+    // Exact requested cases:
+    expect(parseBudgetValue('200000')).toEqual({ min: 200000, max: 200000 });
+    expect(parseBudgetValue('1-2 lakh')).toEqual({ min: 100000, max: 200000 });
+    expect(parseBudgetValue('2 lakh')).toEqual({ min: 200000, max: 200000 });
+    expect(parseBudgetValue('50k')).toEqual({ min: 50000, max: 50000 });
+    expect(parseBudgetValue('₹1.5L')).toEqual({ min: 150000, max: 150000 });
+    expect(parseBudgetValue('unknown')).toEqual({ min: null, max: null });
+    expect(parseBudgetValue('flexible')).toEqual({ min: null, max: null });
+    expect(parseBudgetValue('')).toEqual({ min: null, max: null });
+    expect(parseBudgetValue(null)).toEqual({ min: null, max: null });
+    expect(parseBudgetValue(undefined)).toEqual({ min: null, max: null });
+  });
+
+  it('parses complex ranges, rupee symbols, and Lakh notations', () => {
+    expect(parseBudgetValue('₹2,50,000')).toEqual({ min: 250000, max: 250000 });
+    expect(parseBudgetValue('50k - 100k')).toEqual({ min: 50000, max: 100000 });
+    expect(parseBudgetValue('1.5 Lakh - 2 Lakh')).toEqual({ min: 150000, max: 200000 });
+    expect(parseBudgetValue('1.5L - 2.5L')).toEqual({ min: 150000, max: 250000 });
+  });
+
+  it('does NOT invent a numeric budget when parsing is ambiguous', () => {
+    expect(parseBudgetValue('tbd')).toEqual({ min: null, max: null });
+    expect(parseBudgetValue('n/a')).toEqual({ min: null, max: null });
+    expect(parseBudgetValue('discuss with agent')).toEqual({ min: null, max: null });
+    expect(parseBudgetValue('open')).toEqual({ min: null, max: null });
+  });
+});
+
+describe('AI-4B Server Facts Loader: Expected Value Boundary (Mandate 3)', () => {
+  it('parseBudgetValue ONLY takes budget string and NEVER uses expected_value or deal_value', () => {
+    const loaderCode = fs.readFileSync(
+      path.join(process.cwd(), 'src/lib/attention/loader.ts'),
+      'utf-8'
+    );
+
+    // Static assertion: parseBudgetValue signature takes only budgetString
+    expect(loaderCode).toMatch(/export function parseBudgetValue\(\s*budgetString/);
+    expect(loaderCode).not.toMatch(/export function parseBudgetValue\([^)]*expectedValue/);
   });
 });
 
@@ -127,7 +161,10 @@ describe('AI-4B Server Facts Loader: Authentication & Authority Boundary', () =>
 });
 
 describe('AI-4B Server Facts Loader: loadInquiryAttentionFact', () => {
-  it('correctly loads canonical inquiry and joins legacy lead details', async () => {
+  it('correctly loads canonical inquiry and joins legacy lead details with dual tenant check', async () => {
+    let leadQueryTenantId: string | null = null;
+    let inqArchivedCheck = false;
+
     const mockSupabase = {
       from: vi.fn((table: string) => {
         if (table === 'inquiries') {
@@ -135,21 +172,28 @@ describe('AI-4B Server Facts Loader: loadInquiryAttentionFact', () => {
             select: vi.fn().mockReturnValue({
               eq: vi.fn().mockReturnValue({
                 eq: vi.fn().mockReturnValue({
-                  maybeSingle: vi.fn().mockResolvedValue({
-                    data: {
-                      id: 'inq-uuid-1',
-                      tenant_id: 'agency-alpha',
-                      legacy_lead_id: 'lead-legacy-1',
-                      traveler_id: 'trav-uuid-1',
-                      pipeline_stage: 'initial_contact',
-                      assigned_agent_id: 'agent-uuid-1',
-                      next_follow_up_at: '2026-08-16T10:00:00Z',
-                      destination: 'Kashmir',
-                      expected_value: 120000,
-                      currency: 'INR',
-                      archived_at: null,
-                    },
-                    error: null,
+                  is: vi.fn((col: string, val: unknown) => {
+                    if (col === 'archived_at' && val === null) {
+                      inqArchivedCheck = true;
+                    }
+                    return {
+                      maybeSingle: vi.fn().mockResolvedValue({
+                        data: {
+                          id: 'inq-uuid-1',
+                          tenant_id: 'agency-alpha',
+                          legacy_lead_id: 'lead-legacy-1',
+                          traveler_id: 'trav-uuid-1',
+                          pipeline_stage: 'initial_contact',
+                          assigned_agent_id: 'agent-uuid-1',
+                          next_follow_up_at: '2026-08-16T10:00:00Z',
+                          destination: 'Kashmir',
+                          expected_value: 120000,
+                          currency: 'INR',
+                          archived_at: null,
+                        },
+                        error: null,
+                      }),
+                    };
                   }),
                 }),
               }),
@@ -159,19 +203,24 @@ describe('AI-4B Server Facts Loader: loadInquiryAttentionFact', () => {
         if (table === 'leads') {
           return {
             select: vi.fn().mockReturnValue({
-              eq: vi.fn().mockReturnValue({
-                eq: vi.fn().mockReturnValue({
-                  maybeSingle: vi.fn().mockResolvedValue({
-                    data: {
-                      departure_date: '2026-09-15',
-                      return_date: '2026-09-22',
-                      number_of_travelers: '3',
-                      budget: '₹1,00,000 - ₹1,50,000',
-                      trip_type: 'Family Leisure',
-                    },
-                    error: null,
+              eq: vi.fn((col: string, val: string) => {
+                if (col === 'tenant_id') {
+                  leadQueryTenantId = val;
+                }
+                return {
+                  eq: vi.fn().mockReturnValue({
+                    maybeSingle: vi.fn().mockResolvedValue({
+                      data: {
+                        departure_date: '2026-09-15',
+                        return_date: '2026-09-22',
+                        number_of_travelers: '3',
+                        budget: '₹1,00,000 - ₹1,50,000',
+                        trip_type: 'Family Leisure',
+                      },
+                      error: null,
+                    }),
                   }),
-                }),
+                };
               }),
             }),
           };
@@ -182,6 +231,8 @@ describe('AI-4B Server Facts Loader: loadInquiryAttentionFact', () => {
 
     const fact = await loadInquiryAttentionFact(mockSupabase, 'agency-alpha', 'inq-uuid-1');
 
+    expect(inqArchivedCheck).toBe(true); // Verifies archived filter in query
+    expect(leadQueryTenantId).toBe('agency-alpha'); // Verifies tenant check on legacy lead join
     expect(fact).not.toBeNull();
     expect(fact?.inquiryId).toBe('inq-uuid-1');
     expect(fact?.tenantId).toBe('agency-alpha');
@@ -196,25 +247,32 @@ describe('AI-4B Server Facts Loader: loadInquiryAttentionFact', () => {
 });
 
 describe('AI-4B Server Facts Loader: loadConversationAttentionFacts', () => {
-  it('correctly tracks contact vs agent messages and ignores system messages', async () => {
+  it('correctly tracks contact vs agent messages and ignores system messages with deterministic order', async () => {
+    let orderedById = false;
+
     const mockSupabase = {
       from: vi.fn((table: string) => {
         if (table === 'conversations') {
           return {
             select: vi.fn().mockReturnValue({
               eq: vi.fn().mockReturnValue({
-                or: vi.fn().mockResolvedValue({
-                  data: [
-                    {
-                      id: 'conv-101',
-                      tenant_id: 'agency-alpha',
-                      inquiry_id: 'inq-101',
-                      legacy_lead_id: 'lead-101',
-                      channel: 'whatsapp',
-                      status: 'open',
-                    },
-                  ],
-                  error: null,
+                or: vi.fn().mockReturnValue({
+                  order: vi.fn((col: string) => {
+                    if (col === 'id') orderedById = true;
+                    return Promise.resolve({
+                      data: [
+                        {
+                          id: 'conv-101',
+                          tenant_id: 'agency-alpha',
+                          inquiry_id: 'inq-101',
+                          legacy_lead_id: 'lead-101',
+                          channel: 'whatsapp',
+                          status: 'open',
+                        },
+                      ],
+                      error: null,
+                    });
+                  }),
                 }),
               }),
             }),
@@ -241,6 +299,7 @@ describe('AI-4B Server Facts Loader: loadConversationAttentionFacts', () => {
 
     const facts = await loadConversationAttentionFacts(mockSupabase, 'agency-alpha', 'inq-101');
 
+    expect(orderedById).toBe(true); // Verifies deterministic conversation ordering
     expect(facts).toHaveLength(1);
     expect(facts[0].conversationId).toBe('conv-101');
     expect(facts[0].latestContactAt).toBe('2026-08-16T09:00:00Z');
@@ -248,9 +307,11 @@ describe('AI-4B Server Facts Loader: loadConversationAttentionFacts', () => {
   });
 });
 
-describe('AI-4B Server Facts Loader: loadTenantAttentionFacts Pagination Completeness', () => {
-  it('paginates beyond 1000 items in chunks without truncation', async () => {
-    let callCount = 0;
+describe('AI-4B Server Facts Loader: loadTenantAttentionFacts Pagination Completeness (Mandates 9 & 10)', () => {
+  it('proves requested ranges [0, 999], [1000, 1999] with order(id) and zero duplication/truncation', async () => {
+    const requestedRanges: { from: number; to: number }[] = [];
+    let orderedByInqId = false;
+    let orderedByConvId = false;
 
     const mockSupabase = {
       from: vi.fn((table: string) => {
@@ -260,41 +321,46 @@ describe('AI-4B Server Facts Loader: loadTenantAttentionFacts Pagination Complet
               eq: vi.fn().mockReturnValue({
                 is: vi.fn().mockReturnValue({
                   in: vi.fn().mockReturnValue({
-                    range: vi.fn().mockImplementation((from: number, to: number) => {
-                      callCount++;
-                      if (from === 0) {
-                        // First page returns 1000 items
-                        const batch = Array.from({ length: 1000 }, (_, i) => ({
-                          id: `inq-${i}`,
-                          tenant_id: 'agency-alpha',
-                          legacy_lead_id: null,
-                          traveler_id: `trav-${i}`,
-                          pipeline_stage: 'inquiry_received',
-                          assigned_agent_id: null,
-                          next_follow_up_at: null,
-                          destination: 'Goa',
-                          expected_value: 50000,
-                          currency: 'INR',
-                          archived_at: null,
-                        }));
-                        return Promise.resolve({ data: batch, error: null });
-                      } else {
-                        // Second page returns 250 items (total 1250)
-                        const batch = Array.from({ length: 250 }, (_, i) => ({
-                          id: `inq-${1000 + i}`,
-                          tenant_id: 'agency-alpha',
-                          legacy_lead_id: null,
-                          traveler_id: `trav-${1000 + i}`,
-                          pipeline_stage: 'inquiry_received',
-                          assigned_agent_id: null,
-                          next_follow_up_at: null,
-                          destination: 'Goa',
-                          expected_value: 50000,
-                          currency: 'INR',
-                          archived_at: null,
-                        }));
-                        return Promise.resolve({ data: batch, error: null });
-                      }
+                    order: vi.fn((col: string) => {
+                      if (col === 'id') orderedByInqId = true;
+                      return {
+                        range: vi.fn().mockImplementation((from: number, to: number) => {
+                          requestedRanges.push({ from, to });
+                          if (from === 0) {
+                            // First page returns 1000 items
+                            const batch = Array.from({ length: 1000 }, (_, i) => ({
+                              id: `inq-${i}`,
+                              tenant_id: 'agency-alpha',
+                              legacy_lead_id: null,
+                              traveler_id: `trav-${i}`,
+                              pipeline_stage: 'inquiry_received',
+                              assigned_agent_id: null,
+                              next_follow_up_at: null,
+                              destination: 'Goa',
+                              expected_value: 50000,
+                              currency: 'INR',
+                              archived_at: null,
+                            }));
+                            return Promise.resolve({ data: batch, error: null });
+                          } else {
+                            // Second page returns 250 items (total 1250)
+                            const batch = Array.from({ length: 250 }, (_, i) => ({
+                              id: `inq-${1000 + i}`,
+                              tenant_id: 'agency-alpha',
+                              legacy_lead_id: null,
+                              traveler_id: `trav-${1000 + i}`,
+                              pipeline_stage: 'inquiry_received',
+                              assigned_agent_id: null,
+                              next_follow_up_at: null,
+                              destination: 'Goa',
+                              expected_value: 50000,
+                              currency: 'INR',
+                              archived_at: null,
+                            }));
+                            return Promise.resolve({ data: batch, error: null });
+                          }
+                        }),
+                      };
                     }),
                   }),
                 }),
@@ -307,7 +373,12 @@ describe('AI-4B Server Facts Loader: loadTenantAttentionFacts Pagination Complet
             select: vi.fn().mockReturnValue({
               eq: vi.fn().mockReturnValue({
                 eq: vi.fn().mockReturnValue({
-                  range: vi.fn().mockResolvedValue({ data: [], error: null }),
+                  order: vi.fn((col: string) => {
+                    if (col === 'id') orderedByConvId = true;
+                    return {
+                      range: vi.fn().mockResolvedValue({ data: [], error: null }),
+                    };
+                  }),
                 }),
               }),
             }),
@@ -328,8 +399,108 @@ describe('AI-4B Server Facts Loader: loadTenantAttentionFacts Pagination Complet
 
     const { inquiryFacts } = await loadTenantAttentionFacts(mockSupabase, 'agency-alpha');
 
-    expect(callCount).toBe(2); // Proves paginated retrieval loop was executed
-    expect(inquiryFacts).toHaveLength(1250); // Total loaded exceeds 1000 limit
+    expect(orderedByInqId).toBe(true); // Mandatory deterministic order verified
+    expect(orderedByConvId).toBe(true);
+    expect(requestedRanges).toEqual([
+      { from: 0, to: 999 },
+      { from: 1000, to: 1999 },
+    ]);
+    expect(inquiryFacts).toHaveLength(1250);
+
+    // Verify zero boundary duplicates
+    const idSet = new Set(inquiryFacts.map((f) => f.inquiryId));
+    expect(idSet.size).toBe(1250);
+  });
+});
+
+describe('AI-4B Server Facts Loader: Message Completeness (Mandate 11)', () => {
+  it('proves messages pagination loop executes without row limit truncation', async () => {
+    let msgPageCount = 0;
+
+    const mockSupabase = {
+      from: vi.fn((table: string) => {
+        if (table === 'inquiries') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                is: vi.fn().mockReturnValue({
+                  in: vi.fn().mockReturnValue({
+                    order: vi.fn().mockReturnValue({
+                      range: vi.fn().mockResolvedValue({ data: [], error: null }),
+                    }),
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'conversations') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                eq: vi.fn().mockReturnValue({
+                  order: vi.fn().mockReturnValue({
+                    range: vi.fn().mockResolvedValue({
+                      data: [
+                        {
+                          id: 'conv-high-volume',
+                          tenant_id: 'agency-alpha',
+                          inquiry_id: null,
+                          legacy_lead_id: null,
+                          channel: 'whatsapp',
+                          status: 'open',
+                        },
+                      ],
+                      error: null,
+                    }),
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'messages') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockReturnValue({
+                order: vi.fn().mockReturnValue({
+                  order: vi.fn().mockReturnValue({
+                    range: vi.fn().mockImplementation((from: number) => {
+                      msgPageCount++;
+                      if (from === 0) {
+                        // 1000 messages in page 1
+                        const msgs = Array.from({ length: 1000 }, (_, i) => ({
+                          conversation_id: 'conv-high-volume',
+                          sender_type: 'contact',
+                          created_at: `2026-08-16T08:${String(Math.floor(i / 60)).padStart(2, '0')}:${String(i % 60).padStart(2, '0')}Z`,
+                        }));
+                        return Promise.resolve({ data: msgs, error: null });
+                      } else {
+                        // 250 messages in page 2 (total 1250 messages for this conversation)
+                        const msgs = Array.from({ length: 250 }, (_, i) => ({
+                          conversation_id: 'conv-high-volume',
+                          sender_type: 'agent',
+                          created_at: `2026-08-16T10:${String(Math.floor(i / 60)).padStart(2, '0')}:${String(i % 60).padStart(2, '0')}Z`,
+                        }));
+                        return Promise.resolve({ data: msgs, error: null });
+                      }
+                    }),
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+        throw new Error(`Unexpected table ${table}`);
+      }),
+    } as unknown as SupabaseClient;
+
+    const { conversationFacts } = await loadTenantAttentionFacts(mockSupabase, 'agency-alpha');
+
+    expect(msgPageCount).toBe(2); // Proves message pagination loop was executed
+    expect(conversationFacts).toHaveLength(1);
+    // Verified latest agent message from page 2 (10:04:09Z) answered the contact message from page 1
+    expect(conversationFacts[0].latestAgentAfterContactAt).toBe('2026-08-16T10:04:09Z');
   });
 });
 
@@ -342,21 +513,23 @@ describe('AI-4B Server Facts Loader: High-Level Helper Integration', () => {
             select: vi.fn().mockReturnValue({
               eq: vi.fn().mockReturnValue({
                 eq: vi.fn().mockReturnValue({
-                  maybeSingle: vi.fn().mockResolvedValue({
-                    data: {
-                      id: 'inq-eval-1',
-                      tenant_id: 'agency-alpha',
-                      legacy_lead_id: null,
-                      traveler_id: 'trav-1',
-                      pipeline_stage: 'inquiry_received',
-                      assigned_agent_id: null, // UNASSIGNED_INQUIRY
-                      next_follow_up_at: null, // NO_FOLLOW_UP_SCHEDULED
-                      destination: null, // MISSING_QUALIFICATION
-                      expected_value: null,
-                      currency: 'INR',
-                      archived_at: null,
-                    },
-                    error: null,
+                  is: vi.fn().mockReturnValue({
+                    maybeSingle: vi.fn().mockResolvedValue({
+                      data: {
+                        id: 'inq-eval-1',
+                        tenant_id: 'agency-alpha',
+                        legacy_lead_id: null,
+                        traveler_id: 'trav-1',
+                        pipeline_stage: 'inquiry_received',
+                        assigned_agent_id: null, // UNASSIGNED_INQUIRY
+                        next_follow_up_at: null, // NO_FOLLOW_UP_SCHEDULED
+                        destination: null, // MISSING_QUALIFICATION
+                        expected_value: null,
+                        currency: 'INR',
+                        archived_at: null,
+                      },
+                      error: null,
+                    }),
                   }),
                 }),
               }),
