@@ -25,6 +25,8 @@ export interface RawQuoteVersionForDiff {
   versionNumber: number;
   currency: string;
   itineraryVersionId?: string | null;
+  validUntil?: string | null;
+  termsAndConditions?: string | null;
   subtotal: string | number;
   discountAmount: string | number;
   taxAmount: string | number;
@@ -94,6 +96,22 @@ export function calculateQuoteDifference(
 
       const isModified = q1 !== q2 || !p1.equals(p2) || match1.title !== item2.title || match1.category !== item2.category;
 
+      let v1SupplierCost: string | null = null;
+      let v2SupplierCost: string | null = null;
+      let supplierCostDifference: string | null = null;
+
+      if (hasInternalPricing) {
+        if (match1.supplierCost != null && match1.supplierCost !== '') {
+          v1SupplierCost = formatDecimal(new Decimal(match1.supplierCost));
+        }
+        if (item2.supplierCost != null && item2.supplierCost !== '') {
+          v2SupplierCost = formatDecimal(new Decimal(item2.supplierCost));
+        }
+        if (v1SupplierCost != null || v2SupplierCost != null) {
+          supplierCostDifference = diffAmounts(v1SupplierCost, v2SupplierCost);
+        }
+      }
+
       itemDiffs.push({
         itemId: item2.id || match1.id || `item-${itemDiffs.length + 1}`,
         title: item2.title,
@@ -106,10 +124,21 @@ export function calculateQuoteDifference(
         v1TotalPrice: formatDecimal(t1),
         v2TotalPrice: formatDecimal(t2),
         priceDifference: formatDecimal(t2.minus(t1)),
+        v1SupplierCost,
+        v2SupplierCost,
+        supplierCostDifference,
       });
     } else {
       // Added item
       const t2 = new Decimal(item2.totalPrice || '0');
+      let v2SupplierCost: string | null = null;
+      let supplierCostDifference: string | null = null;
+
+      if (hasInternalPricing && item2.supplierCost != null && item2.supplierCost !== '') {
+        v2SupplierCost = formatDecimal(new Decimal(item2.supplierCost));
+        supplierCostDifference = v2SupplierCost;
+      }
+
       itemDiffs.push({
         itemId: item2.id || `added-${itemDiffs.length + 1}`,
         title: item2.title,
@@ -122,6 +151,9 @@ export function calculateQuoteDifference(
         v1TotalPrice: null,
         v2TotalPrice: formatDecimal(t2),
         priceDifference: formatDecimal(t2),
+        v1SupplierCost: null,
+        v2SupplierCost,
+        supplierCostDifference,
       });
     }
   }
@@ -130,6 +162,14 @@ export function calculateQuoteDifference(
   for (const item1 of v1Items) {
     if (item1.id && !matchedV1Ids.has(item1.id)) {
       const t1 = new Decimal(item1.totalPrice || '0');
+      let v1SupplierCost: string | null = null;
+      let supplierCostDifference: string | null = null;
+
+      if (hasInternalPricing && item1.supplierCost != null && item1.supplierCost !== '') {
+        v1SupplierCost = formatDecimal(new Decimal(item1.supplierCost));
+        supplierCostDifference = formatDecimal(new Decimal(item1.supplierCost).negated());
+      }
+
       itemDiffs.push({
         itemId: item1.id,
         title: item1.title,
@@ -142,11 +182,16 @@ export function calculateQuoteDifference(
         v1TotalPrice: formatDecimal(t1),
         v2TotalPrice: null,
         priceDifference: formatDecimal(t1.negated()),
+        v1SupplierCost,
+        v2SupplierCost: null,
+        supplierCostDifference,
       });
     }
   }
 
   const hasItineraryChange = Boolean(v1.itineraryVersionId && v2.itineraryVersionId && v1.itineraryVersionId !== v2.itineraryVersionId);
+  const hasValidityChange = (v1.validUntil || null) !== (v2.validUntil || null);
+  const hasTermsChange = (v1.termsAndConditions || null) !== (v2.termsAndConditions || null);
 
   // Internal pricing differences (only if role is authorized)
   let v1InternalCostTotal: string | null = null;
@@ -193,6 +238,12 @@ export function calculateQuoteDifference(
     hasItineraryChange,
     v1ItineraryVersionId: v1.itineraryVersionId || null,
     v2ItineraryVersionId: v2.itineraryVersionId || null,
+    hasValidityChange,
+    v1ValidUntil: v1.validUntil || null,
+    v2ValidUntil: v2.validUntil || null,
+    hasTermsChange,
+    v1TermsAndConditions: v1.termsAndConditions || null,
+    v2TermsAndConditions: v2.termsAndConditions || null,
     itemDiffs,
     v1InternalCostTotal,
     v2InternalCostTotal,
@@ -210,6 +261,12 @@ export function calculateQuoteDifference(
 export function getCustomerSafeQuoteDiff(diff: DeterministicQuoteDiff): DeterministicQuoteDiff {
   return {
     ...diff,
+    itemDiffs: diff.itemDiffs.map((item) => ({
+      ...item,
+      v1SupplierCost: null,
+      v2SupplierCost: null,
+      supplierCostDifference: null,
+    })),
     v1InternalCostTotal: null,
     v2InternalCostTotal: null,
     internalCostDifference: null,

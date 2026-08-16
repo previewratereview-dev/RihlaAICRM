@@ -223,6 +223,10 @@ export const DeterministicLineItemDiffSchema = z.object({
   v1TotalPrice: z.string().optional().nullable(),
   v2TotalPrice: z.string().optional().nullable(),
   priceDifference: z.string().optional().nullable(),
+  // Internal pricing differences — only populated if role is authorized
+  v1SupplierCost: z.string().optional().nullable(),
+  v2SupplierCost: z.string().optional().nullable(),
+  supplierCostDifference: z.string().optional().nullable(),
 });
 
 export type DeterministicLineItemDiff = z.infer<typeof DeterministicLineItemDiffSchema>;
@@ -250,6 +254,12 @@ export const DeterministicQuoteDiffSchema = z.object({
   hasItineraryChange: z.boolean(),
   v1ItineraryVersionId: z.string().min(1).optional().nullable(),
   v2ItineraryVersionId: z.string().min(1).optional().nullable(),
+  hasValidityChange: z.boolean().default(false),
+  v1ValidUntil: z.string().optional().nullable(),
+  v2ValidUntil: z.string().optional().nullable(),
+  hasTermsChange: z.boolean().default(false),
+  v1TermsAndConditions: z.string().optional().nullable(),
+  v2TermsAndConditions: z.string().optional().nullable(),
   itemDiffs: z.array(DeterministicLineItemDiffSchema),
   // Internal pricing differences — only populated if role is authorized
   v1InternalCostTotal: z.string().optional().nullable(),

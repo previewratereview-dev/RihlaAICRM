@@ -50,7 +50,22 @@ import {
   DollarSign,
   Eye,
   X,
+  Sparkles,
+  ArrowRightLeft,
 } from 'lucide-react';
+import { QuoteProposalDrawer } from './quote-proposal-drawer';
+import { QuoteExplanationDrawer } from './quote-explanation-drawer';
+import {
+  generateQuoteProposalAction,
+  generateQuoteDiffExplanationAction,
+} from '@/app/actions/ai-quote-proposal';
+import {
+  type AIQuoteLineItemProposal,
+  type AIQuoteLineItemSuggestion,
+  type AIQuoteDifferenceExplanation,
+  type AIProposalMetadata,
+  adaptAIQuoteSuggestionsToPricingInput,
+} from '@/lib/ai/proposal';
 
 interface QuoteWorkspaceProps {
   inquiryId: string;
@@ -74,6 +89,7 @@ export function QuoteWorkspace({
   const canIssue = can(userRole, 'quotes:write');
   const canRevise = can(userRole, 'quotes:write');
   const canShare = can(userRole, 'quotes:share');
+  const canReadQuotes = can(userRole, 'quotes:read');
 
   // Selected family & version
   const [selectedFamilyId, setSelectedFamilyId] = useState<string | null>(quotes[0]?.id || null);
@@ -86,6 +102,21 @@ export function QuoteWorkspace({
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [generatedShareUrl, setGeneratedShareUrl] = useState<string | null>(null);
   const [hasCopiedShareUrl, setHasCopiedShareUrl] = useState(false);
+
+  // AI Copilot Drawers & State
+  const [isProposalDrawerOpen, setIsProposalDrawerOpen] = useState(false);
+  const [aiProposal, setAiProposal] = useState<AIQuoteLineItemProposal | null>(null);
+  const [proposalMetadata, setProposalMetadata] = useState<AIProposalMetadata | null>(null);
+  const [isGeneratingProposal, setIsGeneratingProposal] = useState(false);
+  const [isApplyingAIProposal, setIsApplyingAIProposal] = useState(false);
+
+  const [isExplanationDrawerOpen, setIsExplanationDrawerOpen] = useState(false);
+  const [aiExplanation, setAiExplanation] = useState<AIQuoteDifferenceExplanation | null>(null);
+  const [explanationMetadata, setExplanationMetadata] = useState<AIProposalMetadata | null>(null);
+  const [isGeneratingExplanation, setIsGeneratingExplanation] = useState(false);
+
+  // Suggested price reference map: line item title/index -> suggested price string
+  const [suggestedPriceMap, setSuggestedPriceMap] = useState<Record<string, string>>({});
 
   // States
   const [loading, setLoading] = useState(false);
@@ -307,6 +338,139 @@ export function QuoteWorkspace({
     }
   };
 
+  // Trigger AI Quote Line-Item Generation
+  const handleGenerateAIProposal = async (customInstruction?: string) => {
+    if (finalizedItinVersions.length === 0) {
+      setError('A finalized itinerary version is required to generate a grounded quote proposal.');
+      return;
+    }
+
+    const targetItinId = selectedItinVersionId || currentVersion?.itineraryVersionId || finalizedItinVersions[0]?.id;
+    if (!targetItinId) {
+      setError('Please select an itinerary version first.');
+      return;
+    }
+
+    setIsGeneratingProposal(true);
+    setError(null);
+
+    try {
+      const res = await generateQuoteProposalAction({
+        inquiryId,
+        itineraryVersionId: targetItinId,
+        staffInstruction: customInstruction || null,
+      });
+
+      if (!res.success || !res.proposal) {
+        setError(res.error?.message || 'Failed to generate AI quote suggestions');
+        return;
+      }
+
+      setAiProposal(res.proposal);
+      setProposalMetadata(res.metadata);
+      setIsProposalDrawerOpen(true);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to generate quote proposal');
+    } finally {
+      setIsGeneratingProposal(false);
+    }
+  };
+
+  // Apply AI Quote Line-Item Suggestions with Immutability-Safe Branching
+  const handleApplyAIProposal = async (
+    selectedSuggestions: AIQuoteLineItemSuggestion[],
+    suggestedTerms?: string | null,
+    suggestedNotes?: string | null
+  ) => {
+    if (selectedSuggestions.length === 0) return;
+
+    setIsApplyingAIProposal(true);
+    setError(null);
+
+    try {
+      // Build suggested price map so UI can show "Suggested: $X.XX" beside $0.00 draft inputs
+      const priceMap: Record<string, string> = {};
+      selectedSuggestions.forEach((s) => {
+        if (s.suggestedUnitPrice) {
+          priceMap[s.title.toLowerCase().trim()] = s.suggestedUnitPrice;
+        }
+      });
+      setSuggestedPriceMap(priceMap);
+
+      // Adapt suggestions into canonical PricingLineItemInput[] (unitPrice is '0.00' for estimates)
+      const adaptedItems = adaptAIQuoteSuggestionsToPricingInput(
+        selectedSuggestions,
+        hasInternalPricingPermission
+      );
+
+      if (!selectedFamily || !currentVersion) {
+        // Case 1: No quote family exists yet -> populate create-quote form
+        if (finalizedItinVersions.length > 0) {
+          setSelectedItinVersionId(finalizedItinVersions[0]?.id || '');
+        }
+        setNewLineItems(adaptedItems);
+        setIsCreatingFamily(true);
+        setIsProposalDrawerOpen(false);
+        return;
+      }
+
+      if (currentVersion.status === 'draft') {
+        // Case 2: Staging into an existing draft version -> update draft state directly
+        setDraftCurrency(currentVersion.currency);
+        setDraftLineItems(adaptedItems);
+        if (suggestedTerms) setDraftTerms(suggestedTerms);
+        if (suggestedNotes) setDraftNotes(suggestedNotes);
+        setIsEditingDraft(true);
+        setIsProposalDrawerOpen(false);
+      } else {
+        // Case 3: Base is finalized/issued/superseded -> create new revision first (vN+1)
+        const revRes = await createQuoteRevisionAction(currentVersion.id);
+        await onRefresh();
+        setSelectedVersionId(revRes.newVersionId);
+
+        setDraftCurrency(currentVersion.currency);
+        setDraftLineItems(adaptedItems);
+        if (suggestedTerms) setDraftTerms(suggestedTerms);
+        if (suggestedNotes) setDraftNotes(suggestedNotes);
+        setIsEditingDraft(true);
+        setIsProposalDrawerOpen(false);
+      }
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to apply quote suggestions');
+    } finally {
+      setIsApplyingAIProposal(false);
+    }
+  };
+
+  // Generate version difference explanation
+  const handleGenerateVersionExplanation = async (v1Id: string, v2Id: string) => {
+    if (!selectedFamily) return;
+
+    setIsGeneratingExplanation(true);
+    setError(null);
+
+    try {
+      const res = await generateQuoteDiffExplanationAction({
+        quoteId: selectedFamily.id,
+        v1VersionId: v1Id,
+        v2VersionId: v2Id,
+      });
+
+      if (!res.success || !res.explanation) {
+        setError(res.error?.message || 'Failed to generate comparison explanation');
+        return;
+      }
+
+      setAiExplanation(res.explanation);
+      setExplanationMetadata(res.metadata);
+      setIsExplanationDrawerOpen(true);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to compare quote versions');
+    } finally {
+      setIsGeneratingExplanation(false);
+    }
+  };
+
   // Live draft pricing preview
   const livePricing = isEditingDraft
     ? calculateQuotePricing({
@@ -326,23 +490,36 @@ export function QuoteWorkspace({
             Commercial offers, itemized pricing, and client proposals
           </p>
         </div>
-        {canCreate && (
-          <button
-            type="button"
-            onClick={() => {
-              if (finalizedItinVersions.length === 0) {
-                setError('A finalized itinerary version is required before creating a quote.');
-                return;
-              }
-              setSelectedItinVersionId(finalizedItinVersions[0]?.id || '');
-              setIsCreatingFamily(true);
-            }}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors shadow-sm cursor-pointer"
-          >
-            <Plus className="h-4 w-4" />
-            <span>Create Quote</span>
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {canCreate && finalizedItinVersions.length > 0 && (
+            <button
+              type="button"
+              disabled={isGeneratingProposal}
+              onClick={() => handleGenerateAIProposal()}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition-colors shadow-sm cursor-pointer disabled:opacity-50"
+            >
+              <Sparkles className="h-4 w-4" />
+              <span>{isGeneratingProposal ? 'Generating...' : 'Suggest with AI'}</span>
+            </button>
+          )}
+          {canCreate && (
+            <button
+              type="button"
+              onClick={() => {
+                if (finalizedItinVersions.length === 0) {
+                  setError('A finalized itinerary version is required before creating a quote.');
+                  return;
+                }
+                setSelectedItinVersionId(finalizedItinVersions[0]?.id || '');
+                setIsCreatingFamily(true);
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors shadow-sm cursor-pointer"
+            >
+              <Plus className="h-4 w-4" />
+              <span>Create Quote</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {error && (
@@ -361,17 +538,28 @@ export function QuoteWorkspace({
             Attach a quote to a finalized itinerary to structure commercial prices, margins, and customer terms.
           </p>
           {canCreate && finalizedItinVersions.length > 0 && (
-            <button
-              type="button"
-              onClick={() => {
-                setSelectedItinVersionId(finalizedItinVersions[0]?.id || '');
-                setIsCreatingFamily(true);
-              }}
-              className="mt-4 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors cursor-pointer"
-            >
-              <Plus className="h-4 w-4" />
-              <span>Create First Quote</span>
-            </button>
+            <div className="mt-4 flex items-center justify-center gap-2">
+              <button
+                type="button"
+                disabled={isGeneratingProposal}
+                onClick={() => handleGenerateAIProposal()}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition-colors cursor-pointer disabled:opacity-50"
+              >
+                <Sparkles className="h-4 w-4" />
+                <span>{isGeneratingProposal ? 'Generating...' : 'Suggest Quote with AI'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedItinVersionId(finalizedItinVersions[0]?.id || '');
+                  setIsCreatingFamily(true);
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors cursor-pointer"
+              >
+                <Plus className="h-4 w-4" />
+                <span>Create First Quote</span>
+              </button>
+            </div>
           )}
         </div>
       )}
@@ -476,7 +664,22 @@ export function QuoteWorkspace({
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] text-muted-foreground">Unit Price ({newCurrency})</label>
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] text-muted-foreground">Unit Price ({newCurrency})</label>
+                    {suggestedPriceMap[newLineItems[0]?.title?.toLowerCase().trim()] && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const updated = [...newLineItems];
+                          updated[0].unitPrice = suggestedPriceMap[newLineItems[0]?.title?.toLowerCase().trim()];
+                          setNewLineItems(updated);
+                        }}
+                        className="text-[9px] text-amber-600 dark:text-amber-400 hover:underline cursor-pointer font-medium"
+                      >
+                        Suggested: {suggestedPriceMap[newLineItems[0]?.title?.toLowerCase().trim()]} (Use)
+                      </button>
+                    )}
+                  </div>
                   <input
                     type="number"
                     step="0.01"
@@ -616,6 +819,15 @@ export function QuoteWorkspace({
                     <Edit3 className="h-3.5 w-3.5" />
                     <span>Edit Draft</span>
                   </button>
+                  <button
+                    type="button"
+                    disabled={isGeneratingProposal}
+                    onClick={() => handleGenerateAIProposal()}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    <Sparkles className="h-3.5 w-3.5" />
+                    <span>{isGeneratingProposal ? 'Generating...' : 'Suggest Line Items with AI'}</span>
+                  </button>
                   {canIssue && (
                     <button
                       type="button"
@@ -633,15 +845,26 @@ export function QuoteWorkspace({
               {currentVersion.status === 'issued' && (
                 <>
                   {canRevise && (
-                    <button
-                      type="button"
-                      disabled={loading}
-                      onClick={handleCreateRevision}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-muted hover:bg-muted/80 text-foreground transition-colors cursor-pointer disabled:opacity-50"
-                    >
-                      <RotateCcw className="h-3.5 w-3.5" />
-                      <span>Create Revision (v{currentVersion.versionNumber + 1})</span>
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        disabled={loading}
+                        onClick={handleCreateRevision}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-muted hover:bg-muted/80 text-foreground transition-colors cursor-pointer disabled:opacity-50"
+                      >
+                        <RotateCcw className="h-3.5 w-3.5" />
+                        <span>Create Revision (v{currentVersion.versionNumber + 1})</span>
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isGeneratingProposal}
+                        onClick={() => handleGenerateAIProposal()}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition-colors cursor-pointer disabled:opacity-50"
+                      >
+                        <Sparkles className="h-3.5 w-3.5" />
+                        <span>{isGeneratingProposal ? 'Generating...' : 'Suggest AI Revision'}</span>
+                      </button>
+                    </>
                   )}
                   {canShare && (
                     <button
@@ -658,14 +881,47 @@ export function QuoteWorkspace({
               )}
 
               {currentVersion.status === 'superseded' && canRevise && (
+                <>
+                  <button
+                    type="button"
+                    disabled={loading}
+                    onClick={handleCreateRevision}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-muted hover:bg-muted/80 text-foreground transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    <span>Create Revision from v{currentVersion.versionNumber}</span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isGeneratingProposal}
+                    onClick={() => handleGenerateAIProposal()}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    <Sparkles className="h-3.5 w-3.5" />
+                    <span>{isGeneratingProposal ? 'Generating...' : 'Suggest AI Revision'}</span>
+                  </button>
+                </>
+              )}
+
+              {selectedFamily.versions.length >= 2 && canReadQuotes && (
                 <button
                   type="button"
-                  disabled={loading}
-                  onClick={handleCreateRevision}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-muted hover:bg-muted/80 text-foreground transition-colors cursor-pointer disabled:opacity-50"
+                  disabled={isGeneratingExplanation}
+                  onClick={() => {
+                    const sorted = [...selectedFamily.versions].sort((a, b) => a.versionNumber - b.versionNumber);
+                    const currentIdx = sorted.findIndex((v) => v.id === currentVersion.id);
+                    const v2 = currentVersion;
+                    const v1 = currentIdx > 0 ? sorted[currentIdx - 1] : sorted[0];
+                    if (v1 && v2 && v1.id !== v2.id) {
+                      handleGenerateVersionExplanation(v1.id, v2.id);
+                    } else if (sorted.length >= 2) {
+                      handleGenerateVersionExplanation(sorted[0].id, sorted[sorted.length - 1].id);
+                    }
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border bg-background hover:bg-muted text-foreground transition-colors cursor-pointer disabled:opacity-50"
                 >
-                  <RotateCcw className="h-3.5 w-3.5" />
-                  <span>Create Revision from v{currentVersion.versionNumber}</span>
+                  <ArrowRightLeft className="h-3.5 w-3.5 text-primary" />
+                  <span>{isGeneratingExplanation ? 'Comparing...' : 'Compare Versions with AI'}</span>
                 </button>
               )}
 
@@ -798,7 +1054,23 @@ export function QuoteWorkspace({
                             />
                           </div>
                           <div>
-                            <label className="text-[10px] text-muted-foreground">Unit Price ({draftCurrency})</label>
+                            <div className="flex items-center justify-between">
+                              <label className="text-[10px] text-muted-foreground">Unit Price ({draftCurrency})</label>
+                              {suggestedPriceMap[item.title?.toLowerCase().trim()] && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const updated = [...draftLineItems];
+                                    updated[idx].unitPrice = suggestedPriceMap[item.title?.toLowerCase().trim()];
+                                    setDraftLineItems(updated);
+                                  }}
+                                  className="text-[9px] text-amber-600 dark:text-amber-400 hover:underline cursor-pointer font-medium"
+                                  title="Fill suggested estimate"
+                                >
+                                  Suggested: {suggestedPriceMap[item.title?.toLowerCase().trim()]} (Use)
+                                </button>
+                              )}
+                            </div>
                             <input
                               type="number"
                               step="0.01"
@@ -1230,6 +1502,29 @@ export function QuoteWorkspace({
           </div>
         </div>
       )}
+
+      {/* AI Quote Proposal Review Drawer */}
+      <QuoteProposalDrawer
+        isOpen={isProposalDrawerOpen}
+        onClose={() => setIsProposalDrawerOpen(false)}
+        proposal={aiProposal}
+        metadata={proposalMetadata}
+        currency={currentVersion?.currency || newCurrency || 'USD'}
+        hasInternalPricing={hasInternalPricingPermission}
+        onApplySelected={handleApplyAIProposal}
+        onRegenerate={handleGenerateAIProposal}
+        isApplying={isApplyingAIProposal}
+      />
+
+      {/* AI Quote Difference Explanation Drawer */}
+      <QuoteExplanationDrawer
+        isOpen={isExplanationDrawerOpen}
+        onClose={() => setIsExplanationDrawerOpen(false)}
+        explanation={aiExplanation}
+        metadata={explanationMetadata}
+        hasInternalPricing={hasInternalPricingPermission}
+        currency={currentVersion?.currency || 'USD'}
+      />
     </div>
   );
 }

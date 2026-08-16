@@ -409,26 +409,36 @@ REQUIRED JSON STRUCTURE:
     const validated = AIQuoteLineItemProposalSchema.parse(parsedJson);
 
     // Server-side verification of catalog items
+    // Since knowledge_documents is unstructured text without numeric price fields,
+    // all AI suggestions remain 'estimate' or 'missing' (never authoritative).
     const verifiedItems = await withPgClient(async (client) => {
       return Promise.all(
         validated.suggestedItems.map(async (item) => {
-          let authoritativeUnitPrice: string | null = null;
+          const authoritativeUnitPrice: string | null = null;
           let pricingSource = item.pricingSource;
 
           if (item.catalogReferenceId) {
+            // Verify tenant ownership of knowledge document reference
             const catRes = await client.query(
-              `SELECT id, title, content FROM public.knowledge_documents WHERE id = $1 AND tenant_id = $2`,
+              `SELECT id, title FROM public.knowledge_documents WHERE id = $1 AND tenant_id = $2`,
               [item.catalogReferenceId, ctx.tenantId]
             );
-            if (catRes.rows.length > 0) {
-              pricingSource = 'authoritative_catalog';
-              authoritativeUnitPrice = item.suggestedUnitPrice || null;
+            if (catRes.rows.length === 0) {
+              // Cross-tenant or non-existent reference -> clear reference and downgrade to estimate
+              pricingSource = 'estimate';
+              item.catalogReferenceId = null;
             } else {
-              // Reference not in tenant -> fallback to estimate
+              // Knowledge document exists in tenant, but is unstructured text -> estimate
               pricingSource = 'estimate';
             }
           } else if (pricingSource === 'authoritative_catalog') {
+            // Model claimed authoritative without verified structured record -> downgrade
             pricingSource = 'estimate';
+          }
+
+          // If suggested price is missing or null, mark as 'missing'
+          if (!item.suggestedUnitPrice || item.suggestedUnitPrice.trim() === '') {
+            pricingSource = 'missing';
           }
 
           return {
@@ -497,7 +507,7 @@ export async function generateQuoteDifferenceExplanation(
   const startTime = Date.now();
 
   return withPgClient(async (client) => {
-    // 1. Fetch raw versions
+    // 1. Fetch raw versions (scoped to tenant)
     const res = await client.query(
       `SELECT qv.*, q.quote_number
        FROM public.quote_versions qv
@@ -511,7 +521,7 @@ export async function generateQuoteDifferenceExplanation(
         success: false,
         data: null,
         metadata: null,
-        error: { code: 'NOT_FOUND', message: 'One or both quote versions not found' },
+        error: { code: 'NOT_FOUND', message: 'One or both quote versions not found in tenant' },
       };
     }
 
@@ -525,6 +535,8 @@ export async function generateQuoteDifferenceExplanation(
       versionNumber: Number(row1.version_number),
       currency: String(row1.currency),
       itineraryVersionId: row1.itinerary_version_id ? String(row1.itinerary_version_id) : null,
+      validUntil: row1.valid_until ? String(row1.valid_until) : null,
+      termsAndConditions: row1.terms_and_conditions ? String(row1.terms_and_conditions) : null,
       subtotal: row1.subtotal,
       discountAmount: row1.discount_amount,
       taxAmount: row1.tax_amount,
@@ -541,6 +553,8 @@ export async function generateQuoteDifferenceExplanation(
       versionNumber: Number(row2.version_number),
       currency: String(row2.currency),
       itineraryVersionId: row2.itinerary_version_id ? String(row2.itinerary_version_id) : null,
+      validUntil: row2.valid_until ? String(row2.valid_until) : null,
+      termsAndConditions: row2.terms_and_conditions ? String(row2.terms_and_conditions) : null,
       subtotal: row2.subtotal,
       discountAmount: row2.discount_amount,
       taxAmount: row2.tax_amount,
@@ -554,20 +568,42 @@ export async function generateQuoteDifferenceExplanation(
     const deterministicDiff = calculateQuoteDifference(v1, v2, ctx.role);
 
     // TWO-CONTEXT SEPARATION:
-    // Pass 1: Customer-safe diff (ZERO supplier costs or margins in prompt)
+    // Pass 1: Customer-safe diff (ZERO supplier costs, margins, or internal notes in prompt)
     const customerSafeDiff = getCustomerSafeQuoteDiff(deterministicDiff);
+
+    // Omit internal fields when serializing customer-safe JSON for prompt hygiene
+    const cleanCustomerDiffJson = JSON.stringify(
+      customerSafeDiff,
+      (key, value) => {
+        if (
+          key === 'v1SupplierCost' ||
+          key === 'v2SupplierCost' ||
+          key === 'supplierCostDifference' ||
+          key === 'v1InternalCostTotal' ||
+          key === 'v2InternalCostTotal' ||
+          key === 'internalCostDifference' ||
+          key === 'v1GrossMarginAmount' ||
+          key === 'v2GrossMarginAmount' ||
+          key === 'grossMarginDifference'
+        ) {
+          return undefined;
+        }
+        return value;
+      },
+      2
+    );
 
     const customerPrompt = `You are an expert commercial travel communicator.
 Explain the following verified customer-facing differences between Quote ${v1.quoteNumber} v${v1.versionNumber} and v${v2.versionNumber}.
 
 VERIFIED CUSTOMER-FACING DIFF (DO NOT ALTER ARITHMETIC):
-${JSON.stringify(customerSafeDiff, null, 2)}
+${cleanCustomerDiffJson}
 
 CRITICAL RULES:
 1. Output MUST be valid JSON matching the exact schema below.
 2. DO NOT recalculate numbers. Rely strictly on the verified customer-facing diff.
 3. Provide an executive summary, key price drivers, scope changes, and a client-facing explanation.
-4. DO NOT mention supplier costs, markups, or internal margins under any circumstances.
+4. DO NOT mention internal pricing, confidential margins, or markups under any circumstances.
 
 REQUIRED JSON STRUCTURE:
 {
@@ -598,8 +634,10 @@ REQUIRED JSON STRUCTURE:
 
       // Pass 2: Internal Staff Notes (ONLY if caller is authorized for internal pricing)
       let internalStaffNotes: string | null = null;
-      if (can(ctx.role, 'quotes:internal_pricing:read') && deterministicDiff.internalCostDifference != null) {
-        internalStaffNotes = `Internal margin change: Cost delta ${deterministicDiff.internalCostDifference} ${deterministicDiff.currency}, Gross margin delta ${deterministicDiff.grossMarginDifference} ${deterministicDiff.currency}.`;
+      if (can(ctx.role, 'quotes:internal_pricing:read')) {
+        const costDelta = deterministicDiff.internalCostDifference ?? '0.00';
+        const marginDelta = deterministicDiff.grossMarginDifference ?? '0.00';
+        internalStaffNotes = `Internal Commercial Summary: Supplier cost delta is ${costDelta} ${deterministicDiff.currency}. Gross margin delta is ${marginDelta} ${deterministicDiff.currency}. Subtotal change: ${deterministicDiff.subtotalDifference} ${deterministicDiff.currency}.`;
       }
 
       const explanationPayload: AIQuoteDifferenceExplanation = {

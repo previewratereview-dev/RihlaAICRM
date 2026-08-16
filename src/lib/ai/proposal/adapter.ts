@@ -88,6 +88,12 @@ export function adaptAIItineraryToUpdateDraftInput(
   };
 }
 
+export interface AIQuoteStagedLineItem extends PricingLineItemInput {
+  suggestedUnitPrice?: string | null;
+  pricingSource: 'authoritative_catalog' | 'historical' | 'estimate' | 'missing';
+  catalogReferenceId?: string | null;
+}
+
 /**
  * Adapts AIQuoteLineItemSuggestion[] into canonical PricingLineItemInput[].
  * 
@@ -116,6 +122,35 @@ export function adaptAIQuoteSuggestionsToPricingInput(
       quantity: item.quantity,
       unitPrice,
       // Supplier cost is never populated from AI unless explicitly authorized
+      supplierCost: isAuthorizedForInternalCost ? null : undefined,
+      supplierName: isAuthorizedForInternalCost && item.supplierName ? item.supplierName : undefined,
+    };
+  });
+}
+
+/**
+ * Adapts AIQuoteLineItemSuggestion[] into staged draft inputs carrying metadata for UI display.
+ */
+export function adaptAIQuoteSuggestionsToStagedInputs(
+  suggestions: AIQuoteLineItemSuggestion[],
+  isAuthorizedForInternalCost: boolean = false
+): AIQuoteStagedLineItem[] {
+  return suggestions.map((item, idx) => {
+    const unitPrice =
+      item.pricingSource === 'authoritative_catalog' && item.authoritativeUnitPrice
+        ? item.authoritativeUnitPrice
+        : '0.00';
+
+    return {
+      id: item.id || `quote-item-${idx + 1}`,
+      title: item.title,
+      description: item.description || undefined,
+      category: item.category,
+      quantity: item.quantity,
+      unitPrice,
+      suggestedUnitPrice: item.suggestedUnitPrice || null,
+      pricingSource: item.pricingSource,
+      catalogReferenceId: item.catalogReferenceId || null,
       supplierCost: isAuthorizedForInternalCost ? null : undefined,
       supplierName: isAuthorizedForInternalCost && item.supplierName ? item.supplierName : undefined,
     };
