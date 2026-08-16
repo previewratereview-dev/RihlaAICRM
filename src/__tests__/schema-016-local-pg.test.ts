@@ -149,6 +149,12 @@ describe('Migration 016 Local PostgreSQL Invariants & RLS Authorization', () => 
 
     // Clean up any stale records from previous runs
     await client.query(`
+      DO $$ BEGIN
+        ALTER TABLE public.quote_versions DISABLE TRIGGER ALL;
+        ALTER TABLE public.itinerary_versions DISABLE TRIGGER ALL;
+      EXCEPTION WHEN OTHERS THEN NULL;
+      END $$;
+
       DELETE FROM public.bookings WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
       DELETE FROM public.quote_acceptances WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
       DELETE FROM public.quote_shares WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
@@ -162,6 +168,12 @@ describe('Migration 016 Local PostgreSQL Invariants & RLS Authorization', () => 
       DELETE FROM public.traveler_profiles WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
       DELETE FROM public.profiles WHERE tenant_id IN ('${testTenantA}', '${testTenantB}', 'global');
       DELETE FROM public.tenants WHERE id IN ('${testTenantA}', '${testTenantB}', 'global');
+
+      DO $$ BEGIN
+        ALTER TABLE public.quote_versions ENABLE TRIGGER ALL;
+        ALTER TABLE public.itinerary_versions ENABLE TRIGGER ALL;
+      EXCEPTION WHEN OTHERS THEN NULL;
+      END $$;
     `);
 
     // 3. Setup test fixtures (tenants, profiles, travelers, inquiries)
@@ -201,6 +213,12 @@ describe('Migration 016 Local PostgreSQL Invariants & RLS Authorization', () => 
   afterAll(async () => {
     try {
       await client.query(`
+        DO $$ BEGIN
+          ALTER TABLE public.quote_versions DISABLE TRIGGER ALL;
+          ALTER TABLE public.itinerary_versions DISABLE TRIGGER ALL;
+        EXCEPTION WHEN OTHERS THEN NULL;
+        END $$;
+
         DELETE FROM public.bookings WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
         DELETE FROM public.quote_acceptances WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
         DELETE FROM public.quote_shares WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
@@ -214,6 +232,12 @@ describe('Migration 016 Local PostgreSQL Invariants & RLS Authorization', () => 
         DELETE FROM public.traveler_profiles WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
         DELETE FROM public.profiles WHERE tenant_id IN ('${testTenantA}', '${testTenantB}', 'global');
         DELETE FROM public.tenants WHERE id IN ('${testTenantA}', '${testTenantB}', 'global');
+
+        DO $$ BEGIN
+          ALTER TABLE public.quote_versions ENABLE TRIGGER ALL;
+          ALTER TABLE public.itinerary_versions ENABLE TRIGGER ALL;
+        EXCEPTION WHEN OTHERS THEN NULL;
+        END $$;
       `);
       await client.end();
     } catch {
