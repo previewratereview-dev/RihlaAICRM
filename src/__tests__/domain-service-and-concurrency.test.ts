@@ -160,13 +160,19 @@ describe('AI-5B.2 Real Local PostgreSQL Concurrency & Allocator Proofs', () => {
     await clientB.connect();
     await clientC.connect();
 
-    // Setup tenant fixtures for this isolated run
-    await clientA.query(`
-      INSERT INTO public.tenants (id, name, slug) VALUES ('${testTenant}', 'Concurrency All Tenant', 'concurrency-${testTenant}') ON CONFLICT DO NOTHING;
-      INSERT INTO public.profiles (id, tenant_id, role, full_name, email) VALUES ('${adminId}', '${testTenant}', 'admin', 'Admin Concurrency', 'admin@concurrency.com') ON CONFLICT DO NOTHING;
-      INSERT INTO public.traveler_profiles (id, tenant_id, display_name) VALUES ('${travelerId}', '${testTenant}', 'Traveler Concurrency') ON CONFLICT DO NOTHING;
-      INSERT INTO public.inquiries (id, tenant_id, traveler_id, destination) VALUES ('${inquiryId}', '${testTenant}', '${travelerId}', 'Dubai') ON CONFLICT DO NOTHING;
-    `);
+    // Serialize setup with other local PG test suites
+    await clientA.query('SELECT pg_advisory_lock(5432000)');
+    try {
+      // Setup tenant fixtures for this isolated run
+      await clientA.query(`
+        INSERT INTO public.tenants (id, name, slug) VALUES ('${testTenant}', 'Concurrency All Tenant', 'concurrency-${testTenant}') ON CONFLICT DO NOTHING;
+        INSERT INTO public.profiles (id, tenant_id, role, full_name, email) VALUES ('${adminId}', '${testTenant}', 'admin', 'Admin Concurrency', 'admin@concurrency.com') ON CONFLICT DO NOTHING;
+        INSERT INTO public.traveler_profiles (id, tenant_id, display_name) VALUES ('${travelerId}', '${testTenant}', 'Traveler Concurrency') ON CONFLICT DO NOTHING;
+        INSERT INTO public.inquiries (id, tenant_id, traveler_id, destination) VALUES ('${inquiryId}', '${testTenant}', '${travelerId}', 'Dubai') ON CONFLICT DO NOTHING;
+      `);
+    } finally {
+      await clientA.query('SELECT pg_advisory_unlock(5432000)');
+    }
   });
 
   afterAll(async () => {

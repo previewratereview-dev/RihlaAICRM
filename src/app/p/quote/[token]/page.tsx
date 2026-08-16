@@ -14,6 +14,7 @@
 import { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { headers } from 'next/headers';
+import { QuoteAcceptanceCard } from '@/components/public-portal/quote-acceptance-card';
 import {
   resolvePublicQuoteCapability,
 } from '@/lib/quotes-itineraries/sharing';
@@ -220,6 +221,9 @@ export default async function PublicQuotePage({ params }: PageProps) {
           </div>
         </section>
       )}
+
+      {/* Commercial Acceptance */}
+      <QuoteAcceptanceCard token={token} quote={quote} />
 
       {/* Footer */}
       <footer style={{ marginTop: '3rem', paddingTop: '1rem', borderTop: '1px solid #e5e7eb', fontSize: '0.75rem', color: '#9ca3af', textAlign: 'center' }}>
