@@ -77,9 +77,11 @@ export async function generateItineraryDraftProposal(
   }
 
   const startTime = Date.now();
-  const proposalContext = await buildProposalContext(params, ctx);
 
-  const prompt = `You are a professional luxury travel designer for an elite agency.
+  try {
+    const proposalContext = await buildProposalContext(params, ctx);
+
+    const prompt = `You are a professional luxury travel designer for an elite agency.
 Generate a structured, day-by-day itinerary proposal based on the following verified inquiry context.
 
 ${proposalContext.formattedSystemPromptContext}
@@ -131,13 +133,12 @@ REQUIRED JSON STRUCTURE:
   "warnings": []
 }`;
 
-  const aiSettings: TenantSettings['ai'] = {
-    defaultModel: options?.model || 'gpt-4o-mini',
-    apiKeys: {},
-    budgets: { monthlyBudget: 500 },
-  };
+    const aiSettings: TenantSettings['ai'] = {
+      defaultModel: options?.model || 'gpt-4o-mini',
+      apiKeys: {},
+      budgets: { monthlyBudget: 500 },
+    };
 
-  try {
     const aiRes = await callAIWithFallback({
       model: options?.model || 'gpt-4o-mini',
       prompt,
@@ -169,11 +170,17 @@ REQUIRED JSON STRUCTURE:
     };
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Failed to generate itinerary proposal';
+    let code = 'PROPOSAL_GENERATION_FAILED';
+    if (message.startsWith('NOT_FOUND')) {
+      code = 'NOT_FOUND';
+    } else if (message.startsWith('FORBIDDEN') || message.startsWith('UNAUTHORIZED')) {
+      code = 'FORBIDDEN';
+    }
     return {
       success: false,
       data: null,
       metadata: null,
-      error: { code: 'PROPOSAL_GENERATION_FAILED', message },
+      error: { code, message },
     };
   }
 }
@@ -204,21 +211,23 @@ export async function generateItineraryRevisionProposal(
   }
 
   const startTime = Date.now();
-  const proposalContext = await buildProposalContext(
-    { ...params, itineraryVersionId: params.baseVersionId, staffInstruction: params.requestedChanges },
-    ctx
-  );
 
-  if (!proposalContext.baseItineraryVersion) {
-    return {
-      success: false,
-      data: null,
-      metadata: null,
-      error: { code: 'NOT_FOUND', message: `Base itinerary version ${params.baseVersionId} not found` },
-    };
-  }
+  try {
+    const proposalContext = await buildProposalContext(
+      { ...params, itineraryVersionId: params.baseVersionId, staffInstruction: params.requestedChanges },
+      ctx
+    );
 
-  const prompt = `You are a professional luxury travel designer.
+    if (!proposalContext.baseItineraryVersion) {
+      return {
+        success: false,
+        data: null,
+        metadata: null,
+        error: { code: 'NOT_FOUND', message: `Base itinerary version ${params.baseVersionId} not found` },
+      };
+    }
+
+    const prompt = `You are a professional luxury travel designer.
 Revise the following existing itinerary version based on the requested modifications.
 
 ${proposalContext.formattedSystemPromptContext}
@@ -262,13 +271,12 @@ REQUIRED JSON STRUCTURE:
   "warnings": []
 }`;
 
-  const aiSettings: TenantSettings['ai'] = {
-    defaultModel: options?.model || 'gpt-4o-mini',
-    apiKeys: {},
-    budgets: { monthlyBudget: 500 },
-  };
+    const aiSettings: TenantSettings['ai'] = {
+      defaultModel: options?.model || 'gpt-4o-mini',
+      apiKeys: {},
+      budgets: { monthlyBudget: 500 },
+    };
 
-  try {
     const aiRes = await callAIWithFallback({
       model: options?.model || 'gpt-4o-mini',
       prompt,
@@ -300,11 +308,17 @@ REQUIRED JSON STRUCTURE:
     };
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Failed to generate itinerary revision proposal';
+    let code = 'PROPOSAL_GENERATION_FAILED';
+    if (message.startsWith('NOT_FOUND')) {
+      code = 'NOT_FOUND';
+    } else if (message.startsWith('FORBIDDEN') || message.startsWith('UNAUTHORIZED')) {
+      code = 'FORBIDDEN';
+    }
     return {
       success: false,
       data: null,
       metadata: null,
-      error: { code: 'PROPOSAL_GENERATION_FAILED', message },
+      error: { code, message },
     };
   }
 }

@@ -24,7 +24,17 @@ import {
   createItineraryShareAction,
   revokeItineraryShareAction,
 } from '@/app/actions/inquiry-lifecycle';
-import { ItineraryVersionEntity, ItineraryItem } from '@/lib/quotes-itineraries/types';
+import {
+  generateItineraryProposalAction,
+  generateItineraryRevisionProposalAction,
+} from '@/app/actions/ai-itinerary-proposal';
+import { ItineraryVersionEntity, ItineraryItemType } from '@/lib/quotes-itineraries/types';
+import {
+  type AIItineraryDraftProposal,
+  type AIItineraryRevisionProposal,
+  type AIProposalMetadata,
+  type ItineraryStructuralDiff,
+} from '@/lib/ai/proposal';
 import { can } from '@/lib/permissions';
 import { formatDate } from '@/lib/utils';
 import {
@@ -43,7 +53,10 @@ import {
   MapPin,
   FileText,
   X,
+  Sparkles,
+  Loader2,
 } from 'lucide-react';
+import { ItineraryProposalDrawer } from './itinerary-proposal-drawer';
 
 interface ItineraryWorkspaceProps {
   inquiryId: string;
@@ -76,6 +89,19 @@ export function ItineraryWorkspace({
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [generatedShareUrl, setGeneratedShareUrl] = useState<string | null>(null);
   const [hasCopiedShareUrl, setHasCopiedShareUrl] = useState(false);
+
+  // AI Proposal Drawer States
+  const [isAIProposalOpen, setIsAIProposalOpen] = useState(false);
+  const [isAIGenerating, setIsAIGenerating] = useState(false);
+  const [aiProposal, setAiProposal] = useState<AIItineraryDraftProposal | null>(null);
+  const [aiRevisionProposal, setAiRevisionProposal] = useState<AIItineraryRevisionProposal | null>(null);
+  const [aiStructuralDiff, setAiStructuralDiff] = useState<ItineraryStructuralDiff | null>(null);
+  const [aiMetadata, setAiMetadata] = useState<AIProposalMetadata | null>(null);
+  const [isRevisionProposalMode, setIsRevisionProposalMode] = useState(false);
+  const [isRevisionModalOpen, setIsRevisionModalOpen] = useState(false);
+  const [revisionInstruction, setRevisionInstruction] = useState('');
+  const [aiCustomInstruction, setAiCustomInstruction] = useState('');
+  const [isGeneratingInitialModalOpen, setIsGeneratingInitialModalOpen] = useState(false);
 
   // Operation loading & error states
   const [loading, setLoading] = useState(false);
@@ -276,6 +302,112 @@ export function ItineraryWorkspace({
     }
   };
 
+  // AI Proposal Handlers
+  const handleTriggerAIInitial = async (instruction?: string) => {
+    setIsAIGenerating(true);
+    setError(null);
+    try {
+      const res = await generateItineraryProposalAction({
+        inquiryId,
+        staffInstruction: instruction || aiCustomInstruction || null,
+      });
+
+      if (!res.success || !res.proposal) {
+        setError(res.error?.message || 'Failed to generate itinerary proposal');
+        return;
+      }
+
+      setAiProposal(res.proposal);
+      setAiMetadata(res.metadata || null);
+      setAiRevisionProposal(null);
+      setAiStructuralDiff(null);
+      setIsRevisionProposalMode(false);
+      setIsGeneratingInitialModalOpen(false);
+      setIsAIProposalOpen(true);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'AI proposal generation failed');
+    } finally {
+      setIsAIGenerating(false);
+    }
+  };
+
+  const handleTriggerAIRevision = async (instruction: string) => {
+    if (!currentVersion) return;
+    setIsAIGenerating(true);
+    setError(null);
+    try {
+      const res = await generateItineraryRevisionProposalAction({
+        inquiryId,
+        baseItineraryId: currentVersion.itineraryId,
+        baseVersionId: currentVersion.id,
+        baseVersionNumber: currentVersion.versionNumber,
+        expectedLockVersion: currentVersion.lockVersion,
+        requestedChanges: instruction,
+      });
+
+      if (!res.success || !res.revision) {
+        setError(res.error?.message || 'Failed to generate itinerary revision proposal');
+        return;
+      }
+
+      setAiRevisionProposal(res.revision);
+      setAiStructuralDiff(res.structuralDiff || null);
+      setAiMetadata(res.metadata || null);
+      setAiProposal(null);
+      setIsRevisionProposalMode(true);
+      setIsRevisionModalOpen(false);
+      setIsAIProposalOpen(true);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'AI revision generation failed');
+    } finally {
+      setIsAIGenerating(false);
+    }
+  };
+
+  const handleApplyAIProposal = (proposal: AIItineraryDraftProposal) => {
+    setDraftTitle(proposal.title);
+    setDraftDestination(proposal.destinationSummary || '');
+    setDraftStartDate(proposal.startDate || '');
+    setDraftEndDate(proposal.endDate || '');
+    setDraftPax(proposal.passengerCount != null ? proposal.passengerCount : '');
+    setDraftDays(
+      proposal.days.map((d) => ({
+        dayNumber: d.dayNumber,
+        title: d.title,
+        summary: d.description || null,
+        date: null,
+        items: (d.items || []).map((item, idx) => ({
+          id: item.id || `item-${d.dayNumber}-${idx + 1}`,
+          itemType: ((item.activityType as unknown) || 'activity') as ItineraryItemType,
+          title: item.title,
+          description: item.description || null,
+          startTime: item.time || null,
+          location: item.location || null,
+          endTime: null,
+        })),
+      }))
+    );
+    setDraftInclusions([...(proposal.inclusions || [])]);
+    setDraftExclusions([...(proposal.exclusions || [])]);
+
+    // Also populate new itinerary form state
+    setNewTitle(proposal.title);
+    setNewDestination(proposal.destinationSummary || '');
+    setNewStartDate(proposal.startDate || '');
+    setNewEndDate(proposal.endDate || '');
+    setNewPax(proposal.passengerCount != null ? proposal.passengerCount : '');
+
+    setIsAIProposalOpen(false);
+
+    if (selectedFamily && currentVersion && currentVersion.status === 'draft') {
+      setIsEditingDraft(true);
+    } else if (!selectedFamily) {
+      setIsCreatingFamily(true);
+    } else {
+      setIsEditingDraft(true);
+    }
+  };
+
   // Day builder helpers
   const handleAddDay = () => {
     setDraftDays([
@@ -329,14 +461,29 @@ export function ItineraryWorkspace({
           </p>
         </div>
         {canCreate && (
-          <button
-            type="button"
-            onClick={() => setIsCreatingFamily(true)}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors shadow-sm cursor-pointer"
-          >
-            <Plus className="h-4 w-4" />
-            <span>Create Itinerary</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              disabled={isAIGenerating}
+              onClick={() => setIsGeneratingInitialModalOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-purple-600 hover:bg-purple-700 text-white transition-colors shadow-xs cursor-pointer disabled:opacity-50"
+            >
+              {isAIGenerating ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Sparkles className="h-4 w-4" />
+              )}
+              <span>{isAIGenerating ? 'Generating...' : 'Generate with AI'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsCreatingFamily(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors shadow-xs cursor-pointer"
+            >
+              <Plus className="h-4 w-4" />
+              <span>Create Itinerary</span>
+            </button>
+          </div>
         )}
       </div>
 
@@ -356,14 +503,29 @@ export function ItineraryWorkspace({
             Create an itinerary to structure days, activities, dates, and inclusions for this inquiry.
           </p>
           {canCreate && (
-            <button
-              type="button"
-              onClick={() => setIsCreatingFamily(true)}
-              className="mt-4 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors cursor-pointer"
-            >
-              <Plus className="h-4 w-4" />
-              <span>Create First Itinerary</span>
-            </button>
+            <div className="mt-4 flex items-center justify-center gap-3">
+              <button
+                type="button"
+                disabled={isAIGenerating}
+                onClick={() => setIsGeneratingInitialModalOpen(true)}
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold rounded-lg bg-purple-600 hover:bg-purple-700 text-white transition-colors cursor-pointer disabled:opacity-50"
+              >
+                {isAIGenerating ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Sparkles className="h-4 w-4" />
+                )}
+                <span>Generate Itinerary with AI</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsCreatingFamily(true)}
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors cursor-pointer"
+              >
+                <Plus className="h-4 w-4" />
+                <span>Create Manually</span>
+              </button>
+            </div>
           )}
         </div>
       )}
@@ -552,7 +714,6 @@ export function ItineraryWorkspace({
                 </div>
               )}
             </div>
-
             {/* Action Bar */}
             <div className="flex flex-wrap gap-2 pt-2 border-t">
               {currentVersion.status === 'draft' && !isReadOnly && (
@@ -564,6 +725,15 @@ export function ItineraryWorkspace({
                   >
                     <Edit3 className="h-3.5 w-3.5" />
                     <span>Edit Draft</span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isAIGenerating}
+                    onClick={() => setIsRevisionModalOpen(true)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-purple-100 dark:bg-purple-950/50 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800 hover:bg-purple-200 dark:hover:bg-purple-900/50 transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    <Sparkles className="h-3.5 w-3.5" />
+                    <span>Adjust with AI</span>
                   </button>
                   {canFinalize && (
                     <button
@@ -582,15 +752,26 @@ export function ItineraryWorkspace({
               {currentVersion.status === 'finalized' && (
                 <>
                   {canRevise && (
-                    <button
-                      type="button"
-                      disabled={loading}
-                      onClick={handleCreateRevision}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-muted hover:bg-muted/80 text-foreground transition-colors cursor-pointer disabled:opacity-50"
-                    >
-                      <RotateCcw className="h-3.5 w-3.5" />
-                      <span>Create Revision (v{currentVersion.versionNumber + 1})</span>
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        disabled={isAIGenerating}
+                        onClick={() => setIsRevisionModalOpen(true)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-purple-600 hover:bg-purple-700 text-white transition-colors cursor-pointer shadow-xs disabled:opacity-50"
+                      >
+                        <Sparkles className="h-3.5 w-3.5" />
+                        <span>AI Revision</span>
+                      </button>
+                      <button
+                        type="button"
+                        disabled={loading}
+                        onClick={handleCreateRevision}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-muted hover:bg-muted/80 text-foreground transition-colors cursor-pointer disabled:opacity-50"
+                      >
+                        <RotateCcw className="h-3.5 w-3.5" />
+                        <span>Manual Revision (v{currentVersion.versionNumber + 1})</span>
+                      </button>
+                    </>
                   )}
                   {canShare && (
                     <button
@@ -607,15 +788,26 @@ export function ItineraryWorkspace({
               )}
 
               {currentVersion.status === 'superseded' && canRevise && (
-                <button
-                  type="button"
-                  disabled={loading}
-                  onClick={handleCreateRevision}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-muted hover:bg-muted/80 text-foreground transition-colors cursor-pointer disabled:opacity-50"
-                >
-                  <RotateCcw className="h-3.5 w-3.5" />
-                  <span>Create Revision from v{currentVersion.versionNumber}</span>
-                </button>
+                <>
+                  <button
+                    type="button"
+                    disabled={isAIGenerating}
+                    onClick={() => setIsRevisionModalOpen(true)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-purple-600 hover:bg-purple-700 text-white transition-colors cursor-pointer shadow-xs disabled:opacity-50"
+                  >
+                    <Sparkles className="h-3.5 w-3.5" />
+                    <span>AI Revision from v{currentVersion.versionNumber}</span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={loading}
+                    onClick={handleCreateRevision}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-muted hover:bg-muted/80 text-foreground transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    <span>Create Revision from v{currentVersion.versionNumber}</span>
+                  </button>
+                </>
               )}
             </div>
 
@@ -654,7 +846,7 @@ export function ItineraryWorkspace({
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-medium text-muted-foreground mb-1">
-                      Title
+                      Program Title
                     </label>
                     <input
                       type="text"
@@ -665,7 +857,7 @@ export function ItineraryWorkspace({
                   </div>
                   <div>
                     <label className="block text-xs font-medium text-muted-foreground mb-1">
-                      Destination Summary
+                      Destination
                     </label>
                     <input
                       type="text"
@@ -676,67 +868,121 @@ export function ItineraryWorkspace({
                   </div>
                 </div>
 
-                {/* Day-by-Day Section */}
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs font-semibold text-foreground">
-                      Days & Activities ({draftDays.length})
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-muted-foreground mb-1">
+                      Start Date
                     </label>
+                    <input
+                      type="date"
+                      value={draftStartDate}
+                      onChange={(e) => setDraftStartDate(e.target.value)}
+                      className="w-full text-xs bg-background border rounded px-3 py-1.5"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-muted-foreground mb-1">
+                      End Date
+                    </label>
+                    <input
+                      type="date"
+                      value={draftEndDate}
+                      onChange={(e) => setDraftEndDate(e.target.value)}
+                      className="w-full text-xs bg-background border rounded px-3 py-1.5"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-muted-foreground mb-1">
+                      Travelers (Pax)
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={draftPax}
+                      onChange={(e) => setDraftPax(e.target.value === '' ? '' : Number(e.target.value))}
+                      className="w-full text-xs bg-background border rounded px-3 py-1.5"
+                    />
+                  </div>
+                </div>
+
+                {/* Day Program Builder */}
+                <div className="space-y-3 pt-2 border-t">
+                  <div className="flex items-center justify-between">
+                    <h6 className="text-xs font-semibold text-foreground">Day-by-Day Schedule</h6>
                     <button
                       type="button"
                       onClick={handleAddDay}
-                      className="inline-flex items-center gap-1 text-xs text-primary font-medium hover:underline"
+                      className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded border hover:bg-muted"
                     >
-                      <Plus className="h-3.5 w-3.5" /> Add Day
+                      <Plus className="h-3 w-3" /> Add Day
                     </button>
                   </div>
 
                   <div className="space-y-3">
                     {draftDays.map((day, dIdx) => (
-                      <div key={dIdx} className="p-3 bg-background border rounded-lg space-y-2">
+                      <div key={dIdx} className="p-3 border rounded-lg bg-card space-y-3">
                         <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2 flex-1">
-                            <span className="text-xs font-bold text-muted-foreground">
-                              Day {day.dayNumber}:
-                            </span>
-                            <input
-                              type="text"
-                              value={day.title}
-                              onChange={(e) => {
-                                const updated = [...draftDays];
-                                updated[dIdx].title = e.target.value;
-                                setDraftDays(updated);
-                              }}
-                              placeholder="Day Title"
-                              className="text-xs bg-transparent border-b border-border/50 px-1 py-0.5 flex-1"
-                            />
-                          </div>
+                          <span className="font-semibold text-xs text-primary">Day {day.dayNumber}</span>
                           <button
                             type="button"
                             onClick={() => handleRemoveDay(dIdx)}
-                            className="p-1 text-red-500 hover:bg-red-50 rounded"
+                            className="text-muted-foreground hover:text-red-600 p-1"
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
                         </div>
+                        <input
+                          type="text"
+                          value={day.title}
+                          onChange={(e) => {
+                            const updated = [...draftDays];
+                            updated[dIdx].title = e.target.value;
+                            setDraftDays(updated);
+                          }}
+                          placeholder="Day Title"
+                          className="w-full text-xs bg-background border rounded px-2.5 py-1"
+                        />
+                        <textarea
+                          value={day.summary || ''}
+                          onChange={(e) => {
+                            const updated = [...draftDays];
+                            updated[dIdx].summary = e.target.value || null;
+                            setDraftDays(updated);
+                          }}
+                          placeholder="Day Description / Summary"
+                          rows={2}
+                          className="w-full text-xs bg-background border rounded px-2.5 py-1"
+                        />
 
-                        {/* Items in Day */}
-                        <div className="pl-4 space-y-1.5">
+                        {/* Day Items */}
+                        <div className="space-y-2 pl-2 border-l-2 border-primary/20">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[11px] font-medium text-muted-foreground">
+                              Activities & Transfers ({day.items?.length || 0})
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleAddItemToDay(dIdx)}
+                              className="text-[11px] font-medium text-primary hover:underline"
+                            >
+                              + Add Activity
+                            </button>
+                          </div>
                           {(day.items || []).map((item, iIdx) => (
-                            <div key={iIdx} className="flex items-center gap-2 text-xs">
+                            <div key={item.id || iIdx} className="flex gap-2 items-center">
                               <select
                                 value={item.itemType}
                                 onChange={(e) => {
                                   const updated = [...draftDays];
-                                  updated[dIdx].items[iIdx].itemType = e.target.value as ItineraryItem['itemType'];
+                                  updated[dIdx].items[iIdx].itemType = e.target.value as ItineraryItemType;
                                   setDraftDays(updated);
                                 }}
-                                className="bg-muted text-[11px] rounded px-1.5 py-1 border"
+                                className="text-xs bg-background border rounded px-1.5 py-1 w-24"
                               >
                                 <option value="activity">Activity</option>
-                                <option value="accommodation">Accommodation</option>
-                                <option value="transfer">Transfer</option>
+                                <option value="hotel">Hotel</option>
                                 <option value="flight">Flight</option>
+                                <option value="transfer">Transfer</option>
                                 <option value="meal">Meal</option>
                                 <option value="other">Other</option>
                               </select>
@@ -748,106 +994,36 @@ export function ItineraryWorkspace({
                                   updated[dIdx].items[iIdx].title = e.target.value;
                                   setDraftDays(updated);
                                 }}
-                                placeholder="Activity description"
-                                className="bg-transparent border rounded px-2 py-1 flex-1 text-xs"
+                                placeholder="Activity Name"
+                                className="flex-1 text-xs bg-background border rounded px-2 py-1"
                               />
+                              <input
+                                type="text"
+                                value={item.startTime || ''}
+                                onChange={(e) => {
+                                  const updated = [...draftDays];
+                                  updated[dIdx].items[iIdx].startTime = e.target.value || null;
+                                  setDraftDays(updated);
+                                }}
+                                placeholder="09:00"
+                                className="w-16 text-xs bg-background border rounded px-1.5 py-1 text-center font-mono"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const updated = [...draftDays];
+                                  updated[dIdx].items = updated[dIdx].items.filter((_, idx) => idx !== iIdx);
+                                  setDraftDays(updated);
+                                }}
+                                className="text-muted-foreground hover:text-red-600 p-1"
+                              >
+                                <X className="h-3 w-3" />
+                              </button>
                             </div>
                           ))}
-                          <button
-                            type="button"
-                            onClick={() => handleAddItemToDay(dIdx)}
-                            className="text-[11px] text-primary hover:underline inline-flex items-center gap-1 mt-1"
-                          >
-                            <Plus className="h-3 w-3" /> Add item to Day {day.dayNumber}
-                          </button>
                         </div>
                       </div>
                     ))}
-                  </div>
-                </div>
-
-                {/* Inclusions & Exclusions */}
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs font-semibold text-foreground mb-1">
-                      Inclusions ({draftInclusions.length})
-                    </label>
-                    <div className="flex gap-1 mb-2">
-                      <input
-                        type="text"
-                        value={newInclusion}
-                        onChange={(e) => setNewInclusion(e.target.value)}
-                        placeholder="Add inclusion..."
-                        className="text-xs bg-background border rounded px-2 py-1 flex-1"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (newInclusion.trim()) {
-                            setDraftInclusions([...draftInclusions, newInclusion.trim()]);
-                            setNewInclusion('');
-                          }
-                        }}
-                        className="px-2 py-1 bg-muted text-xs font-semibold rounded border"
-                      >
-                        Add
-                      </button>
-                    </div>
-                    <ul className="space-y-1 text-xs text-muted-foreground">
-                      {draftInclusions.map((inc, i) => (
-                        <li key={i} className="flex items-center justify-between bg-card p-1.5 rounded border">
-                          <span>✓ {inc}</span>
-                          <button
-                            type="button"
-                            onClick={() => setDraftInclusions(draftInclusions.filter((_, idx) => idx !== i))}
-                            className="text-red-500 hover:text-red-700"
-                          >
-                            <X className="h-3 w-3" />
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-foreground mb-1">
-                      Exclusions ({draftExclusions.length})
-                    </label>
-                    <div className="flex gap-1 mb-2">
-                      <input
-                        type="text"
-                        value={newExclusion}
-                        onChange={(e) => setNewExclusion(e.target.value)}
-                        placeholder="Add exclusion..."
-                        className="text-xs bg-background border rounded px-2 py-1 flex-1"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (newExclusion.trim()) {
-                            setDraftExclusions([...draftExclusions, newExclusion.trim()]);
-                            setNewExclusion('');
-                          }
-                        }}
-                        className="px-2 py-1 bg-muted text-xs font-semibold rounded border"
-                      >
-                        Add
-                      </button>
-                    </div>
-                    <ul className="space-y-1 text-xs text-muted-foreground">
-                      {draftExclusions.map((exc, i) => (
-                        <li key={i} className="flex items-center justify-between bg-card p-1.5 rounded border">
-                          <span>✗ {exc}</span>
-                          <button
-                            type="button"
-                            onClick={() => setDraftExclusions(draftExclusions.filter((_, idx) => idx !== i))}
-                            className="text-red-500 hover:text-red-700"
-                          >
-                            <X className="h-3 w-3" />
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
                   </div>
                 </div>
 
@@ -961,6 +1137,121 @@ export function ItineraryWorkspace({
         </div>
       )}
 
+      {/* Initial AI Generation Prompt Modal */}
+      {isGeneratingInitialModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4">
+          <div className="bg-card border shadow-2xl rounded-xl max-w-md w-full p-6 space-y-4 animate-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b pb-3">
+              <h4 className="text-base font-semibold text-foreground flex items-center gap-2">
+                <Sparkles className="h-5 w-5 text-purple-600" /> Generate Itinerary with AI
+              </h4>
+              <button
+                type="button"
+                onClick={() => setIsGeneratingInitialModalOpen(false)}
+                className="p-1 text-muted-foreground hover:text-foreground rounded"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              AI will analyze the inquiry details, traveler preferences, conversation history, and agency knowledge base to construct a grounded, day-by-day itinerary proposal.
+            </p>
+            <div className="space-y-1.5">
+              <label className="block text-xs font-medium text-foreground">
+                Custom Focus / Specific Guidance (Optional):
+              </label>
+              <textarea
+                value={aiCustomInstruction}
+                onChange={(e) => setAiCustomInstruction(e.target.value)}
+                placeholder="e.g. Focus on luxury wellness, private tea ceremonies, and keep days at a relaxed pace..."
+                rows={3}
+                className="w-full text-xs bg-background border rounded-md px-3 py-2 text-foreground outline-none focus:ring-1 focus:ring-purple-500"
+              />
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setIsGeneratingInitialModalOpen(false)}
+                className="px-3.5 py-2 text-xs font-medium rounded-lg border hover:bg-muted text-muted-foreground hover:text-foreground"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isAIGenerating}
+                onClick={() => handleTriggerAIInitial(aiCustomInstruction)}
+                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-lg bg-purple-600 hover:bg-purple-700 text-white transition-colors cursor-pointer shadow-xs disabled:opacity-50"
+              >
+                {isAIGenerating ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Sparkles className="h-4 w-4" />
+                )}
+                <span>{isAIGenerating ? 'Generating Proposal...' : 'Generate Proposal'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* AI Revision Prompt Modal */}
+      {isRevisionModalOpen && currentVersion && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4">
+          <div className="bg-card border shadow-2xl rounded-xl max-w-md w-full p-6 space-y-4 animate-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b pb-3">
+              <h4 className="text-base font-semibold text-foreground flex items-center gap-2">
+                <Sparkles className="h-5 w-5 text-purple-600" /> Request AI Revision
+              </h4>
+              <button
+                type="button"
+                onClick={() => setIsRevisionModalOpen(false)}
+                className="p-1 text-muted-foreground hover:text-foreground rounded"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Describe what changes or adjustments you want to make against <strong>v{currentVersion.versionNumber} ({currentVersion.title})</strong>.
+            </p>
+            <div className="space-y-1.5">
+              <label className="block text-xs font-medium text-foreground">
+                Requested Modifications *
+              </label>
+              <textarea
+                required
+                value={revisionInstruction}
+                onChange={(e) => setRevisionInstruction(e.target.value)}
+                placeholder="e.g. Add a free afternoon on Day 4 and move the desert safari to Day 3..."
+                rows={4}
+                className="w-full text-xs bg-background border rounded-md px-3 py-2 text-foreground outline-none focus:ring-1 focus:ring-purple-500"
+              />
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setIsRevisionModalOpen(false)}
+                className="px-3.5 py-2 text-xs font-medium rounded-lg border hover:bg-muted text-muted-foreground hover:text-foreground"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isAIGenerating || !revisionInstruction.trim()}
+                onClick={() => handleTriggerAIRevision(revisionInstruction)}
+                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-lg bg-purple-600 hover:bg-purple-700 text-white transition-colors cursor-pointer shadow-xs disabled:opacity-50"
+              >
+                {isAIGenerating ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Sparkles className="h-4 w-4" />
+                )}
+                <span>{isAIGenerating ? 'Generating Revision...' : 'Generate Revision'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Share Link Modal */}
       {isShareModalOpen && generatedShareUrl && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
@@ -1018,6 +1309,25 @@ export function ItineraryWorkspace({
           </div>
         </div>
       )}
+
+      {/* AI Proposal Review Drawer */}
+      <ItineraryProposalDrawer
+        isOpen={isAIProposalOpen}
+        onClose={() => setIsAIProposalOpen(false)}
+        isRevision={isRevisionProposalMode}
+        proposal={aiProposal}
+        revisionProposal={aiRevisionProposal}
+        structuralDiff={aiStructuralDiff}
+        metadata={aiMetadata}
+        onApplyToDraft={handleApplyAIProposal}
+        onRegenerate={(custom) => {
+          if (isRevisionProposalMode) {
+            handleTriggerAIRevision(custom || revisionInstruction);
+          } else {
+            handleTriggerAIInitial(custom || aiCustomInstruction);
+          }
+        }}
+      />
     </div>
   );
 }

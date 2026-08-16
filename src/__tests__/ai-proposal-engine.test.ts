@@ -594,10 +594,10 @@ describe('Phase AI-5C.1: Grounded AI Proposal Engine Foundation', () => {
         const adaptedInput = adaptAIItineraryToCreateInput('inquiry-safe-1', parsed.data);
 
         // Prove that no injected tenant, role, or action payload exists on the adapted domain input
-        expect((adaptedInput as Record<string, unknown>).tenantId).toBeUndefined();
-        expect((adaptedInput as Record<string, unknown>).role).toBeUndefined();
-        expect((adaptedInput as Record<string, unknown>).action).toBeUndefined();
-        expect((adaptedInput as Record<string, unknown>).supplierCost).toBeUndefined();
+        expect((adaptedInput as unknown as Record<string, unknown>).tenantId).toBeUndefined();
+        expect((adaptedInput as unknown as Record<string, unknown>).role).toBeUndefined();
+        expect((adaptedInput as unknown as Record<string, unknown>).action).toBeUndefined();
+        expect((adaptedInput as unknown as Record<string, unknown>).supplierCost).toBeUndefined();
         expect(adaptedInput.inquiryId).toBe('inquiry-safe-1');
       }
     });
@@ -692,6 +692,8 @@ describe('Phase AI-5C.1: Grounded AI Proposal Engine Foundation', () => {
         versionNumber: 1,
         currency: 'USD',
         subtotal: '10000.00',
+        discountAmount: '0.00',
+        taxAmount: '0.00',
         grandTotal: '10000.00',
         internalCostTotal: '7000.00',
         grossMarginAmount: '3000.00',
@@ -754,7 +756,7 @@ describe('Phase AI-5C.1: Grounded AI Proposal Engine Foundation', () => {
       ],
       inclusions: ['Hotels', 'Transfers'],
       exclusions: ['Flights'],
-      grounding: { sources: [], assumptions: [], missingInformation: [] },
+      grounding: { sources: [], assumptions: [], missingInformation: [], confidenceScore: 0.95 },
       warnings: [],
     };
 

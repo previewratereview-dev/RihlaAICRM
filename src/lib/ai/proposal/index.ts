@@ -6,4 +6,5 @@ export * from './contracts';
 export * from './context-builder';
 export * from './diff-engine';
 export * from './adapter';
+export * from './itinerary-diff';
 export * from './proposal-engine';
