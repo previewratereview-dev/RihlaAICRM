@@ -624,6 +624,31 @@ describe('Phase AI-5C.3: Grounded Quote Copilot & Deterministic Commercial Expla
       expect(res.error?.code).toBe('NOT_FOUND');
     });
 
+    it('fails closed when comparing quote versions belonging to different tenants', async () => {
+      mockStaffContext = { userId: 'user-consultant-1', tenantId: 'tenant-agency-a', role: 'consultant' };
+
+      mockPgQuery.mockImplementation(async (sql: string) => {
+        if (sql.includes('FROM public.quote_versions')) {
+          // Only returns 1 row because the second version belongs to Tenant B
+          return {
+            rows: [
+              { id: 'qv-tenant-a', quote_id: 'q-1', quote_number: 'QT-1', version_number: 1, currency: 'USD', subtotal: '100', discount_amount: '0', tax_amount: '0', grand_total: '100', line_items: [] },
+            ],
+          };
+        }
+        return { rows: [] };
+      });
+
+      const res = await generateQuoteDiffExplanationAction({
+        quoteId: 'q-1',
+        v1VersionId: 'qv-tenant-a',
+        v2VersionId: 'qv-tenant-b',
+      });
+
+      expect(res.success).toBe(false);
+      expect(res.error?.code).toBe('NOT_FOUND');
+    });
+
     it('returns structured error when AI provider fails without breaking workspace', async () => {
       mockStaffContext = { userId: 'user-consultant-1', tenantId: 'tenant-agency-a', role: 'consultant' };
 
@@ -645,6 +670,56 @@ describe('Phase AI-5C.3: Grounded Quote Copilot & Deterministic Commercial Expla
 
       expect(res.success).toBe(false);
       expect(res.error?.message).toContain('Rate limit exceeded');
+    });
+  });
+
+  // ==========================================================================
+  // 7. IMMUTABILITY, REVISION LIFECYCLE & CONCURRENCY
+  // ==========================================================================
+  describe('7. Immutability, Revision Lifecycle & Concurrency Guardrails', () => {
+    it('creates a new revision (vN+1) before staging suggestions if base quote is issued/finalized', async () => {
+      const issuedBase = { id: 'ver-issued-v2', status: 'issued', versionNumber: 2 };
+      expect(issuedBase.status).toBe('issued');
+
+      const { createQuoteRevisionAction } = await import('@/app/actions/inquiry-lifecycle');
+      const revRes = await createQuoteRevisionAction(issuedBase.id);
+
+      expect(revRes.newVersionId).toBe('new-rev-from-ver-issued-v2');
+      expect(revRes.versionNumber).toBe(3);
+      expect(revRes.newVersionId).not.toBe(issuedBase.id);
+    });
+
+    it('detects and flags stale quote lock versions', async () => {
+      mockStaffContext = { userId: 'user-consultant-1', tenantId: 'tenant-agency-a', role: 'consultant' };
+
+      mockPgQuery.mockImplementation(async (sql: string) => {
+        if (sql.includes('FROM public.quote_versions WHERE id = $1')) {
+          return { rows: [{ lock_version: 5, version_number: 2, status: 'draft' }] };
+        }
+        return { rows: [] };
+      });
+
+      const freshness = await checkQuoteVersionFreshnessAction('qv-1', 3);
+
+      expect(freshness.isFresh).toBe(false);
+      expect(freshness.currentLockVersion).toBe(5);
+      expect(freshness.currentStatus).toBe('draft');
+    });
+
+    it('confirms fresh version when lock version matches expected', async () => {
+      mockStaffContext = { userId: 'user-consultant-1', tenantId: 'tenant-agency-a', role: 'consultant' };
+
+      mockPgQuery.mockImplementation(async (sql: string) => {
+        if (sql.includes('FROM public.quote_versions WHERE id = $1')) {
+          return { rows: [{ lock_version: 3, version_number: 2, status: 'draft' }] };
+        }
+        return { rows: [] };
+      });
+
+      const freshness = await checkQuoteVersionFreshnessAction('qv-1', 3);
+
+      expect(freshness.isFresh).toBe(true);
+      expect(freshness.currentLockVersion).toBe(3);
     });
   });
 });
