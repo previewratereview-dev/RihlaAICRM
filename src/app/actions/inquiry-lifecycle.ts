@@ -155,7 +155,7 @@ export interface QuoteAcceptanceDTO {
   itineraryTitle?: string;
   travelerId: string;
   travelerName: string;
-  travelerEmail: string;
+  travelerEmail?: string;
   acceptanceType: string;
   staffAcceptanceMethod: string | null;
   staffReferenceNotes: string | null;
@@ -376,6 +376,7 @@ export async function getInquiryLifecycleData(inquiryId: string): Promise<Inquir
       ),
     }));
 
+    const isViewer = ctx.role === 'viewer';
     const acceptances: QuoteAcceptanceDTO[] = acceptancesRes.rows.map((r) => ({
       id: String(r.id),
       quoteVersionId: String(r.quote_version_id),
@@ -385,10 +386,10 @@ export async function getInquiryLifecycleData(inquiryId: string): Promise<Inquir
       itineraryTitle: r.itinerary_title ? String(r.itinerary_title) : undefined,
       travelerId: String(r.traveler_id),
       travelerName: String(r.traveler_name_input || ''),
-      travelerEmail: String(r.traveler_email_input || ''),
+      travelerEmail: isViewer ? undefined : (r.traveler_email_input ? String(r.traveler_email_input) : undefined),
       acceptanceType: String(r.acceptance_type),
       staffAcceptanceMethod: r.staff_acceptance_method ? String(r.staff_acceptance_method) : null,
-      staffReferenceNotes: r.staff_reference_notes ? String(r.staff_reference_notes) : null,
+      staffReferenceNotes: isViewer ? null : (r.staff_reference_notes ? String(r.staff_reference_notes) : null),
       acceptedGrandTotal: String(r.accepted_grand_total),
       currency: String(r.currency),
       acceptedAt: String(r.accepted_at),

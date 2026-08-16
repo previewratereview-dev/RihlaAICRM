@@ -154,7 +154,7 @@ export function shapeQuoteVersionDTO(
     };
   }
 
-  // Omit supplier cost, margins, and markups for unauthorized roles
+  // Omit supplier cost, supplier name, margins, and markups for unauthorized roles
   const safeLineItems = (quoteRow.line_items || []).map((item) => ({
     id: item.id,
     title: item.title,
@@ -163,7 +163,6 @@ export function shapeQuoteVersionDTO(
     quantity: item.quantity,
     unitPrice: item.unitPrice,
     totalPrice: item.totalPrice,
-    supplierName: item.supplierName,
   }));
 
   return {

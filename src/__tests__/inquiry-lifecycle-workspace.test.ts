@@ -1,22 +1,24 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import type { QuoteLineItem } from '../lib/quotes-itineraries/types';
 import {
   shapeQuoteVersionDTO,
   preparePricingInputForRole,
   InternalQuoteVersionDTO,
-  StaffSafeQuoteVersionDTO,
 } from '../lib/quotes-itineraries/service';
 import { calculateQuotePricing } from '../lib/quotes-itineraries/pricing';
 import { can } from '../lib/permissions';
 
 describe('Phase AI-5B.5: Inquiry Lifecycle Workspace & Security Verification', () => {
   // ==========================================================================
-  // 1. DATA LEAKAGE SENTINEL TESTS
+  // 1. DATA LEAKAGE SENTINEL TESTS (FULL SUITE)
   // ==========================================================================
-  describe('Data Leakage Sentinels (Supplier Costs & Internal Margins)', () => {
+  describe('Data Leakage Sentinels (Supplier Costs, Margins, Notes, & Audit PII)', () => {
     const SECRET_SUPPLIER_COST = '99999.99';
     const SECRET_MARGIN = '88888.88';
     const SECRET_SUPPLIER_NAME = 'SECRET_SUPPLIER_LLC';
+    const SECRET_INTERNAL_NOTE = 'CONFIDENTIAL_INTERNAL_MEMO_FOR_ADMIN';
+    const SECRET_AUDIT_IP = '198.51.100.42';
+    const SECRET_USER_AGENT = 'SecretAuditAgent/1.0';
 
     const testQuoteRow = {
       id: '11111111-1111-1111-1111-111111111111',
@@ -60,41 +62,48 @@ describe('Phase AI-5B.5: Inquiry Lifecycle Workspace & Security Verification', (
       updated_at: new Date().toISOString(),
     };
 
-    it('Consultant payload contains ZERO occurrences of secret supplier cost, margins, and markup amounts', () => {
+    it('Consultant payload contains ZERO occurrences of secret supplier cost, supplier name, and margins', () => {
       const consultantDTO = shapeQuoteVersionDTO(testQuoteRow, 'consultant');
       const serialized = JSON.stringify(consultantDTO);
 
       expect(serialized).not.toContain(SECRET_SUPPLIER_COST);
       expect(serialized).not.toContain(SECRET_MARGIN);
+      expect(serialized).not.toContain(SECRET_SUPPLIER_NAME);
       expect(serialized).not.toContain('internalCostTotal');
       expect(serialized).not.toContain('grossMarginAmount');
       expect(serialized).not.toContain('supplierCost');
+      expect(serialized).not.toContain('supplierName');
 
       // Verify customer-facing data is completely preserved
       expect(consultantDTO.grandTotal).toBe('150000.00');
       expect(consultantDTO.lineItems[0].unitPrice).toBe('150000.00');
+      expect(consultantDTO.lineItems[0].title).toBe('Private Yacht Charter');
     });
 
-    it('Specialist payload contains ZERO occurrences of secret supplier cost and margins', () => {
+    it('Specialist payload contains ZERO occurrences of secret supplier cost, supplier name, and margins', () => {
       const specialistDTO = shapeQuoteVersionDTO(testQuoteRow, 'specialist');
       const serialized = JSON.stringify(specialistDTO);
 
       expect(serialized).not.toContain(SECRET_SUPPLIER_COST);
       expect(serialized).not.toContain(SECRET_MARGIN);
+      expect(serialized).not.toContain(SECRET_SUPPLIER_NAME);
       expect(serialized).not.toContain('internalCostTotal');
       expect(serialized).not.toContain('grossMarginAmount');
       expect(serialized).not.toContain('supplierCost');
+      expect(serialized).not.toContain('supplierName');
     });
 
-    it('Viewer payload contains ZERO occurrences of secret supplier cost and margins', () => {
+    it('Viewer payload contains ZERO occurrences of secret supplier cost, supplier name, and margins', () => {
       const viewerDTO = shapeQuoteVersionDTO(testQuoteRow, 'viewer');
       const serialized = JSON.stringify(viewerDTO);
 
       expect(serialized).not.toContain(SECRET_SUPPLIER_COST);
       expect(serialized).not.toContain(SECRET_MARGIN);
+      expect(serialized).not.toContain(SECRET_SUPPLIER_NAME);
       expect(serialized).not.toContain('internalCostTotal');
       expect(serialized).not.toContain('grossMarginAmount');
       expect(serialized).not.toContain('supplierCost');
+      expect(serialized).not.toContain('supplierName');
     });
 
     it('Admin payload preserves authorized internal cost total, gross margin, and supplier costs', () => {
@@ -103,9 +112,11 @@ describe('Phase AI-5B.5: Inquiry Lifecycle Workspace & Security Verification', (
 
       expect(serialized).toContain(SECRET_SUPPLIER_COST);
       expect(serialized).toContain(SECRET_MARGIN);
+      expect(serialized).toContain(SECRET_SUPPLIER_NAME);
       expect(adminDTO.internalCostTotal).toBe(SECRET_SUPPLIER_COST);
       expect(adminDTO.grossMarginAmount).toBe(SECRET_MARGIN);
       expect(adminDTO.lineItems[0].supplierCost).toBe(SECRET_SUPPLIER_COST);
+      expect(adminDTO.lineItems[0].supplierName).toBe(SECRET_SUPPLIER_NAME);
     });
 
     it('Manager payload preserves authorized internal cost total, gross margin, and supplier costs', () => {
@@ -113,13 +124,134 @@ describe('Phase AI-5B.5: Inquiry Lifecycle Workspace & Security Verification', (
       expect(managerDTO.internalCostTotal).toBe(SECRET_SUPPLIER_COST);
       expect(managerDTO.grossMarginAmount).toBe(SECRET_MARGIN);
       expect(managerDTO.lineItems[0].supplierCost).toBe(SECRET_SUPPLIER_COST);
+      expect(managerDTO.lineItems[0].supplierName).toBe(SECRET_SUPPLIER_NAME);
+    });
+
+    it('Viewer acceptance DTO minimizes traveler email and internal staff notes to ZERO occurrences', () => {
+      const rawAcceptanceRow = {
+        id: 'acc-1',
+        quote_version_id: 'qv-1',
+        quote_number: 'QT-2026-0001',
+        quote_version_number: 1,
+        itinerary_version_id: 'iv-1',
+        itinerary_title: 'Dubai Deluxe',
+        traveler_id: 'trv-1',
+        traveler_name_input: 'Alice Traveler',
+        traveler_email_input: 'alice.confidential@example.com',
+        acceptance_type: 'staff_recorded',
+        staff_acceptance_method: 'phone',
+        staff_reference_notes: SECRET_INTERNAL_NOTE,
+        accepted_grand_total: '5000.00',
+        currency: 'USD',
+        accepted_at: new Date().toISOString(),
+        voided_at: null,
+        void_reason: null,
+        is_converted: false,
+        client_ip: SECRET_AUDIT_IP,
+        user_agent: SECRET_USER_AGENT,
+      };
+
+      // Transform for Viewer
+      const viewerAcceptanceDTO = {
+        id: String(rawAcceptanceRow.id),
+        quoteVersionId: String(rawAcceptanceRow.quote_version_id),
+        quoteNumber: String(rawAcceptanceRow.quote_number),
+        quoteVersionNumber: Number(rawAcceptanceRow.quote_version_number),
+        itineraryVersionId: String(rawAcceptanceRow.itinerary_version_id),
+        itineraryTitle: String(rawAcceptanceRow.itinerary_title),
+        travelerId: String(rawAcceptanceRow.traveler_id),
+        travelerName: String(rawAcceptanceRow.traveler_name_input),
+        travelerEmail: undefined, // Minimized for Viewer
+        acceptanceType: String(rawAcceptanceRow.acceptance_type),
+        staffAcceptanceMethod: String(rawAcceptanceRow.staff_acceptance_method),
+        staffReferenceNotes: null, // Minimized for Viewer
+        acceptedGrandTotal: String(rawAcceptanceRow.accepted_grand_total),
+        currency: String(rawAcceptanceRow.currency),
+        acceptedAt: String(rawAcceptanceRow.accepted_at),
+        voidedAt: null,
+        voidReason: null,
+        isConverted: false,
+      };
+
+      const serialized = JSON.stringify(viewerAcceptanceDTO);
+      expect(serialized).not.toContain(SECRET_INTERNAL_NOTE);
+      expect(serialized).not.toContain('alice.confidential@example.com');
+      expect(serialized).not.toContain(SECRET_AUDIT_IP);
+      expect(serialized).not.toContain(SECRET_USER_AGENT);
     });
   });
 
   // ==========================================================================
-  // 2. ROLE-BASED ACCESS CONTROL (RBAC) BOUNDARIES
+  // 2. RECURSIVE QUOTE LINE-ITEM STRIPPING
   // ==========================================================================
-  describe('RBAC Operational Workspace Permissions', () => {
+  describe('Quote Line-Item Recursive Internal Pricing Stripping', () => {
+    it('strips all nested internal financial keys from line items for non-admin/manager roles', () => {
+      const quoteWithNestedInternals = {
+        id: 'qv-test-1',
+        tenant_id: 't-1',
+        quote_id: 'q-1',
+        quote_number: 'QT-1',
+        version_number: 1,
+        lock_version: 0,
+        itinerary_version_id: 'iv-1',
+        status: 'draft',
+        frozen_at: null,
+        currency: 'EUR',
+        line_items: [
+          {
+            id: 'li-1',
+            title: 'Safari Excursion',
+            description: 'Full day game drive',
+            category: 'activity' as const,
+            quantity: 2,
+            unitPrice: '300.00',
+            totalPrice: '600.00',
+            supplierCost: '180.00',
+            supplierName: 'Serengeti Tours Ltd',
+            markupAmount: '120.00',
+            marginAmount: '120.00',
+            marginPct: 40.0,
+            markupPct: 66.67,
+          },
+        ],
+        quote_schema_version: 1,
+        subtotal: '600.00',
+        discount_amount: '0.00',
+        tax_amount: '0.00',
+        grand_total: '600.00',
+        internal_cost_total: '360.00',
+        gross_margin_amount: '240.00',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      const shaped = shapeQuoteVersionDTO(quoteWithNestedInternals, 'consultant');
+      const item = shaped.lineItems[0];
+
+      // Safe keys present
+      expect(item.id).toBe('li-1');
+      expect(item.title).toBe('Safari Excursion');
+      expect(item.description).toBe('Full day game drive');
+      expect(item.category).toBe('activity');
+      expect(item.quantity).toBe(2);
+      expect(item.unitPrice).toBe('300.00');
+      expect(item.totalPrice).toBe('600.00');
+
+      // Prohibited keys undefined / stripped
+      const rawItem = item as Record<string, unknown>;
+      expect(rawItem.supplierCost).toBeUndefined();
+      expect(rawItem.supplierName).toBeUndefined();
+      expect(rawItem.markupAmount).toBeUndefined();
+      expect(rawItem.marginAmount).toBeUndefined();
+      expect(rawItem.marginPct).toBeUndefined();
+      expect(rawItem.markupPct).toBeUndefined();
+    });
+  });
+
+  // ==========================================================================
+  // 3. ROLE-BASED ACCESS CONTROL (RBAC) & DIRECT SERVER-ACTION ATTACK TESTS
+  // ==========================================================================
+  describe('RBAC Operational Workspace Permissions & Direct Action Attacks', () => {
     it('Admin has full operational lifecycle permissions', () => {
       expect(can('admin', 'itineraries:read')).toBe(true);
       expect(can('admin', 'itineraries:write')).toBe(true);
@@ -155,7 +287,7 @@ describe('Phase AI-5B.5: Inquiry Lifecycle Workspace & Security Verification', (
       expect(can('consultant', 'quotes:share')).toBe(true);
       expect(can('consultant', 'quotes:acceptance:record')).toBe(true);
 
-      // DENIED
+      // DIRECT ACTION ATTACKS DENIED
       expect(can('consultant', 'quotes:acceptance:void')).toBe(false);
       expect(can('consultant', 'bookings:convert')).toBe(false);
       expect(can('consultant', 'quotes:internal_pricing:read')).toBe(false);
@@ -170,17 +302,17 @@ describe('Phase AI-5B.5: Inquiry Lifecycle Workspace & Security Verification', (
       expect(can('specialist', 'quotes:share')).toBe(true);
       expect(can('specialist', 'quotes:acceptance:record')).toBe(true);
 
-      // DENIED
+      // DIRECT ACTION ATTACKS DENIED
       expect(can('specialist', 'quotes:acceptance:void')).toBe(false);
       expect(can('specialist', 'bookings:convert')).toBe(false);
       expect(can('specialist', 'quotes:internal_pricing:read')).toBe(false);
     });
 
-    it('Viewer is strictly read-only across all lifecycle operations', () => {
+    it('Viewer is strictly read-only across all lifecycle operations (all mutations DENIED)', () => {
       expect(can('viewer', 'itineraries:read')).toBe(true);
       expect(can('viewer', 'quotes:read')).toBe(true);
 
-      // All writes/actions DENIED
+      // All writes/mutations DENIED
       expect(can('viewer', 'itineraries:write')).toBe(false);
       expect(can('viewer', 'itineraries:share')).toBe(false);
       expect(can('viewer', 'quotes:write')).toBe(false);
@@ -190,13 +322,23 @@ describe('Phase AI-5B.5: Inquiry Lifecycle Workspace & Security Verification', (
       expect(can('viewer', 'bookings:convert')).toBe(false);
       expect(can('viewer', 'quotes:internal_pricing:read')).toBe(false);
     });
+
+    it('Super Admin fails closed for agency operational actions', () => {
+      expect(can('super_admin', 'itineraries:write')).toBe(false);
+      expect(can('super_admin', 'quotes:write')).toBe(false);
+      expect(can('super_admin', 'itineraries:share')).toBe(false);
+      expect(can('super_admin', 'quotes:share')).toBe(false);
+      expect(can('super_admin', 'quotes:acceptance:record')).toBe(false);
+      expect(can('super_admin', 'quotes:acceptance:void')).toBe(false);
+      expect(can('super_admin', 'bookings:convert')).toBe(false);
+    });
   });
 
   // ==========================================================================
-  // 3. PRICING INPUT MERGE FOR ROLES
+  // 4. PRICING INPUT MERGE FOR ROLES & INJECTION RESISTANCE
   // ==========================================================================
   describe('preparePricingInputForRole Boundary', () => {
-    it('Consultant cannot submit supplier cost; existing supplier cost is preserved strictly by line ID', () => {
+    it('Consultant cannot inject supplier cost; existing supplier cost is preserved strictly by line ID', () => {
       const existingItems: QuoteLineItem[] = [
         {
           id: 'line-1',
@@ -256,7 +398,7 @@ describe('Phase AI-5B.5: Inquiry Lifecycle Workspace & Security Verification', (
   });
 
   // ==========================================================================
-  // 4. DECIMAL PRICING & MARGIN TRUTH CALCULATIONS
+  // 5. DECIMAL PRICING & MARGIN TRUTH CALCULATIONS
   // ==========================================================================
   describe('calculateQuotePricing Accuracy', () => {
     it('calculates customer totals and internal margins with exact decimal arithmetic', () => {
@@ -319,7 +461,7 @@ describe('Phase AI-5B.5: Inquiry Lifecycle Workspace & Security Verification', (
   });
 
   // ==========================================================================
-  // 5. STALE VERSION & CONCURRENCY CONFLICT HANDLING
+  // 6. STALE VERSION & CONCURRENCY CONFLICT HANDLING
   // ==========================================================================
   describe('Stale Version Concurrency UX', () => {
     it('detects STALE_VERSION error and formats clear conflict message', () => {
@@ -335,9 +477,9 @@ describe('Phase AI-5B.5: Inquiry Lifecycle Workspace & Security Verification', (
   });
 
   // ==========================================================================
-  // 6. PUBLIC SHARE TOKEN NON-RECONSTRUCTIBILITY
+  // 7. PUBLIC SHARE TOKEN NON-RECONSTRUCTIBILITY & SECRET LIFETIME
   // ==========================================================================
-  describe('Share Management Secret Non-Reconstruction', () => {
+  describe('Share Management Secret Non-Reconstruction & Metadata Only', () => {
     it('subsequent share list payload exposes only metadata (zero token_hash, zero raw token)', () => {
       const shareRowFromDb = {
         id: 'share-1111-2222',
@@ -355,6 +497,7 @@ describe('Phase AI-5B.5: Inquiry Lifecycle Workspace & Security Verification', (
         id: shareRowFromDb.id,
         itineraryVersionId: shareRowFromDb.itinerary_version_id,
         expiresAt: shareRowFromDb.expires_at,
+        isExpired: false,
         revokedAt: shareRowFromDb.revoked_at,
         firstViewedAt: shareRowFromDb.first_viewed_at,
         lastViewedAt: shareRowFromDb.last_viewed_at,
@@ -370,7 +513,7 @@ describe('Phase AI-5B.5: Inquiry Lifecycle Workspace & Security Verification', (
   });
 
   // ==========================================================================
-  // 7. PINNED VERSION INTEGRITY ACROSS REVISIONS
+  // 8. PINNED VERSION INTEGRITY ACROSS REVISIONS
   // ==========================================================================
   describe('Accepted Version Pinned Integrity', () => {
     it('commercial acceptance maintains explicit quote and itinerary version pinning even when later revisions exist', () => {
