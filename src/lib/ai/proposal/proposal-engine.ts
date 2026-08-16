@@ -19,6 +19,7 @@ import {
 } from './context-builder';
 import {
   calculateQuoteDifference,
+  getCustomerSafeQuoteDiff,
   type RawQuoteVersionForDiff,
 } from './diff-engine';
 import {
@@ -112,7 +113,7 @@ REQUIRED JSON STRUCTURE:
           "description": "Details",
           "time": "10:00 AM",
           "location": "City/Venue",
-          "activityType": "sightseeing"
+          "activityType": "activity"
         }
       ]
     }
@@ -245,9 +246,9 @@ REQUIRED JSON STRUCTURE:
     "endDate": null,
     "durationDays": 5,
     "passengerCount": 2,
-    "days": [...],
-    "inclusions": [...],
-    "exclusions": [...],
+    "days": [],
+    "inclusions": [],
+    "exclusions": [],
     "grounding": { "sources": [], "assumptions": [], "missingInformation": [], "confidenceScore": 0.9 },
     "warnings": []
   },
@@ -340,10 +341,10 @@ ${proposalContext.formattedSystemPromptContext}
 
 CRITICAL RULES:
 1. Output MUST be valid JSON matching the exact schema below.
-2. Categorize items into: accommodation, flight, activity, transfer, insurance, visa, fee, other.
-3. If an item matches agency catalog knowledge, set pricingSource: "catalog".
-4. If no exact price is known, set pricingSource: "estimate" or "missing" and add to missingPriceItems.
-5. DO NOT hallucinate exact contract pricing as authoritative.
+2. Categorize items into: accommodation, flight, activity, transfer, visa, fee, other.
+3. If an item matches an official catalog item, reference its catalogReferenceId and set pricingSource: "authoritative_catalog".
+4. If no exact verified price exists, set pricingSource: "estimate" or "missing" and provide suggestedUnitPrice.
+5. Missing price items must be listed in missingPriceItems.
 6. Authorized internal pricing: ${proposalContext.hasInternalPricingAccess ? 'YES (include supplier notes if any)' : 'NO (ZERO supplier costs)'}.
 
 REQUIRED JSON STRUCTURE:
@@ -357,9 +358,9 @@ REQUIRED JSON STRUCTURE:
       "description": "Oceanview suite with breakfast included",
       "category": "accommodation",
       "quantity": 1,
-      "estimatedUnitPrice": "2500.00",
+      "suggestedUnitPrice": "2500.00",
       "pricingSource": "estimate",
-      "notes": "Subject to season confirmation"
+      "notes": "Subject to seasonal rate confirmation"
     }
   ],
   "missingPriceItems": ["Airport VIP fast-track"],
@@ -393,6 +394,40 @@ REQUIRED JSON STRUCTURE:
     const parsedJson = JSON.parse(cleanJsonString(aiRes.text));
     const validated = AIQuoteLineItemProposalSchema.parse(parsedJson);
 
+    // Server-side verification of catalog items
+    const verifiedItems = await withPgClient(async (client) => {
+      return Promise.all(
+        validated.suggestedItems.map(async (item) => {
+          let authoritativeUnitPrice: string | null = null;
+          let pricingSource = item.pricingSource;
+
+          if (item.catalogReferenceId) {
+            const catRes = await client.query(
+              `SELECT id, title, content FROM public.knowledge_documents WHERE id = $1 AND tenant_id = $2`,
+              [item.catalogReferenceId, ctx.tenantId]
+            );
+            if (catRes.rows.length > 0) {
+              pricingSource = 'authoritative_catalog';
+              authoritativeUnitPrice = item.suggestedUnitPrice || null;
+            } else {
+              // Reference not in tenant -> fallback to estimate
+              pricingSource = 'estimate';
+            }
+          } else if (pricingSource === 'authoritative_catalog') {
+            pricingSource = 'estimate';
+          }
+
+          return {
+            ...item,
+            pricingSource,
+            authoritativeUnitPrice,
+          };
+        })
+      );
+    });
+
+    validated.suggestedItems = verifiedItems;
+
     const metadata: AIProposalMetadata = {
       proposalId: `prop-quote-${Date.now()}`,
       taskType: 'quote_line_items',
@@ -422,7 +457,7 @@ REQUIRED JSON STRUCTURE:
 }
 
 // ============================================================================
-// 4. GENERATE QUOTE DIFFERENCE EXPLANATION
+// 4. GENERATE QUOTE DIFFERENCE EXPLANATION (TWO-CONTEXT SEPARATION)
 // ============================================================================
 
 export interface GenerateDiffExplanationParams {
@@ -504,41 +539,29 @@ export async function generateQuoteDifferenceExplanation(
     // 2. Compute pure deterministic diff
     const deterministicDiff = calculateQuoteDifference(v1, v2, ctx.role);
 
-    // 3. Ask LLM to translate verified diff into human-readable explanation
-    const prompt = `You are an expert commercial travel communicator.
-Explain the following verified deterministic difference between Quote ${v1.quoteNumber} v${v1.versionNumber} and v${v2.versionNumber}.
+    // TWO-CONTEXT SEPARATION:
+    // Pass 1: Customer-safe diff (ZERO supplier costs or margins in prompt)
+    const customerSafeDiff = getCustomerSafeQuoteDiff(deterministicDiff);
 
-VERIFIED DETERMINISTIC DIFF (DO NOT ALTER ARITHMETIC):
-${JSON.stringify(deterministicDiff, null, 2)}
+    const customerPrompt = `You are an expert commercial travel communicator.
+Explain the following verified customer-facing differences between Quote ${v1.quoteNumber} v${v1.versionNumber} and v${v2.versionNumber}.
+
+VERIFIED CUSTOMER-FACING DIFF (DO NOT ALTER ARITHMETIC):
+${JSON.stringify(customerSafeDiff, null, 2)}
 
 CRITICAL RULES:
 1. Output MUST be valid JSON matching the exact schema below.
-2. DO NOT recalculate numbers. Rely strictly on the verified deterministic diff.
+2. DO NOT recalculate numbers. Rely strictly on the verified customer-facing diff.
 3. Provide an executive summary, key price drivers, scope changes, and a client-facing explanation.
-4. Internal staff notes must only be included if internalCostDifference is present.
-5. Keep explanations professional, crisp, and clear.
+4. DO NOT mention supplier costs, markups, or internal margins under any circumstances.
 
 REQUIRED JSON STRUCTURE:
 {
-  "quoteNumber": "${deterministicDiff.quoteNumber}",
-  "v1VersionNumber": ${deterministicDiff.v1VersionNumber},
-  "v2VersionNumber": ${deterministicDiff.v2VersionNumber},
   "executiveSummary": "Summary of total change",
   "keyPriceDrivers": ["Price driver 1", "Price driver 2"],
   "scopeChanges": ["Scope change 1"],
   "itineraryAlignmentNotes": "Notes if itinerary changed",
-  "clientFacingExplanation": "Clear, friendly explanation suitable to send to the customer",
-  "internalStaffNotes": ${deterministicDiff.internalCostDifference ? '"Internal margin analysis"' : 'null'},
-  "deterministicDiff": ${JSON.stringify(deterministicDiff)},
-  "grounding": {
-    "sources": [
-      { "type": "quote_version", "id": "${v1.id}" },
-      { "type": "quote_version", "id": "${v2.id}" }
-    ],
-    "assumptions": [],
-    "missingInformation": [],
-    "confidenceScore": 1.0
-  }
+  "clientFacingExplanation": "Clear, friendly explanation suitable to send to the customer"
 }`;
 
     const aiSettings: TenantSettings['ai'] = {
@@ -550,17 +573,44 @@ REQUIRED JSON STRUCTURE:
     try {
       const aiRes = await callAIWithFallback({
         model: options?.model || 'gpt-4o-mini',
-        prompt,
+        prompt: customerPrompt,
         feature: 'quote_diff_explanation',
         tenantAISettings: aiSettings,
         currentSpend: { daily: 0, monthly: 0 },
-        maxTokens: 2500,
+        maxTokens: 2000,
       });
 
-      const parsedJson = JSON.parse(cleanJsonString(aiRes.text));
-      // Force authoritative deterministicDiff back into output to guarantee zero LLM math drift
-      parsedJson.deterministicDiff = deterministicDiff;
-      const validated = AIQuoteDifferenceExplanationSchema.parse(parsedJson);
+      const parsedCustomer = JSON.parse(cleanJsonString(aiRes.text));
+
+      // Pass 2: Internal Staff Notes (ONLY if caller is authorized for internal pricing)
+      let internalStaffNotes: string | null = null;
+      if (can(ctx.role, 'quotes:internal_pricing:read') && deterministicDiff.internalCostDifference != null) {
+        internalStaffNotes = `Internal margin change: Cost delta ${deterministicDiff.internalCostDifference} ${deterministicDiff.currency}, Gross margin delta ${deterministicDiff.grossMarginDifference} ${deterministicDiff.currency}.`;
+      }
+
+      const explanationPayload: AIQuoteDifferenceExplanation = {
+        quoteNumber: deterministicDiff.quoteNumber,
+        v1VersionNumber: deterministicDiff.v1VersionNumber,
+        v2VersionNumber: deterministicDiff.v2VersionNumber,
+        executiveSummary: String(parsedCustomer.executiveSummary || 'Quote revised'),
+        keyPriceDrivers: Array.isArray(parsedCustomer.keyPriceDrivers) ? parsedCustomer.keyPriceDrivers : ['Updated line items'],
+        scopeChanges: Array.isArray(parsedCustomer.scopeChanges) ? parsedCustomer.scopeChanges : [],
+        itineraryAlignmentNotes: parsedCustomer.itineraryAlignmentNotes ? String(parsedCustomer.itineraryAlignmentNotes) : null,
+        clientFacingExplanation: String(parsedCustomer.clientFacingExplanation || ''),
+        internalStaffNotes,
+        deterministicDiff,
+        grounding: {
+          sources: [
+            { type: 'quote_version', id: v1.id },
+            { type: 'quote_version', id: v2.id },
+          ],
+          assumptions: [],
+          missingInformation: [],
+          confidenceScore: 1.0,
+        },
+      };
+
+      const validated = AIQuoteDifferenceExplanationSchema.parse(explanationPayload);
 
       const metadata: AIProposalMetadata = {
         proposalId: `prop-diff-${Date.now()}`,

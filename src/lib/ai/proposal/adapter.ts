@@ -90,20 +90,34 @@ export function adaptAIItineraryToUpdateDraftInput(
 
 /**
  * Adapts AIQuoteLineItemSuggestion[] into canonical PricingLineItemInput[].
+ * 
+ * Strict Pricing Authority Rule:
+ * - Only server-verified 'authoritative_catalog' prices with an explicit
+ *   authoritativeUnitPrice populate the draft unitPrice directly.
+ * - 'estimate', 'historical', or 'missing' items are populated with '0.00'
+ *   in the draft, requiring explicit human staff confirmation/promotion.
  */
 export function adaptAIQuoteSuggestionsToPricingInput(
   suggestions: AIQuoteLineItemSuggestion[],
   isAuthorizedForInternalCost: boolean = false
 ): PricingLineItemInput[] {
-  return suggestions.map((item, idx) => ({
-    id: item.id || `quote-item-${idx + 1}`,
-    title: item.title,
-    description: item.description || undefined,
-    category: item.category,
-    quantity: item.quantity,
-    unitPrice: item.estimatedUnitPrice || '0.00',
-    // Supplier cost is never populated from AI unless explicitly authorized
-    supplierCost: isAuthorizedForInternalCost ? null : undefined,
-    supplierName: isAuthorizedForInternalCost && item.supplierName ? item.supplierName : undefined,
-  }));
+  return suggestions.map((item, idx) => {
+    // Only authoritative catalog prices populate unitPrice directly
+    const unitPrice =
+      item.pricingSource === 'authoritative_catalog' && item.authoritativeUnitPrice
+        ? item.authoritativeUnitPrice
+        : '0.00';
+
+    return {
+      id: item.id || `quote-item-${idx + 1}`,
+      title: item.title,
+      description: item.description || undefined,
+      category: item.category,
+      quantity: item.quantity,
+      unitPrice,
+      // Supplier cost is never populated from AI unless explicitly authorized
+      supplierCost: isAuthorizedForInternalCost ? null : undefined,
+      supplierName: isAuthorizedForInternalCost && item.supplierName ? item.supplierName : undefined,
+    };
+  });
 }

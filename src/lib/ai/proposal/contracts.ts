@@ -158,18 +158,32 @@ export const QuoteItemCategorySchema = z.enum([
 
 export type QuoteItemCategory = z.infer<typeof QuoteItemCategorySchema>;
 
+export const AIQuotePricingSourceSchema = z.enum([
+  'authoritative_catalog',
+  'historical',
+  'estimate',
+  'missing',
+]);
+
+export type AIQuotePricingSource = z.infer<typeof AIQuotePricingSourceSchema>;
+
 export const AIQuoteLineItemSuggestionSchema = z.object({
   id: z.string().optional(),
   title: z.string().min(1, 'Line item title is required').max(200),
   description: z.string().max(1000).optional().nullable(),
   category: QuoteItemCategorySchema,
   quantity: z.number().int().positive('Quantity must be >= 1'),
-  estimatedUnitPrice: z
+  suggestedUnitPrice: z
     .string()
     .regex(/^\d+(\.\d{1,2})?$/, 'Price must be a valid positive decimal string')
     .optional()
     .nullable(),
-  pricingSource: z.enum(['catalog', 'historical', 'estimate', 'missing']),
+  authoritativeUnitPrice: z
+    .string()
+    .regex(/^\d+(\.\d{1,2})?$/, 'Price must be a valid positive decimal string')
+    .optional()
+    .nullable(),
+  pricingSource: AIQuotePricingSourceSchema,
   catalogReferenceId: z.string().optional().nullable(),
   supplierName: z.string().max(200).optional().nullable(), // Only populated if authorized
   notes: z.string().max(500).optional().nullable(),

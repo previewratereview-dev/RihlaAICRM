@@ -202,3 +202,19 @@ export function calculateQuoteDifference(
     grossMarginDifference,
   };
 }
+
+/**
+ * Strips all internal financial differences to produce a purely customer-safe diff.
+ * Used exclusively for generating clientFacingExplanation so LLM never sees internal margins.
+ */
+export function getCustomerSafeQuoteDiff(diff: DeterministicQuoteDiff): DeterministicQuoteDiff {
+  return {
+    ...diff,
+    v1InternalCostTotal: null,
+    v2InternalCostTotal: null,
+    internalCostDifference: null,
+    v1GrossMarginAmount: null,
+    v2GrossMarginAmount: null,
+    grossMarginDifference: null,
+  };
+}

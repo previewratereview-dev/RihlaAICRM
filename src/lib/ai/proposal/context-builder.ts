@@ -125,7 +125,7 @@ export async function buildProposalContext(
       currency: inq.currency ? String(inq.currency) : 'USD',
       tripType: inq.trip_type ? String(inq.trip_type) : null,
       specialRequests: inq.requirements ? String(inq.requirements) : null,
-      notes: inq.notes ? String(inq.notes) : null,
+      notes: hasInternalPricing ? (inq.notes ? String(inq.notes) : null) : null,
     };
 
     // 2. Fetch Conversation Messages
@@ -157,29 +157,30 @@ export async function buildProposalContext(
          WHERE iv.id = $1 AND iv.tenant_id = $2`,
         [params.itineraryVersionId, ctx.tenantId]
       );
-      if (ivRes.rows.length > 0) {
-        const iv = ivRes.rows[0];
-        baseItineraryVersion = {
-          id: String(iv.id),
-          tenantId: String(iv.tenant_id),
-          itineraryId: String(iv.itinerary_id),
-          versionNumber: Number(iv.version_number),
-          lockVersion: Number(iv.lock_version || 0),
-          status: iv.status,
-          title: String(iv.title || iv.family_title || 'Untitled Itinerary'),
-          destinationSummary: iv.destination_summary ? String(iv.destination_summary) : null,
-          startDate: iv.start_date ? String(iv.start_date) : null,
-          endDate: iv.end_date ? String(iv.end_date) : null,
-          durationDays: iv.duration_days != null ? Number(iv.duration_days) : null,
-          passengerCount: iv.passenger_count != null ? Number(iv.passenger_count) : null,
-          days: Array.isArray(iv.days) ? iv.days : [],
-          inclusions: Array.isArray(iv.inclusions) ? iv.inclusions : [],
-          exclusions: Array.isArray(iv.exclusions) ? iv.exclusions : [],
-          itinerarySchemaVersion: Number(iv.itinerary_schema_version || 1),
-          createdAt: String(iv.created_at),
-          updatedAt: String(iv.updated_at),
-        };
+      if (ivRes.rows.length === 0) {
+        throw new Error(`NOT_FOUND: Base itinerary version ${params.itineraryVersionId} not found in tenant ${ctx.tenantId}`);
       }
+      const iv = ivRes.rows[0];
+      baseItineraryVersion = {
+        id: String(iv.id),
+        tenantId: String(iv.tenant_id),
+        itineraryId: String(iv.itinerary_id),
+        versionNumber: Number(iv.version_number),
+        lockVersion: Number(iv.lock_version || 0),
+        status: iv.status,
+        title: String(iv.title || iv.family_title || 'Untitled Itinerary'),
+        destinationSummary: iv.destination_summary ? String(iv.destination_summary) : null,
+        startDate: iv.start_date ? String(iv.start_date) : null,
+        endDate: iv.end_date ? String(iv.end_date) : null,
+        durationDays: iv.duration_days != null ? Number(iv.duration_days) : null,
+        passengerCount: iv.passenger_count != null ? Number(iv.passenger_count) : null,
+        days: Array.isArray(iv.days) ? iv.days : [],
+        inclusions: Array.isArray(iv.inclusions) ? iv.inclusions : [],
+        exclusions: Array.isArray(iv.exclusions) ? iv.exclusions : [],
+        itinerarySchemaVersion: Number(iv.itinerary_schema_version || 1),
+        createdAt: String(iv.created_at),
+        updatedAt: String(iv.updated_at),
+      };
     }
 
     // 4. Fetch Base Quote Version if requested
@@ -192,13 +193,14 @@ export async function buildProposalContext(
          WHERE qv.id = $1 AND qv.tenant_id = $2`,
         [params.quoteVersionId, ctx.tenantId]
       );
-      if (qvRes.rows.length > 0) {
-        const shaped = shapeQuoteVersionDTO(
-          qvRes.rows[0] as unknown as Parameters<typeof shapeQuoteVersionDTO>[0],
-          ctx.role
-        );
-        baseQuoteVersion = shaped as unknown as Record<string, unknown>;
+      if (qvRes.rows.length === 0) {
+        throw new Error(`NOT_FOUND: Base quote version ${params.quoteVersionId} not found in tenant ${ctx.tenantId}`);
       }
+      const shaped = shapeQuoteVersionDTO(
+        qvRes.rows[0] as unknown as Parameters<typeof shapeQuoteVersionDTO>[0],
+        ctx.role
+      );
+      baseQuoteVersion = shaped as unknown as Record<string, unknown>;
     }
 
     // 5. Fetch Relevant Knowledge / Packages
@@ -270,7 +272,7 @@ export async function buildProposalContext(
 /**
  * Helper to construct anti-injection delimited prompt context.
  */
-function formatPromptContext(data: {
+export function formatPromptContext(data: {
   inquiry: InquiryFactsContext;
   conversationMessages: ConversationMessageContext[];
   baseItineraryVersion: ItineraryVersionEntity | null;
