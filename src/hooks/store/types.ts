@@ -69,6 +69,20 @@ export interface CRMStore {
   setActiveContext: (context: { type: 'none' | 'inquiry' | 'traveler' | 'booking' | 'conversation'; id: string | null }) => void;
   clearActiveContext: () => void;
 
+  // Copilot Panel & Trigger State (Phase AI-4D)
+  copilotOpen: boolean;
+  setCopilotOpen: (open: boolean) => void;
+  copilotInitialPrompt: {
+    prompt: string;
+    requestedIntent?: 'explain_attention' | 'draft_reply' | 'summarize' | 'suggest_next_step' | 'general';
+    requestedSignalType?: string;
+  } | null;
+  setCopilotInitialPrompt: (data: {
+    prompt: string;
+    requestedIntent?: 'explain_attention' | 'draft_reply' | 'summarize' | 'suggest_next_step' | 'general';
+    requestedSignalType?: string;
+  } | null) => void;
+
   // Auth actions
   login: (email: string, password: string) => Promise<{ success: boolean; error: string | null }>;
   startDemoSession: () => Promise<{ success: boolean; error: string | null; code?: string }>;

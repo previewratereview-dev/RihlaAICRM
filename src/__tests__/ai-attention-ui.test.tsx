@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 /**
- * Phase AI-4C: Proactive Attention UI Component Tests
+ * Phase AI-4C / AI-4D: Proactive Attention UI Component Tests
  * 
  * Classification: UI / COMPONENT TEST
  * Verifies Dashboard Needs Attention card, Inquiry Table AttentionBadge,
  * Inquiry Drawer AttentionDrawerSection, and Conversations View indicators.
- * Includes accessibility (keyboard/focus/ARIA) and responsive wrapping tests.
+ * Includes accessibility (keyboard/focus/ARIA), responsive wrapping, and
+ * explicit Ask Copilot handoff triggers.
  */
 
 import React from 'react';
@@ -14,6 +15,7 @@ import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import { DashboardNeedsAttention } from '@/components/attention/dashboard-needs-attention';
 import { AttentionBadge } from '@/components/attention/attention-badge';
 import { AttentionDrawerSection } from '@/components/attention/attention-drawer-section';
+import { useCRMStore } from '@/hooks/use-crm-store';
 import type { AttentionSignal, TenantAttentionSummary } from '@/lib/attention/types';
 
 afterEach(() => {
@@ -259,7 +261,7 @@ describe('AI-4C Inquiry Table: AttentionBadge', () => {
   });
 });
 
-describe('AI-4C Inquiry Drawer: AttentionDrawerSection', () => {
+describe('AI-4C / AI-4D Inquiry Drawer: AttentionDrawerSection & Copilot Handoff', () => {
   it('renders multiple signals truthfully with all missing qualification fields', () => {
     const actionClick = vi.fn();
     const signals = [
@@ -286,6 +288,27 @@ describe('AI-4C Inquiry Drawer: AttentionDrawerSection', () => {
     const scheduleBtn = screen.getByRole('button', { name: /schedule follow-up for follow-up overdue/i });
     fireEvent.click(scheduleBtn);
     expect(actionClick).toHaveBeenCalled();
+  });
+
+  it('triggers explicit Copilot handoff when Ask Copilot is clicked in drawer', () => {
+    const setPromptSpy = vi.fn();
+    useCRMStore.setState({ setCopilotInitialPrompt: setPromptSpy, setCopilotOpen: vi.fn() });
+
+    render(
+      <AttentionDrawerSection
+        signals={[MOCK_SIGNALS[0]]}
+        onActionClick={vi.fn()}
+      />
+    );
+
+    const askCopilotBtn = screen.getByRole('button', { name: /ask copilot about all attention items/i });
+    fireEvent.click(askCopilotBtn);
+
+    expect(setPromptSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestedIntent: 'explain_attention',
+      })
+    );
   });
 
   it('renders nothing when inquiry is clean (0 signals, no wasted vertical banner)', () => {

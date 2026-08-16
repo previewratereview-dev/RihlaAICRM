@@ -36,7 +36,8 @@ interface CopilotMessage {
 }
 
 export function GlobalCopilot() {
-  const [open, setOpen] = useState(false);
+  const open = useCRMStore((s) => s.copilotOpen);
+  const setOpen = useCRMStore((s) => s.setCopilotOpen);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [expandedSourceMsgId, setExpandedSourceMsgId] = useState<string | null>(null);
@@ -53,6 +54,8 @@ export function GlobalCopilot() {
   const pathname = usePathname() || '/app/dashboard';
   const activeTab = useCRMStore((s) => s.activeTab);
   const activeContext = useCRMStore((s) => s.activeContext);
+  const copilotInitialPrompt = useCRMStore((s) => s.copilotInitialPrompt);
+  const setCopilotInitialPrompt = useCRMStore((s) => s.setCopilotInitialPrompt);
 
   // Compute context label for copilot header
   let contextLabel = activeTab || 'Dashboard';
@@ -70,7 +73,13 @@ export function GlobalCopilot() {
     scrollToBottom();
   }, [messages, loading]);
 
-  const send = async (overrideText?: string) => {
+  const send = async (
+    overrideText?: string,
+    extraHints?: {
+      requestedIntent?: 'explain_attention' | 'draft_reply' | 'summarize' | 'suggest_next_step' | 'general';
+      requestedSignalType?: string;
+    }
+  ) => {
     const textToSend = (overrideText || input).trim();
     if (!textToSend || loading) return;
 
@@ -89,6 +98,8 @@ export function GlobalCopilot() {
         pathname,
         activeContextType: activeContext?.type,
         activeContextId: activeContext?.id,
+        requestedIntent: extraHints?.requestedIntent,
+        requestedSignalType: extraHints?.requestedSignalType,
       };
 
       const result = await submitCrmCopilotMessage(textToSend, clientHint);
@@ -110,7 +121,7 @@ export function GlobalCopilot() {
         {
           id: `err-${messageIdRef.current++}`,
           role: 'assistant',
-          content: 'Sorry, I encountered an issue connecting to the assistant. Please try again.',
+          content: 'Copilot is temporarily unavailable. Deterministic CRM data and attention indicators remain fully active.',
         },
       ]);
     } finally {
@@ -118,12 +129,31 @@ export function GlobalCopilot() {
     }
   };
 
+  // Handle explicit initial prompt from Attention UI (Phase AI-4D)
+  useEffect(() => {
+    if (!copilotInitialPrompt) return;
+    const { prompt, requestedIntent, requestedSignalType } = copilotInitialPrompt;
+    setCopilotInitialPrompt(null);
+    const timer = setTimeout(() => {
+      void send(prompt, { requestedIntent, requestedSignalType });
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [copilotInitialPrompt, setCopilotInitialPrompt]);
+
   const getSuggestions = () => {
     if (activeContext?.type === 'inquiry') {
       return [
+        'Explain what needs attention',
+        'Draft a follow-up message',
+        'Suggest next step for this inquiry',
         'Move this inquiry to itinerary sent',
-        'Who is this assigned to?',
-        'What tasks are pending?',
+      ];
+    }
+    if (activeContext?.type === 'conversation') {
+      return [
+        'Summarize customer request',
+        'Draft a reply to customer',
+        'Extract travel details from message',
       ];
     }
     if (activeContext?.type === 'traveler') {
@@ -151,8 +181,8 @@ export function GlobalCopilot() {
         className={cn(
           'fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-50 h-12 sm:h-14 rounded-full shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-primary/20 group transition-all duration-300 ease-in-out flex items-center overflow-hidden p-0',
           open
-            ? 'w-12 sm:w-14 justify-center bg-muted text-foreground hover:bg-muted'
-            : 'w-12 sm:w-14 hover:w-[155px] justify-start bg-primary text-primary-foreground hover:bg-primary/95 shadow-primary/20 hover:shadow-primary/30'
+            ? 'w-12 sm:h-14 justify-center bg-muted text-foreground hover:bg-muted'
+            : 'w-12 sm:h-14 hover:w-[155px] justify-start bg-primary text-primary-foreground hover:bg-primary/95 shadow-primary/20 hover:shadow-primary/30'
         )}
         aria-label="Toggle AI copilot"
       >

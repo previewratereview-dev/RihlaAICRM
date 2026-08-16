@@ -5,6 +5,12 @@ export function createUiSlice(set: SetState, _get: GetState) {
   return {
     activeTab: 'dashboard' as string,
     activeContext: { type: 'none', id: null } as { type: 'none' | 'inquiry' | 'traveler' | 'booking' | 'conversation'; id: string | null },
+    copilotOpen: false,
+    copilotInitialPrompt: null as {
+      prompt: string;
+      requestedIntent?: 'explain_attention' | 'draft_reply' | 'summarize' | 'suggest_next_step' | 'general';
+      requestedSignalType?: string;
+    } | null,
     sidebarExpanded: true,
     density: 'comfortable' as 'comfortable' | 'compact',
     dataLoading: false,
@@ -33,6 +39,12 @@ export function createUiSlice(set: SetState, _get: GetState) {
     setActiveTab: (tab: string) => set({ activeTab: tab }),
     setActiveContext: (context: { type: 'none' | 'inquiry' | 'traveler' | 'booking' | 'conversation'; id: string | null }) => set({ activeContext: context }),
     clearActiveContext: () => set({ activeContext: { type: 'none', id: null } }),
+    setCopilotOpen: (open: boolean) => set({ copilotOpen: open }),
+    setCopilotInitialPrompt: (data: {
+      prompt: string;
+      requestedIntent?: 'explain_attention' | 'draft_reply' | 'summarize' | 'suggest_next_step' | 'general';
+      requestedSignalType?: string;
+    } | null) => set({ copilotInitialPrompt: data }),
     toggleSidebar: () => set((state) => ({ sidebarExpanded: !state.sidebarExpanded })),
     setDensity: (density: 'comfortable' | 'compact') => {
       set({ density });

@@ -9,7 +9,9 @@ import {
   CalendarX,
   FileQuestion,
   ChevronRight,
+  Sparkles,
 } from 'lucide-react';
+import { useCRMStore } from '@/hooks/use-crm-store';
 import type { AttentionSignal, AttentionActionDescriptor } from '@/lib/attention/types';
 
 interface AttentionDrawerSectionProps {
@@ -21,9 +23,46 @@ export function AttentionDrawerSection({
   signals,
   onActionClick,
 }: AttentionDrawerSectionProps) {
+  const setCopilotOpen = useCRMStore((s) => s.setCopilotOpen);
+  const setCopilotInitialPrompt = useCRMStore((s) => s.setCopilotInitialPrompt);
+
   if (!signals || signals.length === 0) {
     return null;
   }
+
+  const handleAskCopilotAll = () => {
+    setCopilotOpen(true);
+    setCopilotInitialPrompt({
+      prompt: 'Please explain the attention items on this inquiry and suggest the next operational steps.',
+      requestedIntent: 'explain_attention',
+    });
+  };
+
+  const handleAskCopilotSignal = (signal: AttentionSignal) => {
+    setCopilotOpen(true);
+    let prompt = `Please explain why this inquiry has attention signal "${signal.title}" and suggest how to resolve it.`;
+    let intent: 'explain_attention' | 'draft_reply' | 'suggest_next_step' = 'explain_attention';
+
+    if (signal.signalType === 'FOLLOW_UP_OVERDUE') {
+      prompt = `Draft a polite follow-up message for this inquiry (follow-up is overdue) and recommend a new schedule date.`;
+      intent = 'draft_reply';
+    } else if (signal.signalType === 'UNANSWERED_INBOUND') {
+      prompt = `Summarize the customer message on this inquiry and draft a helpful reply.`;
+      intent = 'draft_reply';
+    } else if (signal.signalType === 'MISSING_QUALIFICATION') {
+      prompt = `Check the conversation for the missing trip details (${signal.missingFields?.join(', ') || 'trip details'}).`;
+      intent = 'suggest_next_step';
+    } else if (signal.signalType === 'NO_FOLLOW_UP_SCHEDULED') {
+      prompt = `Suggest an appropriate follow-up timing for this active inquiry.`;
+      intent = 'suggest_next_step';
+    }
+
+    setCopilotInitialPrompt({
+      prompt,
+      requestedIntent: intent,
+      requestedSignalType: signal.signalType,
+    });
+  };
 
   const getSignalIcon = (type: string) => {
     switch (type) {
@@ -64,13 +103,23 @@ export function AttentionDrawerSection({
           <h3 className="text-xs font-semibold uppercase tracking-wider text-amber-900 dark:text-amber-400">
             Needs Attention
           </h3>
+          <span
+            className="text-[11px] font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 px-2 py-0.5 rounded-full shrink-0"
+            aria-label={`${signals.length} attention item${signals.length === 1 ? '' : 's'}`}
+          >
+            {signals.length} {signals.length === 1 ? 'item' : 'items'}
+          </span>
         </div>
-        <span
-          className="text-[11px] font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 px-2 py-0.5 rounded-full shrink-0"
-          aria-label={`${signals.length} attention item${signals.length === 1 ? '' : 's'}`}
+
+        <button
+          type="button"
+          onClick={handleAskCopilotAll}
+          className="inline-flex items-center gap-1 text-[11px] font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors px-2 py-0.5 rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
+          aria-label="Ask Copilot about all attention items"
         >
-          {signals.length} {signals.length === 1 ? 'item' : 'items'}
-        </span>
+          <Sparkles className="h-3 w-3 shrink-0" aria-hidden="true" />
+          <span>Ask Copilot</span>
+        </button>
       </div>
 
       <div className="space-y-2.5">
@@ -100,9 +149,9 @@ export function AttentionDrawerSection({
                     </div>
                   )}
 
-                  {signal.suggestedActions && signal.suggestedActions.length > 0 && onActionClick && (
-                    <div className="flex flex-wrap gap-1.5 mt-2">
-                      {signal.suggestedActions.map((action, idx) => (
+                  <div className="flex flex-wrap gap-1.5 mt-2">
+                    {signal.suggestedActions && signal.suggestedActions.length > 0 && onActionClick && (
+                      signal.suggestedActions.map((action, idx) => (
                         <button
                           key={idx}
                           type="button"
@@ -113,9 +162,19 @@ export function AttentionDrawerSection({
                           <span>{action.label}</span>
                           <ChevronRight className="h-3 w-3 shrink-0" aria-hidden="true" />
                         </button>
-                      ))}
-                    </div>
-                  )}
+                      ))
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => handleAskCopilotSignal(signal)}
+                      className="inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground hover:text-foreground hover:underline focus:outline-none focus:ring-1 focus:ring-primary rounded py-0.5 px-1"
+                      aria-label={`Ask Copilot about ${signal.title}`}
+                    >
+                      <Sparkles className="h-3 w-3 shrink-0 text-amber-500" aria-hidden="true" />
+                      <span>Copilot</span>
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>

@@ -1,5 +1,5 @@
 /**
- * Server-Authoritative CRM Copilot Context Resolver (Phase AI-1)
+ * Server-Authoritative CRM Copilot Context Resolver (Phase AI-1 / AI-4D)
  * 
  * Resolves safe, bounded, tenant-scoped CRM context for Rihla Copilot.
  * - Authenticates session via Supabase server auth
@@ -7,9 +7,20 @@
  * - Fails closed for Super Admin (P1A boundary)
  * - Resolves canonical records from public.inquiries, public.traveler_profiles,
  *   public.bookings, public.conversations
+ * - Evaluates server-authoritative AttentionCopilotContext on demand (AI-4D)
  * - Preserves null/zero financial semantics and minimizes PII
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
+import {
+  loadInquiryAttentionFact,
+  loadConversationAttentionFacts,
+} from '@/lib/attention/loader';
+import {
+  evaluateInquiryAttention,
+  evaluateConversationAttention,
+  sortAttentionSignals,
+} from '@/lib/attention/engine';
+import type { AttentionSignalType, QualificationFieldKey } from '@/lib/attention/types';
 
 export type CopilotContextType = 'none' | 'inquiry' | 'traveler' | 'booking' | 'conversation';
 
@@ -17,6 +28,10 @@ export interface ClientContextHint {
   pathname?: string;
   contextType?: CopilotContextType;
   contextId?: string | null;
+  activeContextType?: CopilotContextType;
+  activeContextId?: string | null;
+  requestedIntent?: 'explain_attention' | 'draft_reply' | 'summarize' | 'suggest_next_step' | 'general';
+  requestedSignalType?: string | null;
 }
 
 export interface UserContextDTO {
@@ -102,6 +117,20 @@ export type EntityContextDTO =
   | { type: 'conversation'; data: ConversationSummaryDTO | null; recordUnavailable?: boolean }
   | { type: 'none'; data: null };
 
+export interface AttentionCopilotSignalDTO {
+  signalType: AttentionSignalType;
+  title: string;
+  reasons: string[];
+  missingFields?: QualificationFieldKey[];
+}
+
+export interface AttentionCopilotContext {
+  entityType: 'inquiry' | 'conversation';
+  entityId: string;
+  activeSignals: AttentionCopilotSignalDTO[];
+  staleSignalNotice?: string;
+}
+
 export interface CopilotContextResolution {
   success: boolean;
   error?: string;
@@ -109,6 +138,7 @@ export interface CopilotContextResolution {
   agency?: AgencyContextDTO;
   page?: PageContextDTO;
   entity?: EntityContextDTO;
+  attentionContext?: AttentionCopilotContext | null;
   currentDate?: string;
 }
 
@@ -223,10 +253,11 @@ export async function resolveCopilotContext(
   };
 
   // 5. Resolve Entity Context if requested
-  const contextType = clientHint.contextType || 'none';
-  const contextId = clientHint.contextId?.trim();
+  const contextType = clientHint.contextType || clientHint.activeContextType || 'none';
+  const contextId = (clientHint.contextId || clientHint.activeContextId)?.trim();
 
   let entity: EntityContextDTO = { type: 'none', data: null };
+  let attentionContext: AttentionCopilotContext | null = null;
 
   if (contextType === 'inquiry' && contextId) {
     // Canonical public.inquiries query, strictly tenant-scoped
@@ -291,6 +322,43 @@ export async function resolveCopilotContext(
           linkedTraveler,
         },
       };
+
+      // Server-Authoritative Attention Re-evaluation for Inquiry
+      try {
+        const inqFact = await loadInquiryAttentionFact(supabase, tenantId, contextId);
+        if (inqFact) {
+          const inqSignals = evaluateInquiryAttention(inqFact, new Date());
+          const convFacts = await loadConversationAttentionFacts(supabase, tenantId, contextId);
+          const convSignals = convFacts
+            .map((f) => evaluateConversationAttention(f))
+            .filter((s): s is NonNullable<typeof s> => s !== null);
+          const allSignals = sortAttentionSignals([...inqSignals, ...convSignals]);
+
+          let staleSignalNotice: string | undefined;
+          if (clientHint.requestedSignalType) {
+            const stillActive = allSignals.some((s) => s.signalType === clientHint.requestedSignalType);
+            if (!stillActive) {
+              staleSignalNotice = `This attention item (${clientHint.requestedSignalType}) is no longer active. The CRM record has changed.`;
+            }
+          }
+
+          attentionContext = {
+            entityType: 'inquiry',
+            entityId: contextId,
+            activeSignals: allSignals.map((s) => ({
+              signalType: s.signalType,
+              title: s.title,
+              reasons: s.reasons,
+              missingFields: s.missingFields,
+            })),
+            staleSignalNotice,
+          };
+        }
+      } catch (err: unknown) {
+        if (!(err instanceof TypeError && err.message.includes('is not a function'))) {
+          console.error('[CopilotContext] Failed to evaluate inquiry attention facts:', err);
+        }
+      }
     }
   } else if (contextType === 'traveler' && contextId) {
     // Canonical public.traveler_profiles query, strictly tenant-scoped (PII-minimized)
@@ -401,6 +469,40 @@ export async function resolveCopilotContext(
           recentMessages,
         },
       };
+
+      // Server-Authoritative Attention Re-evaluation for Conversation
+      try {
+        const convFacts = await loadConversationAttentionFacts(supabase, tenantId, contextId);
+        if (convFacts.length > 0) {
+          const convSignals = convFacts
+            .map((f) => evaluateConversationAttention(f))
+            .filter((s): s is NonNullable<typeof s> => s !== null);
+
+          let staleSignalNotice: string | undefined;
+          if (clientHint.requestedSignalType === 'UNANSWERED_INBOUND') {
+            const stillActive = convSignals.some((s) => s.signalType === 'UNANSWERED_INBOUND');
+            if (!stillActive) {
+              staleSignalNotice = 'This attention item (UNANSWERED_INBOUND) is no longer active. The conversation has already been answered or closed.';
+            }
+          }
+
+          attentionContext = {
+            entityType: 'conversation',
+            entityId: contextId,
+            activeSignals: convSignals.map((s) => ({
+              signalType: s.signalType,
+              title: s.title,
+              reasons: s.reasons,
+              missingFields: s.missingFields,
+            })),
+            staleSignalNotice,
+          };
+        }
+      } catch (err: unknown) {
+        if (!(err instanceof TypeError && err.message.includes('is not a function'))) {
+          console.error('[CopilotContext] Failed to evaluate conversation attention facts:', err);
+        }
+      }
     }
   }
 
@@ -410,6 +512,7 @@ export async function resolveCopilotContext(
     agency,
     page,
     entity,
+    attentionContext,
     currentDate: new Date().toISOString().split('T')[0],
   };
 }

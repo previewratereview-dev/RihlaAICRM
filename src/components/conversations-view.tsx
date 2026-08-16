@@ -22,6 +22,8 @@ export function ConversationsView() {
   const deleteMessage = useCRMStore((state) => state.deleteMessage);
   const clearUnreadCount = useCRMStore((state) => state.clearUnreadCount);
   const setActiveContext = useCRMStore((state) => state.setActiveContext);
+  const setCopilotOpen = useCRMStore((state) => state.setCopilotOpen);
+  const setCopilotInitialPrompt = useCRMStore((state) => state.setCopilotInitialPrompt);
   const [editingMsgId, setEditingMsgId] = useState<string | null>(null);
   const [editContent, setEditContent] = useState('');
 
@@ -377,6 +379,25 @@ export function ConversationsView() {
                 >
                   <FileText className="h-4 w-4" />
                 </button>
+                {selectedId && getSignalsForConversation(selectedId).some((s) => s.signalType === 'UNANSWERED_INBOUND') && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCopilotOpen(true);
+                      setCopilotInitialPrompt({
+                        prompt: 'Please summarize the customer request in this conversation and draft a helpful reply.',
+                        requestedIntent: 'draft_reply',
+                        requestedSignalType: 'UNANSWERED_INBOUND',
+                      });
+                    }}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20 text-xs font-medium hover:bg-amber-500/20 transition-colors focus:outline-none focus:ring-1 focus:ring-amber-500"
+                    aria-label="Draft reply with Copilot"
+                  >
+                    <Sparkles className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                    <span>Draft with Copilot</span>
+                  </button>
+                )}
+
                 <button
                   type="button"
                   onClick={() => callConversationAI('suggest_replies')}

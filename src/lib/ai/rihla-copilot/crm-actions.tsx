@@ -124,6 +124,16 @@ export async function submitCrmCopilotMessage(
     };
   }
 
+  // 1b. Stale Attention Signal Check (Phase AI-4D)
+  // If the user explicitly asked about an attention signal that is no longer active, return a deterministic notice (0 LLM tokens)
+  if (clientHint.requestedSignalType && context.attentionContext?.staleSignalNotice) {
+    return {
+      id: `stale-${Date.now()}`,
+      content: context.attentionContext.staleSignalNotice,
+      contextSummary: formatContextSummary(context),
+    };
+  }
+
   const tenantId = context.agency?.tenantId || 'global';
   const userId = context.user?.userId || null;
 
@@ -273,7 +283,7 @@ export async function submitCrmCopilotMessage(
 
     return {
       id: `err-${Date.now()}`,
-      content: 'I encountered an issue processing your request. Please try again or refine your question.',
+      content: 'Copilot is temporarily unavailable. Deterministic CRM data and attention indicators remain fully active.',
       error: 'processing_error',
     };
   }
