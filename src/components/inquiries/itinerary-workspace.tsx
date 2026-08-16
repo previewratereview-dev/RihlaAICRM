@@ -93,6 +93,7 @@ export function ItineraryWorkspace({
   // AI Proposal Drawer States
   const [isAIProposalOpen, setIsAIProposalOpen] = useState(false);
   const [isAIGenerating, setIsAIGenerating] = useState(false);
+  const [isApplyingAIProposal, setIsApplyingAIProposal] = useState(false);
   const [aiProposal, setAiProposal] = useState<AIItineraryDraftProposal | null>(null);
   const [aiRevisionProposal, setAiRevisionProposal] = useState<AIItineraryRevisionProposal | null>(null);
   const [aiStructuralDiff, setAiStructuralDiff] = useState<ItineraryStructuralDiff | null>(null);
@@ -364,47 +365,106 @@ export function ItineraryWorkspace({
     }
   };
 
-  const handleApplyAIProposal = (proposal: AIItineraryDraftProposal) => {
-    setDraftTitle(proposal.title);
-    setDraftDestination(proposal.destinationSummary || '');
-    setDraftStartDate(proposal.startDate || '');
-    setDraftEndDate(proposal.endDate || '');
-    setDraftPax(proposal.passengerCount != null ? proposal.passengerCount : '');
-    setDraftDays(
-      proposal.days.map((d) => ({
-        dayNumber: d.dayNumber,
-        title: d.title,
-        summary: d.description || null,
-        date: null,
-        items: (d.items || []).map((item, idx) => ({
-          id: item.id || `item-${d.dayNumber}-${idx + 1}`,
-          itemType: ((item.activityType as unknown) || 'activity') as ItineraryItemType,
-          title: item.title,
-          description: item.description || null,
-          startTime: item.time || null,
-          location: item.location || null,
-          endTime: null,
-        })),
-      }))
-    );
-    setDraftInclusions([...(proposal.inclusions || [])]);
-    setDraftExclusions([...(proposal.exclusions || [])]);
+  const handleApplyAIProposal = async (proposal: AIItineraryDraftProposal) => {
+    setIsApplyingAIProposal(true);
+    setError(null);
 
-    // Also populate new itinerary form state
-    setNewTitle(proposal.title);
-    setNewDestination(proposal.destinationSummary || '');
-    setNewStartDate(proposal.startDate || '');
-    setNewEndDate(proposal.endDate || '');
-    setNewPax(proposal.passengerCount != null ? proposal.passengerCount : '');
+    try {
+      if (!selectedFamily) {
+        // Case 1: Initial itinerary creation -> populate create form
+        setNewTitle(proposal.title);
+        setNewDestination(proposal.destinationSummary || '');
+        setNewStartDate(proposal.startDate || '');
+        setNewEndDate(proposal.endDate || '');
+        setNewPax(proposal.passengerCount != null ? proposal.passengerCount : '');
+        setDraftDays(
+          proposal.days.map((d) => ({
+            dayNumber: d.dayNumber,
+            title: d.title,
+            summary: d.description || null,
+            date: null,
+            items: (d.items || []).map((item, idx) => ({
+              id: item.id || `item-${d.dayNumber}-${idx + 1}`,
+              itemType: ((item.activityType as unknown) || 'activity') as ItineraryItemType,
+              title: item.title,
+              description: item.description || null,
+              startTime: item.time || null,
+              location: item.location || null,
+              endTime: null,
+            })),
+          }))
+        );
+        setDraftInclusions([...(proposal.inclusions || [])]);
+        setDraftExclusions([...(proposal.exclusions || [])]);
+        setIsAIProposalOpen(false);
+        setIsCreatingFamily(true);
+      } else if (currentVersion && currentVersion.status === 'draft') {
+        // Case 2: Active draft base -> populate existing draft editor state directly
+        setDraftTitle(proposal.title);
+        setDraftDestination(proposal.destinationSummary || '');
+        setDraftStartDate(proposal.startDate || '');
+        setDraftEndDate(proposal.endDate || '');
+        setDraftPax(proposal.passengerCount != null ? proposal.passengerCount : '');
+        setDraftDays(
+          proposal.days.map((d) => ({
+            dayNumber: d.dayNumber,
+            title: d.title,
+            summary: d.description || null,
+            date: null,
+            items: (d.items || []).map((item, idx) => ({
+              id: item.id || `item-${d.dayNumber}-${idx + 1}`,
+              itemType: ((item.activityType as unknown) || 'activity') as ItineraryItemType,
+              title: item.title,
+              description: item.description || null,
+              startTime: item.time || null,
+              location: item.location || null,
+              endTime: null,
+            })),
+          }))
+        );
+        setDraftInclusions([...(proposal.inclusions || [])]);
+        setDraftExclusions([...(proposal.exclusions || [])]);
+        setIsAIProposalOpen(false);
+        setIsEditingDraft(true);
+      } else if (currentVersion && (currentVersion.status === 'finalized' || currentVersion.status === 'superseded')) {
+        // Case 3: Finalized or superseded base -> create a distinct new revision version first!
+        // The base version remains 100% frozen and immutable.
+        const rev = await createItineraryRevisionAction(currentVersion.id);
+        await onRefresh();
+        setSelectedVersionId(rev.newVersionId);
 
-    setIsAIProposalOpen(false);
-
-    if (selectedFamily && currentVersion && currentVersion.status === 'draft') {
-      setIsEditingDraft(true);
-    } else if (!selectedFamily) {
-      setIsCreatingFamily(true);
-    } else {
-      setIsEditingDraft(true);
+        // Populate new editable revision draft state with the AI proposal
+        setDraftTitle(proposal.title);
+        setDraftDestination(proposal.destinationSummary || '');
+        setDraftStartDate(proposal.startDate || '');
+        setDraftEndDate(proposal.endDate || '');
+        setDraftPax(proposal.passengerCount != null ? proposal.passengerCount : '');
+        setDraftDays(
+          proposal.days.map((d) => ({
+            dayNumber: d.dayNumber,
+            title: d.title,
+            summary: d.description || null,
+            date: null,
+            items: (d.items || []).map((item, idx) => ({
+              id: item.id || `item-${d.dayNumber}-${idx + 1}`,
+              itemType: ((item.activityType as unknown) || 'activity') as ItineraryItemType,
+              title: item.title,
+              description: item.description || null,
+              startTime: item.time || null,
+              location: item.location || null,
+              endTime: null,
+            })),
+          }))
+        );
+        setDraftInclusions([...(proposal.inclusions || [])]);
+        setDraftExclusions([...(proposal.exclusions || [])]);
+        setIsAIProposalOpen(false);
+        setIsEditingDraft(true);
+      }
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to apply AI proposal');
+    } finally {
+      setIsApplyingAIProposal(false);
     }
   };
 
@@ -1319,6 +1379,7 @@ export function ItineraryWorkspace({
         revisionProposal={aiRevisionProposal}
         structuralDiff={aiStructuralDiff}
         metadata={aiMetadata}
+        isApplying={isApplyingAIProposal}
         onApplyToDraft={handleApplyAIProposal}
         onRegenerate={(custom) => {
           if (isRevisionProposalMode) {

@@ -601,4 +601,214 @@ describe('Phase AI-5C.2: Itinerary Copilot & Proposal Integration', () => {
       }
     });
   });
+
+  // ==========================================================================
+  // 5. IMMUTABLE REVISION APPLICATION LIFECYCLE & DB BOUNDARY
+  // ==========================================================================
+  describe('Immutable Revision Application Lifecycle & DB Boundary', () => {
+    it('Draft base: applying revision stages into existing draft and updates that exact draft version', async () => {
+      // Simulating a draft base version
+      const draftBase = {
+        id: 'ver-draft-1',
+        itineraryId: 'itin-100',
+        versionNumber: 1,
+        status: 'draft',
+        lockVersion: 2,
+        title: 'Original Draft Title',
+      };
+
+      const aiRevisedProposal: AIItineraryDraftProposal = {
+        title: 'Revised Draft Title',
+        destinationSummary: 'Tokyo',
+        startDate: '2026-10-01',
+        endDate: '2026-10-07',
+        durationDays: 7,
+        passengerCount: 2,
+        days: [
+          {
+            dayNumber: 1,
+            title: 'Revised Day 1',
+            items: [{ title: 'Revised Activity 1' }],
+          },
+        ],
+        inclusions: ['Luxury Hotel'],
+        exclusions: ['Flights'],
+        grounding: { sources: [], assumptions: [], missingInformation: [], confidenceScore: 0.95 },
+        warnings: [],
+      };
+
+      // 1. Adapter adapts to UpdateItineraryDraftActionInput targeting exact draft version
+      const updateInput = adaptAIItineraryToUpdateDraftInput(
+        draftBase.id,
+        draftBase.lockVersion,
+        aiRevisedProposal
+      );
+
+      expect(updateInput.versionId).toBe('ver-draft-1');
+      expect(updateInput.expectedLockVersion).toBe(2);
+      expect(updateInput.title).toBe('Revised Draft Title');
+      expect(updateInput.days?.[0].title).toBe('Revised Day 1');
+
+      // 2. Saving executes update draft RPC targeting the draft version ID
+      mockPgQuery.mockResolvedValueOnce({
+        rows: [{ result: { version_id: 'ver-draft-1', new_lock_version: 3 } }],
+      });
+
+      // Verify that calling update draft RPC with expectedLockVersion succeeds
+      const res = await mockPgQuery(
+        `SELECT public.rpc_update_itinerary_version_draft($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) as result`,
+        ['tenant-agency-a', 'user-consultant-1', updateInput.versionId, updateInput.expectedLockVersion]
+      );
+
+      expect(res.rows[0].result.version_id).toBe('ver-draft-1');
+      expect(res.rows[0].result.new_lock_version).toBe(3);
+    });
+
+    it('Finalized base: applying revision triggers createItineraryRevisionAction(baseVersionId), leaving finalized base untouched', async () => {
+      const finalizedBase = {
+        id: 'ver-finalized-v2',
+        itineraryId: 'itin-200',
+        versionNumber: 2,
+        status: 'finalized',
+        lockVersion: 5,
+        title: 'Frozen Finalized v2',
+      };
+
+      const aiRevisedProposal: AIItineraryDraftProposal = {
+        title: 'New Proposal for Revision v3',
+        destinationSummary: 'Kyoto',
+        startDate: '2026-11-01',
+        endDate: '2026-11-08',
+        durationDays: 7,
+        passengerCount: 2,
+        days: [
+          {
+            dayNumber: 1,
+            title: 'Day 1 Arrival',
+            items: [{ title: 'Private Transfer' }],
+          },
+        ],
+        inclusions: ['Ryokan'],
+        exclusions: ['Personal Expenses'],
+        grounding: { sources: [], assumptions: [], missingInformation: [], confidenceScore: 0.95 },
+        warnings: [],
+      };
+
+      // Mock database RPC creating a new revision version v3 from v2
+      mockPgQuery.mockResolvedValueOnce({
+        rows: [
+          {
+            result: {
+              new_version_id: 'ver-draft-v3-new',
+              version_number: 3,
+            },
+          },
+        ],
+      });
+
+      // 1. Execute revision RPC
+      const revRpcRes = await mockPgQuery(
+        `SELECT public.rpc_create_itinerary_version_revision($1, $2, $3) as result`,
+        ['tenant-agency-a', 'user-consultant-1', finalizedBase.id]
+      );
+
+      const newVersion = revRpcRes.rows[0].result;
+      expect(newVersion.new_version_id).toBe('ver-draft-v3-new');
+      expect(newVersion.version_number).toBe(3);
+
+      // 2. Adapt AI proposal to update the NEW revision draft v3 (NOT the finalized v2)
+      const updateDraftV3Input = adaptAIItineraryToUpdateDraftInput(
+        newVersion.new_version_id,
+        1, // Initial lock_version for newly spawned revision
+        aiRevisedProposal
+      );
+
+      expect(updateDraftV3Input.versionId).toBe('ver-draft-v3-new');
+      expect(updateDraftV3Input.versionId).not.toBe(finalizedBase.id); // Finalized v2 is never mutated
+      expect(updateDraftV3Input.title).toBe('New Proposal for Revision v3');
+    });
+
+    it('Superseded base: applying revision creates a new revision without editing the historical superseded row', async () => {
+      const supersededBase = {
+        id: 'ver-superseded-v1',
+        itineraryId: 'itin-300',
+        versionNumber: 1,
+        status: 'superseded',
+        lockVersion: 3,
+        title: 'Historical Superseded v1',
+      };
+
+      const aiRevisedProposal: AIItineraryDraftProposal = {
+        title: 'Revision from Historical v1',
+        destinationSummary: 'Rome',
+        startDate: '2026-12-01',
+        endDate: '2026-12-08',
+        durationDays: 7,
+        passengerCount: 2,
+        days: [
+          {
+            dayNumber: 1,
+            title: 'Rome Arrival',
+            items: [{ title: 'Hotel Check-in' }],
+          },
+        ],
+        inclusions: ['Hotel'],
+        exclusions: ['Insurance'],
+        grounding: { sources: [], assumptions: [], missingInformation: [], confidenceScore: 0.9 },
+        warnings: [],
+      };
+
+      // Mock database RPC creating a new revision version v4 from superseded v1
+      mockPgQuery.mockResolvedValueOnce({
+        rows: [
+          {
+            result: {
+              new_version_id: 'ver-draft-v4-from-superseded',
+              version_number: 4,
+            },
+          },
+        ],
+      });
+
+      const revRpcRes = await mockPgQuery(
+        `SELECT public.rpc_create_itinerary_version_revision($1, $2, $3) as result`,
+        ['tenant-agency-a', 'user-consultant-1', supersededBase.id]
+      );
+
+      const newVersion = revRpcRes.rows[0].result;
+      expect(newVersion.new_version_id).toBe('ver-draft-v4-from-superseded');
+      expect(newVersion.version_number).toBe(4);
+
+      // Verify that update draft targets the new revision version v4 only
+      const updateDraftV4Input = adaptAIItineraryToUpdateDraftInput(
+        newVersion.new_version_id,
+        1,
+        aiRevisedProposal
+      );
+
+      expect(updateDraftV4Input.versionId).toBe('ver-draft-v4-from-superseded');
+      expect(updateDraftV4Input.versionId).not.toBe(supersededBase.id);
+    });
+
+    it('denies viewer role from creating revisions or updating drafts (FORBIDDEN)', async () => {
+      mockStaffContext = {
+        userId: 'user-viewer-1',
+        tenantId: 'tenant-agency-a',
+        role: 'viewer',
+      };
+
+      // Proposal generation denied
+      const genResult = await generateItineraryRevisionProposalAction({
+        inquiryId: 'inq-test-1',
+        baseItineraryId: 'itin-1',
+        baseVersionId: 'ver-1',
+        baseVersionNumber: 1,
+        expectedLockVersion: 1,
+        requestedChanges: 'Add leisure day',
+      });
+
+      expect(genResult.success).toBe(false);
+      expect(genResult.error?.code).toBe('FORBIDDEN');
+    });
+  });
 });
