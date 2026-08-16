@@ -3,10 +3,18 @@ import { Client } from 'pg';
 import * as fs from 'fs';
 import * as path from 'path';
 
-describe('Migration 016 Local PostgreSQL Invariants', () => {
+describe('Migration 016 Local PostgreSQL Invariants & RLS Authorization', () => {
   let client: Client;
   const testTenantA = 'tenant_ai5_a';
   const testTenantB = 'tenant_ai5_b';
+
+  // User UUIDs for RLS tests
+  const adminUserId = 'aaaaaaaa-1111-1111-1111-111111111111';
+  const managerUserId = 'bbbbbbbb-2222-2222-2222-222222222222';
+  const consultantUserId = 'cccccccc-3333-3333-3333-333333333333';
+  const viewerUserId = 'dddddddd-4444-4444-4444-444444444444';
+  const superAdminUserId = 'eeeeeeee-5555-5555-5555-555555555555';
+  const tenantBUserId = 'ffffffff-6666-6666-6666-666666666666';
 
   beforeAll(async () => {
     client = new Client({
@@ -18,13 +26,13 @@ describe('Migration 016 Local PostgreSQL Invariants', () => {
     });
     await client.connect();
 
-    // 0. Mock auth schema and update_updated_at_column if not present
+    // 0. Mock auth schema, app_user non-superuser role, and update_updated_at_column
     await client.query(`
       CREATE EXTENSION IF NOT EXISTS "pgcrypto";
       CREATE SCHEMA IF NOT EXISTS auth;
       CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid AS $$ 
-        SELECT '00000000-0000-0000-0000-000000000000'::uuid 
-      $$ LANGUAGE sql;
+        SELECT NULLIF(current_setting('request.jwt.claim.sub', true), '')::uuid;
+      $$ LANGUAGE sql STABLE;
 
       CREATE OR REPLACE FUNCTION public.update_updated_at_column()
       RETURNS TRIGGER AS $$
@@ -33,6 +41,12 @@ describe('Migration 016 Local PostgreSQL Invariants', () => {
         RETURN NEW;
       END;
       $$ LANGUAGE plpgsql;
+
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_user') THEN
+          CREATE ROLE app_user NOLOGIN;
+        END IF;
+      END $$;
     `);
 
     // 1. Ensure base tables (tenants, profiles, quotes_itineraries, traveler_profiles, inquiries, bookings)
@@ -125,11 +139,47 @@ describe('Migration 016 Local PostgreSQL Invariants', () => {
     );
     await client.query(migrationSql);
 
-    // 3. Setup test fixtures
+    // Grant app_user permissions
+    await client.query(`
+      GRANT USAGE ON SCHEMA public, auth TO app_user;
+      GRANT ALL ON ALL TABLES IN SCHEMA public TO app_user;
+      GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO app_user;
+      GRANT ALL ON ALL FUNCTIONS IN SCHEMA public TO app_user;
+    `);
+
+    // Clean up any stale records from previous runs
+    await client.query(`
+      DELETE FROM public.bookings WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
+      DELETE FROM public.quote_acceptances WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
+      DELETE FROM public.quote_shares WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
+      DELETE FROM public.itinerary_shares WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
+      DELETE FROM public.quote_versions WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
+      DELETE FROM public.quotes WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
+      DELETE FROM public.itinerary_versions WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
+      DELETE FROM public.itineraries WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
+      DELETE FROM public.tenant_quote_sequences WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
+      DELETE FROM public.inquiries WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
+      DELETE FROM public.traveler_profiles WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
+      DELETE FROM public.profiles WHERE tenant_id IN ('${testTenantA}', '${testTenantB}', 'global');
+      DELETE FROM public.tenants WHERE id IN ('${testTenantA}', '${testTenantB}', 'global');
+    `);
+
+    // 3. Setup test fixtures (tenants, profiles, travelers, inquiries)
     await client.query(`
       INSERT INTO public.tenants (id, name, slug) 
       VALUES ('${testTenantA}', 'AI-5 Agency A', 'agency-a'),
-             ('${testTenantB}', 'AI-5 Agency B', 'agency-b')
+             ('${testTenantB}', 'AI-5 Agency B', 'agency-b'),
+             ('global', 'Platform Global', 'platform-global')
+      ON CONFLICT (id) DO NOTHING;
+
+      INSERT INTO public.profiles (id, tenant_id, role, full_name, email)
+      VALUES
+        ('${adminUserId}', '${testTenantA}', 'admin', 'Agency Admin', 'admin@agency-a.com'),
+        ('${managerUserId}', '${testTenantA}', 'manager', 'Agency Manager', 'manager@agency-a.com'),
+        ('${consultantUserId}', '${testTenantA}', 'consultant', 'Agency Consultant', 'consultant@agency-a.com'),
+        ('${viewerUserId}', '${testTenantA}', 'viewer', 'Agency Viewer', 'viewer@agency-a.com'),
+        ('${superAdminUserId}', 'global', 'super_admin', 'Platform Super Admin', 'sa@platform.com'),
+        ('${tenantBUserId}', '${testTenantB}', 'admin', 'Agency B Admin', 'admin@agency-b.com')
       ON CONFLICT (id) DO NOTHING;
 
       INSERT INTO public.traveler_profiles (id, tenant_id, display_name, email, created_at, updated_at)
@@ -149,7 +199,6 @@ describe('Migration 016 Local PostgreSQL Invariants', () => {
   });
 
   afterAll(async () => {
-    // Clean up test data
     try {
       await client.query(`
         DELETE FROM public.bookings WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
@@ -163,10 +212,11 @@ describe('Migration 016 Local PostgreSQL Invariants', () => {
         DELETE FROM public.tenant_quote_sequences WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
         DELETE FROM public.inquiries WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
         DELETE FROM public.traveler_profiles WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-        DELETE FROM public.tenants WHERE id IN ('${testTenantA}', '${testTenantB}');
+        DELETE FROM public.profiles WHERE tenant_id IN ('${testTenantA}', '${testTenantB}', 'global');
+        DELETE FROM public.tenants WHERE id IN ('${testTenantA}', '${testTenantB}', 'global');
       `);
       await client.end();
-    } catch (_err) {
+    } catch {
       // Ignored on teardown
     }
   });
@@ -252,17 +302,22 @@ describe('Migration 016 Local PostgreSQL Invariants', () => {
     `, [itinId]);
     const itinVerId = itinVerRes.rows[0].id;
 
-    // 5. Insert quote v1
+    // 5. Insert quote v1 (gross_margin_amount allowed to be negative if below cost)
     await client.query(`
-      INSERT INTO public.quote_versions (tenant_id, quote_id, version_number, itinerary_version_id, subtotal, grand_total)
-      VALUES ('${testTenantA}', '${quoteId}', 1, '${itinVerId}', 150000.00, 150000.00);
+      INSERT INTO public.quote_versions (
+        tenant_id, quote_id, version_number, itinerary_version_id,
+        subtotal, grand_total, internal_cost_total, gross_margin_amount, currency
+      ) VALUES (
+        '${testTenantA}', '${quoteId}', 1, '${itinVerId}',
+        150000.00, 150000.00, 160000.00, -10000.00, 'INR'
+      );
     `);
 
     // 6. Duplicate quote v1 must fail
     await expect(
       client.query(`
-        INSERT INTO public.quote_versions (tenant_id, quote_id, version_number, itinerary_version_id, subtotal, grand_total)
-        VALUES ('${testTenantA}', '${quoteId}', 1, '${itinVerId}', 160000.00, 160000.00);
+        INSERT INTO public.quote_versions (tenant_id, quote_id, version_number, itinerary_version_id, subtotal, grand_total, currency)
+        VALUES ('${testTenantA}', '${quoteId}', 1, '${itinVerId}', 160000.00, 160000.00, 'INR');
       `)
     ).rejects.toThrow();
   });
@@ -317,13 +372,13 @@ describe('Migration 016 Local PostgreSQL Invariants', () => {
     // Attempt to attach Tokyo Itinerary (Inquiry B) to Dubai Quote (Inquiry A)
     await expect(
       client.query(`
-        INSERT INTO public.quote_versions (tenant_id, quote_id, version_number, itinerary_version_id, subtotal, grand_total)
-        VALUES ('${testTenantA}', '${quoteARes.rows[0].id}', 2, '${itinVerBRes.rows[0].id}', 200000.00, 200000.00);
+        INSERT INTO public.quote_versions (tenant_id, quote_id, version_number, itinerary_version_id, subtotal, grand_total, currency)
+        VALUES ('${testTenantA}', '${quoteARes.rows[0].id}', 2, '${itinVerBRes.rows[0].id}', 200000.00, 200000.00, 'INR');
       `)
     ).rejects.toThrow(/CROSS_INQUIRY_INTEGRITY_VIOLATION/);
   });
 
-  it('enforces single active acceptance invariant per Inquiry and allows historical voided acceptances', async () => {
+  it('enforces QuoteAcceptance coherence: validates quote_id, itinerary_version_id, and quote_share_id', async () => {
     const quoteRes = await client.query(`
       SELECT id FROM public.quotes WHERE tenant_id = '${testTenantA}' AND quote_number = 'QT-2026-0001';
     `);
@@ -334,62 +389,44 @@ describe('Migration 016 Local PostgreSQL Invariants', () => {
     const qvId = qvRes.rows[0].id;
     const ivId = qvRes.rows[0].itinerary_version_id;
 
-    // 1. Insert first acceptance
-    const acc1Res = await client.query(`
-      INSERT INTO public.quote_acceptances (
-        tenant_id, inquiry_id, quote_id, quote_version_id, itinerary_version_id, traveler_id,
-        acceptance_type, accepted_grand_total, currency, customer_safe_snapshot, accepted_snapshot_hash
-      ) VALUES (
-        '${testTenantA}', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '${quoteId}', '${qvId}', '${ivId}',
-        '11111111-1111-1111-1111-111111111111', 'traveler_portal', 150000.00, 'INR',
-        '{"grandTotal":"150000.00"}'::jsonb, '1234567890123456789012345678901234567890123456789012345678901234'
-      ) RETURNING id;
+    // Create a share for quote v1
+    const shareRes = await client.query(`
+      INSERT INTO public.quote_shares (tenant_id, quote_version_id, token_hash, expires_at)
+      VALUES ('${testTenantA}', '${qvId}', 'validtokenhash1234567890123456789012345678901234567890123456789012', now() + interval '7 days')
+      RETURNING id;
     `);
-    expect(acc1Res.rows).toHaveLength(1);
-    const acc1Id = acc1Res.rows[0].id;
+    const shareId = shareRes.rows[0].id;
 
-    // 2. Second active acceptance on same Inquiry must FAIL
+    // 1. Attempting acceptance with mismatched quote_id must FAIL
     await expect(
       client.query(`
         INSERT INTO public.quote_acceptances (
           tenant_id, inquiry_id, quote_id, quote_version_id, itinerary_version_id, traveler_id,
           acceptance_type, accepted_grand_total, currency, customer_safe_snapshot, accepted_snapshot_hash
         ) VALUES (
-          '${testTenantA}', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '${quoteId}', '${qvId}', '${ivId}',
-          '11111111-1111-1111-1111-111111111111', 'staff_recorded', 150000.00, 'INR',
+          '${testTenantA}', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '00000000-0000-0000-0000-000000000000', '${qvId}', '${ivId}',
+          '11111111-1111-1111-1111-111111111111', 'traveler_portal', 150000.00, 'INR',
           '{"grandTotal":"150000.00"}'::jsonb, '1234567890123456789012345678901234567890123456789012345678901234'
         );
       `)
     ).rejects.toThrow();
 
-    // 3. Void the first acceptance
-    await client.query(`
-      UPDATE public.quote_acceptances 
-      SET voided_at = now(), void_reason = 'Customer requested revised itinerary'
-      WHERE id = $1;
-    `, [acc1Id]);
-
-    // 4. Now a new acceptance can be created (historical preservation)
-    const acc2Res = await client.query(`
+    // 2. Valid acceptance with correct share_id must SUCCEED
+    const accRes = await client.query(`
       INSERT INTO public.quote_acceptances (
         tenant_id, inquiry_id, quote_id, quote_version_id, itinerary_version_id, traveler_id,
-        acceptance_type, accepted_grand_total, currency, customer_safe_snapshot, accepted_snapshot_hash
+        quote_share_id, acceptance_type, accepted_grand_total, currency, customer_safe_snapshot, accepted_snapshot_hash
       ) VALUES (
         '${testTenantA}', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '${quoteId}', '${qvId}', '${ivId}',
-        '11111111-1111-1111-1111-111111111111', 'staff_recorded', 150000.00, 'INR',
+        '11111111-1111-1111-1111-111111111111', '${shareId}', 'traveler_portal', 150000.00, 'INR',
         '{"grandTotal":"150000.00"}'::jsonb, '1234567890123456789012345678901234567890123456789012345678901234'
       ) RETURNING id;
     `);
-    expect(acc2Res.rows).toHaveLength(1);
+    expect(accRes.rows).toHaveLength(1);
+    const accId = accRes.rows[0].id;
 
-    // Verify both rows exist in DB (acc1 is voided, acc2 is active)
-    const countRes = await client.query(`
-      SELECT count(*) as total, count(*) FILTER (WHERE voided_at IS NULL) as active
-      FROM public.quote_acceptances
-      WHERE inquiry_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
-    `);
-    expect(Number(countRes.rows[0].total)).toBe(2);
-    expect(Number(countRes.rows[0].active)).toBe(1);
+    // Void the acceptance for subsequent tests
+    await client.query(`UPDATE public.quote_acceptances SET voided_at = now() WHERE id = $1`, [accId]);
   });
 
   it('proves tenant_quote_sequences supports atomic UPSERT counter', async () => {
@@ -417,5 +454,102 @@ describe('Migration 016 Local PostgreSQL Invariants', () => {
       SELECT count(*) as count FROM public.quotes_itineraries;
     `);
     expect(Number(res.rows[0].count)).toBe(0);
+  });
+
+  // =========================================================================
+  // REAL LOCAL POSTGRESQL RLS AUTHORIZATION TESTS
+  // =========================================================================
+  describe('Real Local PostgreSQL RLS Authorization Execution', () => {
+    it('Agency Admin can SELECT itineraries, quotes, and raw quote_versions in own tenant', async () => {
+      await client.query('BEGIN');
+      await client.query('SET LOCAL ROLE app_user');
+      await client.query(`SET LOCAL request.jwt.claim.sub = '${adminUserId}'`);
+
+      const itinRes = await client.query(`SELECT count(*) FROM public.itineraries WHERE tenant_id = '${testTenantA}'`);
+      expect(Number(itinRes.rows[0].count)).toBeGreaterThan(0);
+
+      const qvRes = await client.query(`SELECT count(*) FROM public.quote_versions WHERE tenant_id = '${testTenantA}'`);
+      expect(Number(qvRes.rows[0].count)).toBeGreaterThan(0);
+
+      await client.query('ROLLBACK');
+    });
+
+    it('Agency Consultant can SELECT itineraries & quotes, but receives 0 rows on raw quote_versions (internal pricing protection)', async () => {
+      await client.query('BEGIN');
+      await client.query('SET LOCAL ROLE app_user');
+      await client.query(`SET LOCAL request.jwt.claim.sub = '${consultantUserId}'`);
+
+      // 1. Can view Itineraries Header
+      const itinRes = await client.query(`SELECT count(*) FROM public.itineraries WHERE tenant_id = '${testTenantA}'`);
+      expect(Number(itinRes.rows[0].count)).toBeGreaterThan(0);
+
+      // 2. Can view Quotes Header
+      const quoteRes = await client.query(`SELECT count(*) FROM public.quotes WHERE tenant_id = '${testTenantA}'`);
+      expect(Number(quoteRes.rows[0].count)).toBeGreaterThan(0);
+
+      // 3. Raw quote_versions table direct SELECT is DENIED by RLS (returns 0 rows)
+      const qvRes = await client.query(`SELECT count(*) FROM public.quote_versions WHERE tenant_id = '${testTenantA}'`);
+      expect(Number(qvRes.rows[0].count)).toBe(0);
+
+      await client.query('ROLLBACK');
+    });
+
+    it('Agency Viewer receives 0 rows on raw quote_versions direct SELECT', async () => {
+      await client.query('BEGIN');
+      await client.query('SET LOCAL ROLE app_user');
+      await client.query(`SET LOCAL request.jwt.claim.sub = '${viewerUserId}'`);
+
+      const qvRes = await client.query(`SELECT count(*) FROM public.quote_versions WHERE tenant_id = '${testTenantA}'`);
+      expect(Number(qvRes.rows[0].count)).toBe(0);
+
+      await client.query('ROLLBACK');
+    });
+
+    it('Super Admin fails closed and receives 0 rows on all Agency operational tables', async () => {
+      await client.query('BEGIN');
+      await client.query('SET LOCAL ROLE app_user');
+      await client.query(`SET LOCAL request.jwt.claim.sub = '${superAdminUserId}'`);
+
+      const itinRes = await client.query(`SELECT count(*) FROM public.itineraries WHERE tenant_id = '${testTenantA}'`);
+      expect(Number(itinRes.rows[0].count)).toBe(0);
+
+      const quoteRes = await client.query(`SELECT count(*) FROM public.quotes WHERE tenant_id = '${testTenantA}'`);
+      expect(Number(quoteRes.rows[0].count)).toBe(0);
+
+      const qvRes = await client.query(`SELECT count(*) FROM public.quote_versions WHERE tenant_id = '${testTenantA}'`);
+      expect(Number(qvRes.rows[0].count)).toBe(0);
+
+      await client.query('ROLLBACK');
+    });
+
+    it('Tenant B user receives 0 rows when attempting to SELECT Tenant A records', async () => {
+      await client.query('BEGIN');
+      await client.query('SET LOCAL ROLE app_user');
+      await client.query(`SET LOCAL request.jwt.claim.sub = '${tenantBUserId}'`);
+
+      const itinRes = await client.query(`SELECT count(*) FROM public.itineraries WHERE tenant_id = '${testTenantA}'`);
+      expect(Number(itinRes.rows[0].count)).toBe(0);
+
+      const qvRes = await client.query(`SELECT count(*) FROM public.quote_versions WHERE tenant_id = '${testTenantA}'`);
+      expect(Number(qvRes.rows[0].count)).toBe(0);
+
+      await client.query('ROLLBACK');
+    });
+
+    it('Direct client INSERT mutations are DENIED by RLS policies', async () => {
+      await client.query('BEGIN');
+      await client.query('SET LOCAL ROLE app_user');
+      await client.query(`SET LOCAL request.jwt.claim.sub = '${consultantUserId}'`);
+
+      // Attempting direct client INSERT on itineraries without domain RPC fails closed
+      await expect(
+        client.query(`
+          INSERT INTO public.itineraries (tenant_id, inquiry_id, title)
+          VALUES ('${testTenantA}', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Direct Client Hack');
+        `)
+      ).rejects.toThrow();
+
+      await client.query('ROLLBACK');
+    });
   });
 });

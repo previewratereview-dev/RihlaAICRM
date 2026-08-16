@@ -15,9 +15,13 @@
 -- - ALL domain tables carry physical tenant_id text NOT NULL references public.tenants(id)
 -- - Composite foreign keys enforce tenant isolation at database level
 -- - Higher-order trigger enforces that Quote and Itinerary belong to the SAME Inquiry
+-- - Higher-order trigger enforces that Acceptance provenance and QuoteShare match QuoteVersion exactly
 -- - quote_acceptances enforces at most ONE active non-void acceptance per Inquiry
 -- - bookings.quote_acceptance_id is NULLABLE to preserve legacy Bookings
 -- - legacy public.quotes_itineraries remains untouched for backward compatibility
+-- - RLS restricts raw quote_versions SELECT to admin and manager roles to prevent internal margin leakage
+-- - Direct client INSERT/UPDATE/DELETE mutations are DENIED by default (handled via governed domain RPCs)
+-- - Super Admin role explicitly fails closed on all agency operational tables
 
 -- ============================================================================
 -- 1. ITINERARIES (FAMILY HEADER)
@@ -137,7 +141,7 @@ CREATE TABLE IF NOT EXISTS public.quote_versions (
   tax_amount numeric(12, 2) NOT NULL DEFAULT 0.00,
   grand_total numeric(12, 2) NOT NULL DEFAULT 0.00,
   internal_cost_total numeric(12, 2),
-  gross_margin_amount numeric(12, 2),
+  gross_margin_amount numeric(12, 2), -- Allowed to be negative for below-cost offers
   valid_until date,
   terms_and_conditions text,
   customer_notes text,
@@ -156,7 +160,7 @@ CREATE TABLE IF NOT EXISTS public.quote_versions (
     REFERENCES public.itinerary_versions(tenant_id, id) ON DELETE RESTRICT,
   CONSTRAINT chk_quote_version_number CHECK (version_number > 0),
   CONSTRAINT chk_quote_version_status CHECK (status IN ('draft', 'issued', 'rejected', 'superseded', 'cancelled')),
-  CONSTRAINT chk_quote_currency CHECK (length(trim(currency)) BETWEEN 3 AND 5),
+  CONSTRAINT chk_quote_currency CHECK (currency ~ '^[A-Z]{3}$'),
   CONSTRAINT chk_quote_amounts CHECK (
     subtotal >= 0 AND
     discount_amount >= 0 AND
@@ -268,6 +272,7 @@ CREATE TABLE IF NOT EXISTS public.quote_acceptances (
     REFERENCES public.quote_shares(tenant_id, id) ON DELETE SET NULL,
   CONSTRAINT chk_quote_acceptance_type CHECK (acceptance_type IN ('traveler_portal', 'staff_recorded')),
   CONSTRAINT chk_quote_acceptance_total CHECK (accepted_grand_total >= 0),
+  CONSTRAINT chk_quote_acceptance_currency CHECK (currency ~ '^[A-Z]{3}$'),
   CONSTRAINT chk_quote_acceptance_schema CHECK (snapshot_schema_version = 1),
   CONSTRAINT chk_quote_acceptance_hash_len CHECK (length(accepted_snapshot_hash) = 64)
 );
@@ -293,17 +298,21 @@ CREATE TABLE IF NOT EXISTS public.tenant_quote_sequences (
 );
 
 -- ============================================================================
--- 9. HIGHER-ORDER CROSS-INQUIRY INTEGRITY TRIGGER
+-- 9. HIGHER-ORDER INTEGRITY TRIGGER
 -- ============================================================================
 -- Enforces:
 -- A. A QuoteVersion cannot reference an ItineraryVersion belonging to a different Inquiry.
 -- B. A QuoteAcceptance cannot mix Quote, ItineraryVersion, or Traveler from different Inquiries.
+-- C. If quote_share_id is set, it must belong to the exact QuoteVersion cited.
 CREATE OR REPLACE FUNCTION public.validate_quote_inquiry_integrity()
 RETURNS TRIGGER AS $$
 DECLARE
   v_quote_inquiry_id uuid;
   v_itinerary_inquiry_id uuid;
   v_inquiry_traveler_id uuid;
+  v_qv_quote_id uuid;
+  v_qv_itinerary_version_id uuid;
+  v_share_quote_version_id uuid;
 BEGIN
   IF TG_TABLE_NAME = 'quote_versions' THEN
     -- Get quote's inquiry_id
@@ -324,7 +333,22 @@ BEGIN
   END IF;
 
   IF TG_TABLE_NAME = 'quote_acceptances' THEN
-    -- Verify quote belongs to inquiry
+    -- 1. Verify QuoteVersion consistency (quote_id and itinerary_version_id)
+    SELECT quote_id, itinerary_version_id INTO v_qv_quote_id, v_qv_itinerary_version_id
+    FROM public.quote_versions
+    WHERE id = NEW.quote_version_id AND tenant_id = NEW.tenant_id;
+
+    IF v_qv_quote_id IS DISTINCT FROM NEW.quote_id THEN
+      RAISE EXCEPTION 'CROSS_ACCEPTANCE_INTEGRITY_VIOLATION: QuoteAcceptance quote_id (%) does not match QuoteVersion quote_id (%).',
+        NEW.quote_id, v_qv_quote_id;
+    END IF;
+
+    IF v_qv_itinerary_version_id IS DISTINCT FROM NEW.itinerary_version_id THEN
+      RAISE EXCEPTION 'CROSS_ACCEPTANCE_INTEGRITY_VIOLATION: QuoteAcceptance itinerary_version_id (%) does not match QuoteVersion itinerary_version_id (%).',
+        NEW.itinerary_version_id, v_qv_itinerary_version_id;
+    END IF;
+
+    -- 2. Verify Quote belongs to Inquiry
     SELECT inquiry_id INTO v_quote_inquiry_id
     FROM public.quotes
     WHERE id = NEW.quote_id AND tenant_id = NEW.tenant_id;
@@ -334,7 +358,7 @@ BEGIN
         NEW.inquiry_id, v_quote_inquiry_id;
     END IF;
 
-    -- Verify traveler belongs to inquiry
+    -- 3. Verify Traveler belongs to Inquiry
     SELECT traveler_id INTO v_inquiry_traveler_id
     FROM public.inquiries
     WHERE id = NEW.inquiry_id AND tenant_id = NEW.tenant_id;
@@ -342,6 +366,18 @@ BEGIN
     IF v_inquiry_traveler_id IS DISTINCT FROM NEW.traveler_id THEN
       RAISE EXCEPTION 'CROSS_INQUIRY_INTEGRITY_VIOLATION: QuoteAcceptance traveler_id (%) does not match Inquiry traveler_id (%).',
         NEW.traveler_id, v_inquiry_traveler_id;
+    END IF;
+
+    -- 4. If quote_share_id is present, verify it references the exact QuoteVersion
+    IF NEW.quote_share_id IS NOT NULL THEN
+      SELECT quote_version_id INTO v_share_quote_version_id
+      FROM public.quote_shares
+      WHERE id = NEW.quote_share_id AND tenant_id = NEW.tenant_id;
+
+      IF v_share_quote_version_id IS DISTINCT FROM NEW.quote_version_id THEN
+        RAISE EXCEPTION 'CROSS_SHARE_INTEGRITY_VIOLATION: QuoteAcceptance quote_share_id (%) does not belong to QuoteVersion (%).',
+          NEW.quote_share_id, NEW.quote_version_id;
+      END IF;
     END IF;
   END IF;
 
@@ -356,7 +392,7 @@ CREATE TRIGGER trg_validate_quote_version_inquiry
 
 DROP TRIGGER IF EXISTS trg_validate_quote_acceptance_inquiry ON public.quote_acceptances;
 CREATE TRIGGER trg_validate_quote_acceptance_inquiry
-  BEFORE INSERT OR UPDATE OF inquiry_id, quote_id, traveler_id ON public.quote_acceptances
+  BEFORE INSERT OR UPDATE OF inquiry_id, quote_id, quote_version_id, itinerary_version_id, traveler_id, quote_share_id ON public.quote_acceptances
   FOR EACH ROW EXECUTE FUNCTION public.validate_quote_inquiry_integrity();
 
 -- ============================================================================
@@ -391,78 +427,134 @@ CREATE INDEX IF NOT EXISTS idx_bookings_quote_acceptance ON public.bookings(tena
 -- 11. ROW LEVEL SECURITY (RLS) POLICIES
 -- ============================================================================
 ALTER TABLE public.itineraries ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.itineraries FORCE ROW LEVEL SECURITY;
+
 ALTER TABLE public.itinerary_versions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.itinerary_versions FORCE ROW LEVEL SECURITY;
+
 ALTER TABLE public.quotes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.quotes FORCE ROW LEVEL SECURITY;
+
 ALTER TABLE public.quote_versions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.quote_versions FORCE ROW LEVEL SECURITY;
+
 ALTER TABLE public.itinerary_shares ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.itinerary_shares FORCE ROW LEVEL SECURITY;
+
 ALTER TABLE public.quote_shares ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.quote_shares FORCE ROW LEVEL SECURITY;
+
 ALTER TABLE public.quote_acceptances ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.quote_acceptances FORCE ROW LEVEL SECURITY;
+
 ALTER TABLE public.tenant_quote_sequences ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.tenant_quote_sequences FORCE ROW LEVEL SECURITY;
 
--- Helper macro for standard tenant agency access:
--- Agency members can read/write their tenant's records.
--- Platform super_admin cannot casually browse operational agency records.
-
+-- 11.1 Itineraries: Agency members can SELECT their tenant records.
 DROP POLICY IF EXISTS "Tenant isolation on itineraries" ON public.itineraries;
-CREATE POLICY "Tenant isolation on itineraries" ON public.itineraries
-  FOR ALL USING (
-    tenant_id = (SELECT tenant_id FROM public.profiles WHERE id = auth.uid())
-  ) WITH CHECK (
-    tenant_id = (SELECT tenant_id FROM public.profiles WHERE id = auth.uid())
+DROP POLICY IF EXISTS "Agency staff read itineraries" ON public.itineraries;
+CREATE POLICY "Agency staff read itineraries" ON public.itineraries
+  FOR SELECT USING (
+    EXISTS (
+      SELECT 1 FROM public.profiles p
+      WHERE p.id = auth.uid()
+      AND p.tenant_id = itineraries.tenant_id
+      AND p.role IN ('admin', 'manager', 'consultant', 'specialist', 'viewer')
+      AND p.role != 'super_admin'
+    )
   );
 
+-- 11.2 Itinerary Versions: Agency members can SELECT their tenant records.
 DROP POLICY IF EXISTS "Tenant isolation on itinerary_versions" ON public.itinerary_versions;
-CREATE POLICY "Tenant isolation on itinerary_versions" ON public.itinerary_versions
-  FOR ALL USING (
-    tenant_id = (SELECT tenant_id FROM public.profiles WHERE id = auth.uid())
-  ) WITH CHECK (
-    tenant_id = (SELECT tenant_id FROM public.profiles WHERE id = auth.uid())
+DROP POLICY IF EXISTS "Agency staff read itinerary_versions" ON public.itinerary_versions;
+CREATE POLICY "Agency staff read itinerary_versions" ON public.itinerary_versions
+  FOR SELECT USING (
+    EXISTS (
+      SELECT 1 FROM public.profiles p
+      WHERE p.id = auth.uid()
+      AND p.tenant_id = itinerary_versions.tenant_id
+      AND p.role IN ('admin', 'manager', 'consultant', 'specialist', 'viewer')
+      AND p.role != 'super_admin'
+    )
   );
 
+-- 11.3 Quotes Header: Agency members can SELECT their tenant records.
 DROP POLICY IF EXISTS "Tenant isolation on quotes" ON public.quotes;
-CREATE POLICY "Tenant isolation on quotes" ON public.quotes
-  FOR ALL USING (
-    tenant_id = (SELECT tenant_id FROM public.profiles WHERE id = auth.uid())
-  ) WITH CHECK (
-    tenant_id = (SELECT tenant_id FROM public.profiles WHERE id = auth.uid())
+DROP POLICY IF EXISTS "Agency staff read quotes" ON public.quotes;
+CREATE POLICY "Agency staff read quotes" ON public.quotes
+  FOR SELECT USING (
+    EXISTS (
+      SELECT 1 FROM public.profiles p
+      WHERE p.id = auth.uid()
+      AND p.tenant_id = quotes.tenant_id
+      AND p.role IN ('admin', 'manager', 'consultant', 'specialist', 'viewer')
+      AND p.role != 'super_admin'
+    )
   );
 
+-- 11.4 Quote Versions: RAW table contains internal pricing & margins.
+-- ONLY Admin and Manager can direct-SELECT raw quote_versions rows.
+-- (Consultant / Specialist / Viewer read through server-shaped customer/sales DTOs).
 DROP POLICY IF EXISTS "Tenant isolation on quote_versions" ON public.quote_versions;
-CREATE POLICY "Tenant isolation on quote_versions" ON public.quote_versions
-  FOR ALL USING (
-    tenant_id = (SELECT tenant_id FROM public.profiles WHERE id = auth.uid())
-  ) WITH CHECK (
-    tenant_id = (SELECT tenant_id FROM public.profiles WHERE id = auth.uid())
+DROP POLICY IF EXISTS "Internal pricing staff read quote_versions" ON public.quote_versions;
+CREATE POLICY "Internal pricing staff read quote_versions" ON public.quote_versions
+  FOR SELECT USING (
+    EXISTS (
+      SELECT 1 FROM public.profiles p
+      WHERE p.id = auth.uid()
+      AND p.tenant_id = quote_versions.tenant_id
+      AND p.role IN ('admin', 'manager')
+      AND p.role != 'super_admin'
+    )
   );
 
+-- 11.5 Itinerary Shares: Admin and Manager direct read.
 DROP POLICY IF EXISTS "Tenant isolation on itinerary_shares" ON public.itinerary_shares;
-CREATE POLICY "Tenant isolation on itinerary_shares" ON public.itinerary_shares
-  FOR ALL USING (
-    tenant_id = (SELECT tenant_id FROM public.profiles WHERE id = auth.uid())
-  ) WITH CHECK (
-    tenant_id = (SELECT tenant_id FROM public.profiles WHERE id = auth.uid())
+DROP POLICY IF EXISTS "Admin and Manager read itinerary_shares" ON public.itinerary_shares;
+CREATE POLICY "Admin and Manager read itinerary_shares" ON public.itinerary_shares
+  FOR SELECT USING (
+    EXISTS (
+      SELECT 1 FROM public.profiles p
+      WHERE p.id = auth.uid()
+      AND p.tenant_id = itinerary_shares.tenant_id
+      AND p.role IN ('admin', 'manager')
+      AND p.role != 'super_admin'
+    )
   );
 
+-- 11.6 Quote Shares: Admin and Manager direct read.
 DROP POLICY IF EXISTS "Tenant isolation on quote_shares" ON public.quote_shares;
-CREATE POLICY "Tenant isolation on quote_shares" ON public.quote_shares
-  FOR ALL USING (
-    tenant_id = (SELECT tenant_id FROM public.profiles WHERE id = auth.uid())
-  ) WITH CHECK (
-    tenant_id = (SELECT tenant_id FROM public.profiles WHERE id = auth.uid())
+DROP POLICY IF EXISTS "Admin and Manager read quote_shares" ON public.quote_shares;
+CREATE POLICY "Admin and Manager read quote_shares" ON public.quote_shares
+  FOR SELECT USING (
+    EXISTS (
+      SELECT 1 FROM public.profiles p
+      WHERE p.id = auth.uid()
+      AND p.tenant_id = quote_shares.tenant_id
+      AND p.role IN ('admin', 'manager')
+      AND p.role != 'super_admin'
+    )
   );
 
+-- 11.7 Quote Acceptances: Admin and Manager direct read.
 DROP POLICY IF EXISTS "Tenant isolation on quote_acceptances" ON public.quote_acceptances;
-CREATE POLICY "Tenant isolation on quote_acceptances" ON public.quote_acceptances
-  FOR ALL USING (
-    tenant_id = (SELECT tenant_id FROM public.profiles WHERE id = auth.uid())
-  ) WITH CHECK (
-    tenant_id = (SELECT tenant_id FROM public.profiles WHERE id = auth.uid())
+DROP POLICY IF EXISTS "Admin and Manager read quote_acceptances" ON public.quote_acceptances;
+CREATE POLICY "Admin and Manager read quote_acceptances" ON public.quote_acceptances
+  FOR SELECT USING (
+    EXISTS (
+      SELECT 1 FROM public.profiles p
+      WHERE p.id = auth.uid()
+      AND p.tenant_id = quote_acceptances.tenant_id
+      AND p.role IN ('admin', 'manager')
+      AND p.role != 'super_admin'
+    )
   );
 
+-- 11.8 Tenant Quote Sequences: Direct client read is DENIED (internal use only).
 DROP POLICY IF EXISTS "Tenant isolation on tenant_quote_sequences" ON public.tenant_quote_sequences;
-CREATE POLICY "Tenant isolation on tenant_quote_sequences" ON public.tenant_quote_sequences
-  FOR ALL USING (
-    tenant_id = (SELECT tenant_id FROM public.profiles WHERE id = auth.uid())
-  ) WITH CHECK (
-    tenant_id = (SELECT tenant_id FROM public.profiles WHERE id = auth.uid())
-  );
+DROP POLICY IF EXISTS "Deny direct client read on quote sequences" ON public.tenant_quote_sequences;
+CREATE POLICY "Deny direct client read on quote sequences" ON public.tenant_quote_sequences
+  FOR SELECT USING (false);
+
+-- Direct client INSERT/UPDATE/DELETE are not granted on any of the 8 tables.
+-- All mutations must go through governed domain services / RPCs.
