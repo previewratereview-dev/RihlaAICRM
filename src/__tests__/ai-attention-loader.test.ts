@@ -3,7 +3,8 @@
  * 
  * Classification: MOCKED DATA ACCESS TEST & STATIC ASSERTION
  * Verifies server-side query construction, tenant scoping, Super Admin rejection,
- * pagination completeness, message completeness, budget parser truth table, and DTO normalization.
+ * pagination completeness, tied-timestamp message boundary handling, budget parser truth table,
+ * traveler count normalization truth table, and DTO normalization.
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -18,6 +19,7 @@ import {
   getInquiryAttentionSignals,
   getTenantAttentionSummary,
   parseBudgetValue,
+  parseTravelerCount,
 } from '@/lib/attention/loader';
 
 describe('AI-4B Server Facts Loader: Budget Parser Truth Table', () => {
@@ -47,6 +49,31 @@ describe('AI-4B Server Facts Loader: Budget Parser Truth Table', () => {
     expect(parseBudgetValue('n/a')).toEqual({ min: null, max: null });
     expect(parseBudgetValue('discuss with agent')).toEqual({ min: null, max: null });
     expect(parseBudgetValue('open')).toEqual({ min: null, max: null });
+  });
+});
+
+describe('AI-4B Server Facts Loader: Traveler Count Truth Table (Mandates 4, 5, 7)', () => {
+  it('parses structured integers and rejects ambiguous / free-text strings without guessing', () => {
+    // Exact requested cases from Mandate 7:
+    expect(parseTravelerCount(null)).toBeNull();
+    expect(parseTravelerCount('')).toBeNull();
+    expect(parseTravelerCount(' ')).toBeNull();
+    expect(parseTravelerCount('1')).toBe(1);
+    expect(parseTravelerCount('4')).toBe(4);
+    expect(parseTravelerCount(' 4 ')).toBe(4);
+    expect(parseTravelerCount('0')).toBeNull();
+    expect(parseTravelerCount('-2')).toBeNull();
+    expect(parseTravelerCount('abc')).toBeNull();
+    expect(parseTravelerCount('4 travelers')).toBeNull();
+    expect(parseTravelerCount('2 adults + 2 children')).toBeNull();
+    expect(parseTravelerCount('2.5')).toBeNull();
+  });
+
+  it('handles numeric inputs strictly', () => {
+    expect(parseTravelerCount(5)).toBe(5);
+    expect(parseTravelerCount(0)).toBeNull();
+    expect(parseTravelerCount(-3)).toBeNull();
+    expect(parseTravelerCount(2.5)).toBeNull();
   });
 });
 
@@ -282,12 +309,14 @@ describe('AI-4B Server Facts Loader: loadConversationAttentionFacts', () => {
           return {
             select: vi.fn().mockReturnValue({
               eq: vi.fn().mockReturnValue({
-                order: vi.fn().mockResolvedValue({
-                  data: [
-                    { sender_type: 'contact', created_at: '2026-08-16T09:00:00Z' },
-                    { sender_type: 'system', created_at: '2026-08-16T09:01:00Z' }, // System alert -> must NOT count as reply
-                  ],
-                  error: null,
+                order: vi.fn().mockReturnValue({
+                  order: vi.fn().mockResolvedValue({
+                    data: [
+                      { id: 'msg-1', sender_type: 'contact', created_at: '2026-08-16T09:00:00Z' },
+                      { id: 'msg-2', sender_type: 'system', created_at: '2026-08-16T09:01:00Z' }, // System alert -> must NOT count as reply
+                    ],
+                    error: null,
+                  }),
                 }),
               }),
             }),
@@ -413,9 +442,26 @@ describe('AI-4B Server Facts Loader: loadTenantAttentionFacts Pagination Complet
   });
 });
 
-describe('AI-4B Server Facts Loader: Message Completeness (Mandate 11)', () => {
-  it('proves messages pagination loop executes without row limit truncation', async () => {
-    let msgPageCount = 0;
+describe('AI-4B Server Facts Loader: Tied-Timestamp Message Boundary (Mandates 1, 2, 11)', () => {
+  it('handles tied-timestamp page boundary around row 999/1000/1001 with unique id tie-breaker', async () => {
+    const orderClauses: string[] = [];
+    const requestedMessageRanges: { from: number; to: number }[] = [];
+
+    // Total 1005 messages across boundary:
+    // Messages 0 to 990: created_at 08:00 to 08:16
+    // Messages 991 to 1004 (14 messages): all share the EXACT same created_at "2026-08-16T08:30:00.000Z"
+    const allMessages = Array.from({ length: 1005 }, (_, i) => {
+      const msgId = `msg-${String(i).padStart(4, '0')}`;
+      const createdAt = i < 991 
+        ? `2026-08-16T08:${String(Math.floor(i / 60)).padStart(2, '0')}:${String(i % 60).padStart(2, '0')}.000Z`
+        : '2026-08-16T08:30:00.000Z'; // TIED TIMESTAMP crossing 999/1000/1001 boundary!
+      return {
+        id: msgId,
+        conversation_id: 'conv-tied-boundary',
+        sender_type: i === 1004 ? 'agent' : 'contact',
+        created_at: createdAt,
+      };
+    });
 
     const mockSupabase = {
       from: vi.fn((table: string) => {
@@ -443,7 +489,7 @@ describe('AI-4B Server Facts Loader: Message Completeness (Mandate 11)', () => {
                     range: vi.fn().mockResolvedValue({
                       data: [
                         {
-                          id: 'conv-high-volume',
+                          id: 'conv-tied-boundary',
                           tenant_id: 'agency-alpha',
                           inquiry_id: null,
                           legacy_lead_id: null,
@@ -463,29 +509,26 @@ describe('AI-4B Server Facts Loader: Message Completeness (Mandate 11)', () => {
           return {
             select: vi.fn().mockReturnValue({
               in: vi.fn().mockReturnValue({
-                order: vi.fn().mockReturnValue({
-                  order: vi.fn().mockReturnValue({
-                    range: vi.fn().mockImplementation((from: number) => {
-                      msgPageCount++;
-                      if (from === 0) {
-                        // 1000 messages in page 1
-                        const msgs = Array.from({ length: 1000 }, (_, i) => ({
-                          conversation_id: 'conv-high-volume',
-                          sender_type: 'contact',
-                          created_at: `2026-08-16T08:${String(Math.floor(i / 60)).padStart(2, '0')}:${String(i % 60).padStart(2, '0')}Z`,
-                        }));
-                        return Promise.resolve({ data: msgs, error: null });
-                      } else {
-                        // 250 messages in page 2 (total 1250 messages for this conversation)
-                        const msgs = Array.from({ length: 250 }, (_, i) => ({
-                          conversation_id: 'conv-high-volume',
-                          sender_type: 'agent',
-                          created_at: `2026-08-16T10:${String(Math.floor(i / 60)).padStart(2, '0')}:${String(i % 60).padStart(2, '0')}Z`,
-                        }));
-                        return Promise.resolve({ data: msgs, error: null });
-                      }
+                order: vi.fn((col1: string) => {
+                  let currentClause = `${col1} `;
+                  return {
+                    order: vi.fn((col2: string) => {
+                      currentClause += `${col2} `;
+                      return {
+                        order: vi.fn((col3: string) => {
+                          currentClause += `${col3}`;
+                          orderClauses.push(currentClause.trim());
+                          return {
+                            range: vi.fn().mockImplementation((from: number, to: number) => {
+                              requestedMessageRanges.push({ from, to });
+                              const slice = allMessages.slice(from, to + 1);
+                              return Promise.resolve({ data: slice, error: null });
+                            }),
+                          };
+                        }),
+                      };
                     }),
-                  }),
+                  };
                 }),
               }),
             }),
@@ -497,10 +540,22 @@ describe('AI-4B Server Facts Loader: Message Completeness (Mandate 11)', () => {
 
     const { conversationFacts } = await loadTenantAttentionFacts(mockSupabase, 'agency-alpha');
 
-    expect(msgPageCount).toBe(2); // Proves message pagination loop was executed
+    // Asserts deterministic unique tuple ordering on every paginated request: conversation_id ASC, created_at ASC, id ASC
+    expect(orderClauses).toEqual([
+      'conversation_id created_at id',
+      'conversation_id created_at id',
+    ]);
+    
+    // Asserts exact page boundary ranges requested
+    expect(requestedMessageRanges).toEqual([
+      { from: 0, to: 999 },
+      { from: 1000, to: 1999 },
+    ]);
+
     expect(conversationFacts).toHaveLength(1);
-    // Verified latest agent message from page 2 (10:04:09Z) answered the contact message from page 1
-    expect(conversationFacts[0].latestAgentAfterContactAt).toBe('2026-08-16T10:04:09Z');
+    expect(conversationFacts[0].latestContactAt).toBe('2026-08-16T08:30:00.000Z');
+    // Message 1004 (agent reply) was correctly received and processed from page 2
+    expect(conversationFacts[0].latestAgentAfterContactAt).toBe('2026-08-16T08:30:00.000Z');
   });
 });
 

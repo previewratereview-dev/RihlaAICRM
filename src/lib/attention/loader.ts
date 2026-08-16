@@ -166,6 +166,27 @@ export function parseBudgetValue(
 }
 
 /**
+ * Helper to parse traveler count into a strict positive integer.
+ * 
+ * Strict full-string parsing only. Ambiguous formats ("4 travelers", "2 adults + 2 children", "abc", "2.5")
+ * are not silently converted to integers and will evaluate to null.
+ */
+export function parseTravelerCount(
+  value: string | number | null | undefined
+): number | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'number') {
+    return Number.isInteger(value) && value > 0 ? value : null;
+  }
+  const trimmed = String(value).trim();
+  if (!/^\d+$/.test(trimmed)) {
+    return null;
+  }
+  const num = parseInt(trimmed, 10);
+  return !isNaN(num) && num > 0 ? num : null;
+}
+
+/**
  * Loads a single Inquiry Fact from the server database.
  */
 export async function loadInquiryAttentionFact(
@@ -204,10 +225,7 @@ export async function loadInquiryAttentionFact(
     if (lead) {
       departureDate = lead.departure_date || null;
       returnDate = lead.return_date || null;
-      if (lead.number_of_travelers) {
-        const num = parseInt(String(lead.number_of_travelers), 10);
-        numberOfTravelers = !isNaN(num) && num > 0 ? num : null;
-      }
+      numberOfTravelers = parseTravelerCount(lead.number_of_travelers);
       budgetString = lead.budget || null;
       tripType = lead.trip_type || null;
     }
@@ -263,12 +281,13 @@ export async function loadConversationAttentionFacts(
   const results: NormalizedConversationFact[] = [];
 
   for (const conv of conversations) {
-    // Query message metadata ONLY
+    // Query message metadata ONLY with deterministic unique ordering
     const { data: messages } = await supabase
       .from('messages')
-      .select('sender_type, created_at')
+      .select('id, sender_type, created_at')
       .eq('conversation_id', conv.id)
-      .order('created_at', { ascending: true });
+      .order('created_at', { ascending: true })
+      .order('id', { ascending: true });
 
     let latestContactAt: string | null = null;
     let latestAgentAfterContactAt: string | null = null;
@@ -386,11 +405,7 @@ export async function loadTenantAttentionFacts(
   // Map to NormalizedInquiryFact[]
   const inquiryFacts: NormalizedInquiryFact[] = rawInquiries.map((inq) => {
     const lead = inq.legacy_lead_id ? leadsMap.get(inq.legacy_lead_id) : undefined;
-    let numberOfTravelers: number | null = null;
-    if (lead?.number_of_travelers) {
-      const num = parseInt(String(lead.number_of_travelers), 10);
-      numberOfTravelers = !isNaN(num) && num > 0 ? num : null;
-    }
+    const numberOfTravelers = parseTravelerCount(lead?.number_of_travelers);
 
     // Pure qualification budget derivation (never falls back to expected_value)
     const { min: budgetMin, max: budgetMax } = parseBudgetValue(lead?.budget);
@@ -445,11 +460,11 @@ export async function loadTenantAttentionFacts(
     convOffset += batchSize;
   }
 
-  // 4. Batch fetch messages metadata for open conversations with pagination protection
+  // 4. Batch fetch messages metadata for open conversations with pagination protection & unique tuple ordering
   const conversationFacts: NormalizedConversationFact[] = [];
   const convIds = rawConversations.map((c) => c.id);
 
-  const messagesByConv = new Map<string, Array<{ sender_type: string; created_at: string }>>();
+  const messagesByConv = new Map<string, Array<{ id: string; sender_type: string; created_at: string }>>();
 
   for (let i = 0; i < convIds.length; i += chunkSize) {
     const chunk = convIds.slice(i, i + chunkSize);
@@ -459,10 +474,11 @@ export async function loadTenantAttentionFacts(
     while (true) {
       const { data: msgs, error: msgErr } = await supabase
         .from('messages')
-        .select('conversation_id, sender_type, created_at')
+        .select('id, conversation_id, sender_type, created_at')
         .in('conversation_id', chunk)
         .order('conversation_id', { ascending: true })
         .order('created_at', { ascending: true })
+        .order('id', { ascending: true })
         .range(msgOffset, msgOffset + msgLimit - 1);
 
       if (msgErr) throw msgErr;
