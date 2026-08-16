@@ -87,7 +87,7 @@ ${emailContent}
       const now = new Date().toISOString();
 
       if (content.trim().startsWith('ESCALATE')) {
-        // Escalate by leaving a note — this behavior is preserved
+        // Escalate by leaving an internal note for human review
         await adminDb.from('notes').insert({
           id: `note-${Date.now()}`,
           lead_id: leadId,
@@ -99,8 +99,9 @@ ${emailContent}
           updated_at: now,
         });
 
-        // Update lead status to require attention — preserved
-        await adminDb.from('leads').update({ status: 'action_required' }).eq('id', leadId);
+        // AI-0/AI-4 SAFETY: Do NOT update leads.status or inquiries.pipeline_stage.
+        // AI triage must not autonomously mutate CRM stage or legacy status.
+        // CRM state transitions remain exclusively human-governed.
 
         return { status: "escalated" };
       }

@@ -123,18 +123,9 @@ Write a professional, friendly response to the lead incorporating the human agen
 
         const now = new Date().toISOString();
         
-        // Save Quote to quotes_itineraries — preserved (already uses status: 'draft')
-        await db.from('quotes_itineraries').insert({
-          id: `quote-${generateId()}`,
-          lead_id: leadId,
-          tenant_id: tenantId,
-          title: 'Custom Quote (AI Assisted)',
-          type: 'quote',
-          content: { text: finalReply },
-          status: 'draft',
-          created_at: now,
-          updated_at: now
-        });
+        // AI-0/AI-4 SAFETY: Do NOT insert into quotes_itineraries.
+        // AI must not autonomously create Quote or Itinerary database rows.
+        // Save the AI-synthesized content exclusively as an internal draft note for human review.
 
         // AI-0 SAFETY: Do NOT insert into messages table.
         // The AI reformulated the admin's input — the exact generated text was not

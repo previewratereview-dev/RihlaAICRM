@@ -9,6 +9,8 @@
  * 5. Do separate untrusted inbound content from trusted prompt instructions
  */
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
+import fs from 'fs';
+import path from 'path';
 
 // ─── Mocks ───────────────────────────────────────────────────────
 
@@ -286,6 +288,12 @@ describe('AI-0 Safety: Inbound Email Agent', () => {
       return note.content?.includes('Requires Human Attention');
     });
     expect(escalationNote).toBeDefined();
+
+    // AI-0/AI-4 SAFETY: Assert ZERO leads.status or inquiries.pipeline_stage mutations
+    const leadUpdates = updatedRecords.filter((r) => r.table === 'leads');
+    expect(leadUpdates).toHaveLength(0);
+    const inqUpdates = updatedRecords.filter((r) => r.table === 'inquiries');
+    expect(inqUpdates).toHaveLength(0);
   });
 });
 
@@ -590,5 +598,94 @@ describe('AI-0 Safety: Escalation Worker', () => {
       return note.content?.includes('AI Draft');
     });
     expect(draftNote).toBeDefined();
+  });
+
+  it('does NOT insert into quotes_itineraries upon admin reply / AI draft synthesis', async () => {
+    mockExecuteAIRequest
+      .mockResolvedValueOnce({
+        content: 'ESCALATE: Complex pricing requested.',
+        blocked: false,
+        blockReason: null,
+      })
+      .mockResolvedValueOnce({
+        content: 'Here is the customized package quote for ₹250,000 including private transfer.',
+        blocked: false,
+        blockReason: null,
+      });
+
+    mockStep.waitForEvent.mockResolvedValueOnce({
+      name: 'crm/admin.replied',
+      data: {
+        conversationId: 'conv-1',
+        content: 'Offer the luxury package at 2.5L with speedboat transfers.',
+      },
+    });
+
+    const result = await runHandler('How much for the 5-star overwater villa?');
+    expect(result).toEqual({ status: 'escalation_draft_prepared' });
+
+    // AI-0/AI-4 SAFETY: Assert ZERO quotes_itineraries inserts
+    expect(insertedRecords['quotes_itineraries']).toBeUndefined();
+
+    // Assert ZERO messages inserts
+    expect(insertedRecords['messages']).toBeUndefined();
+
+    // Assert internal draft note was created
+    const notes = insertedRecords['notes'] || [];
+    const draftNote = notes.find((n: unknown) => {
+      const note = n as Record<string, string>;
+      return note.content?.includes('AI Draft — Escalation Reply');
+    });
+    expect(draftNote).toBeDefined();
+  });
+});
+
+describe('AI-0/AI-4 Static Source Code Safety Invariants', () => {
+  const inboundEmailCode = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/inngest/functions/inbound-email-agent.ts'),
+    'utf-8'
+  );
+  const escalationCode = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/inngest/functions/escalation.ts'),
+    'utf-8'
+  );
+  const autonomousLeadCode = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/inngest/functions/autonomous-lead-agent.ts'),
+    'utf-8'
+  );
+  const smartFollowupCode = fs.readFileSync(
+    path.join(process.cwd(), 'src/lib/inngest/functions/smart-followup.ts'),
+    'utf-8'
+  );
+
+  it('inbound-email-agent.ts contains zero autonomous leads.status or pipeline_stage updates', () => {
+    expect(inboundEmailCode).not.toMatch(/\.from\(['"]leads['"]\)\.update/);
+    expect(inboundEmailCode).not.toMatch(/\.from\(['"]inquiries['"]\)\.update/);
+    expect(inboundEmailCode).not.toContain("status: 'action_required'");
+    expect(inboundEmailCode).not.toContain('status: "action_required"');
+  });
+
+  it('escalation.ts contains zero autonomous quotes_itineraries inserts', () => {
+    expect(escalationCode).not.toMatch(/\.from\(['"]quotes_itineraries['"]\)\.insert/);
+    expect(escalationCode).not.toMatch(/\.from\(['"]inquiries['"]\)\.update/);
+    expect(escalationCode).not.toMatch(/\.from\(['"]leads['"]\)\.update/);
+  });
+
+  it('no background AI worker inserts into messages table', () => {
+    expect(inboundEmailCode).not.toMatch(/\.from\(['"]messages['"]\)\.insert/);
+    expect(escalationCode).not.toMatch(/\.from\(['"]messages['"]\)\.insert/);
+    expect(autonomousLeadCode).not.toMatch(/\.from\(['"]messages['"]\)\.insert/);
+    expect(smartFollowupCode).not.toMatch(/\.from\(['"]messages['"]\)\.insert/);
+  });
+
+  it('no background AI worker calls sendLeadFollowUpEmail', () => {
+    expect(inboundEmailCode).not.toMatch(/sendLeadFollowUpEmail\s*\(/);
+    expect(inboundEmailCode).not.toMatch(/import.*sendLeadFollowUpEmail/);
+    expect(escalationCode).not.toMatch(/sendLeadFollowUpEmail\s*\(/);
+    expect(escalationCode).not.toMatch(/import.*sendLeadFollowUpEmail/);
+    expect(autonomousLeadCode).not.toMatch(/sendLeadFollowUpEmail\s*\(/);
+    expect(autonomousLeadCode).not.toMatch(/import.*sendLeadFollowUpEmail/);
+    expect(smartFollowupCode).not.toMatch(/sendLeadFollowUpEmail\s*\(/);
+    expect(smartFollowupCode).not.toMatch(/import.*sendLeadFollowUpEmail/);
   });
 });
