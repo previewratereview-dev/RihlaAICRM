@@ -25,177 +25,124 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Lossless Concurrency
     });
     await client.connect();
 
-    // 1. Setup base mocks
-    await client.query(`
-      CREATE EXTENSION IF NOT EXISTS "pgcrypto";
-      CREATE SCHEMA IF NOT EXISTS auth;
-      CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid AS $$ 
-        SELECT NULLIF(current_setting('request.jwt.claim.sub', true), '')::uuid;
-      $$ LANGUAGE sql STABLE;
-
-      CREATE OR REPLACE FUNCTION public.update_updated_at_column()
-      RETURNS TRIGGER AS $$
-      BEGIN
-        NEW.updated_at = now();
-        RETURN NEW;
-      END;
-      $$ LANGUAGE plpgsql;
-
-      DO $$ BEGIN
-        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_user') THEN
-          CREATE ROLE app_user NOLOGIN;
-        END IF;
-      END $$;
-    `);
-
-    // 2. Base tables
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS public.tenants (
-        id text PRIMARY KEY,
-        name text NOT NULL,
-        slug text NOT NULL UNIQUE,
-        created_at timestamptz NOT NULL DEFAULT now(),
-        updated_at timestamptz NOT NULL DEFAULT now()
-      );
-
-      CREATE TABLE IF NOT EXISTS public.profiles (
-        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        tenant_id text REFERENCES public.tenants(id) ON DELETE CASCADE,
-        role text NOT NULL DEFAULT 'consultant',
-        full_name text NOT NULL,
-        email text NOT NULL,
-        created_at timestamptz NOT NULL DEFAULT now(),
-        updated_at timestamptz NOT NULL DEFAULT now()
-      );
-
-      CREATE TABLE IF NOT EXISTS public.traveler_profiles (
-        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        tenant_id text NOT NULL REFERENCES public.tenants(id) ON DELETE RESTRICT,
-        display_name text NOT NULL,
-        email text,
-        phone text,
-        created_at timestamptz NOT NULL DEFAULT now(),
-        updated_at timestamptz NOT NULL DEFAULT now(),
-        CONSTRAINT uq_traveler_profiles_composite UNIQUE (tenant_id, id)
-      );
-
-      CREATE TABLE IF NOT EXISTS public.inquiries (
-        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        tenant_id text NOT NULL REFERENCES public.tenants(id) ON DELETE RESTRICT,
-        traveler_id uuid NOT NULL,
-        destination text,
-        number_of_travelers int,
-        stage text NOT NULL DEFAULT 'new',
-        created_at timestamptz NOT NULL DEFAULT now(),
-        updated_at timestamptz NOT NULL DEFAULT now(),
-        CONSTRAINT uq_inquiries_composite UNIQUE (tenant_id, id),
-        CONSTRAINT fk_inquiries_traveler FOREIGN KEY (tenant_id, traveler_id)
-          REFERENCES public.traveler_profiles(tenant_id, id) ON DELETE RESTRICT
-      );
-
-      CREATE TABLE IF NOT EXISTS public.bookings (
-        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        tenant_id text NOT NULL REFERENCES public.tenants(id) ON DELETE RESTRICT,
-        traveler_id uuid NOT NULL,
-        inquiry_id uuid,
-        booking_reference text NOT NULL,
-        departure_date date,
-        return_date date,
-        passenger_count int,
-        total_amount numeric(12, 2),
-        paid_amount numeric(12, 2),
-        balance_due numeric(12, 2) GENERATED ALWAYS AS (
-          CASE 
-            WHEN total_amount IS NULL OR paid_amount IS NULL THEN NULL
-            ELSE total_amount - paid_amount
-          END
-        ) STORED,
-        currency text NOT NULL DEFAULT 'INR',
-        booking_status text NOT NULL DEFAULT 'confirmed',
-        payment_status text NOT NULL DEFAULT 'unknown',
-        fulfillment_status text NOT NULL DEFAULT 'unknown',
-        financial_data_complete boolean NOT NULL DEFAULT false,
-        created_at timestamptz NOT NULL DEFAULT now(),
-        updated_at timestamptz NOT NULL DEFAULT now(),
-        CONSTRAINT uq_tenant_inquiry_booking UNIQUE (tenant_id, inquiry_id)
-      );
-    `);
-
-    // 3. Apply migration 016
-    const m16 = fs.readFileSync(path.join(process.cwd(), 'supabase/migrations/016_itinerary_and_quote_domain_foundation.sql'), 'utf8');
-    await client.query(m16);
-
-    // 4. Apply migration 017
-    const m17 = fs.readFileSync(path.join(process.cwd(), 'supabase/migrations/017_itinerary_and_quote_lifecycle_and_immutability.sql'), 'utf8');
-    await client.query(m17);
-
-    // Clean up test records
-    await client.query(`
-      DO $$ BEGIN
-        ALTER TABLE public.quote_versions DISABLE TRIGGER ALL;
-        ALTER TABLE public.itinerary_versions DISABLE TRIGGER ALL;
-      EXCEPTION WHEN OTHERS THEN NULL;
-      END $$;
-
-      DELETE FROM public.quote_acceptances WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-      DELETE FROM public.quote_shares WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-      DELETE FROM public.itinerary_shares WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-      DELETE FROM public.quote_versions WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-      DELETE FROM public.quotes WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-      DELETE FROM public.itinerary_versions WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-      DELETE FROM public.itineraries WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-      DELETE FROM public.tenant_quote_sequences WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-      DELETE FROM public.inquiries WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-      DELETE FROM public.traveler_profiles WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-      DELETE FROM public.profiles WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
-      DELETE FROM public.tenants WHERE id IN ('${testTenantA}', '${testTenantB}');
-
-      DO $$ BEGIN
-        ALTER TABLE public.quote_versions ENABLE TRIGGER ALL;
-        ALTER TABLE public.itinerary_versions ENABLE TRIGGER ALL;
-      EXCEPTION WHEN OTHERS THEN NULL;
-      END $$;
-    `);
-
-    // Seed test fixtures
-    await client.query(`
-      INSERT INTO public.tenants (id, name, slug) 
-      VALUES ('${testTenantA}', 'AI-5 Agency A', 'agency-m17-a'),
-             ('${testTenantB}', 'AI-5 Agency B', 'agency-m17-b'),
-             ('global', 'Platform Global', 'platform-global')
-      ON CONFLICT (id) DO NOTHING;
-
-      INSERT INTO public.profiles (id, tenant_id, role, full_name, email)
-      VALUES
-        ('${adminUserId}', '${testTenantA}', 'admin', 'Agency Admin', 'admin@agency-a.com'),
-        ('${consultantUserId}', '${testTenantA}', 'consultant', 'Agency Consultant', 'consultant@agency-a.com'),
-        ('${viewerUserId}', '${testTenantA}', 'viewer', 'Agency Viewer', 'viewer@agency-a.com'),
-        ('${superAdminUserId}', 'global', 'super_admin', 'Platform Super Admin', 'sa@platform.com'),
-        ('${tenantBUserId}', '${testTenantB}', 'admin', 'Agency B Admin', 'admin@agency-b.com')
-      ON CONFLICT (id) DO NOTHING;
-
-      INSERT INTO public.traveler_profiles (id, tenant_id, display_name, email)
-      VALUES 
-        ('11111111-1111-1111-1111-111111111111', '${testTenantA}', 'Traveler A1', 'a1@test.com'),
-        ('33333333-3333-3333-3333-333333333333', '${testTenantB}', 'Traveler B1', 'b1@test.com')
-      ON CONFLICT (id) DO NOTHING;
-
-      INSERT INTO public.inquiries (id, tenant_id, traveler_id, destination, number_of_travelers)
-      VALUES
-        ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '${testTenantA}', '11111111-1111-1111-1111-111111111111', 'Dubai', 2),
-        ('cccccccc-cccc-cccc-cccc-cccccccccccc', '${testTenantB}', '33333333-3333-3333-3333-333333333333', 'Paris', 2)
-      ON CONFLICT (id) DO NOTHING;
-    `);
-  });
-
-  afterAll(async () => {
+    // Acquire advisory lock for DDL isolation across concurrent test files
+    await client.query('SELECT pg_advisory_lock(5432000)');
     try {
+      // 1. Setup base mocks
       await client.query(`
         DO $$ BEGIN
-          ALTER TABLE public.quote_versions DISABLE TRIGGER ALL;
-          ALTER TABLE public.itinerary_versions DISABLE TRIGGER ALL;
+          CREATE EXTENSION IF NOT EXISTS "pgcrypto";
         EXCEPTION WHEN OTHERS THEN NULL;
         END $$;
+
+        CREATE SCHEMA IF NOT EXISTS auth;
+        CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid AS $$ 
+          SELECT NULLIF(current_setting('request.jwt.claim.sub', true), '')::uuid;
+        $$ LANGUAGE sql STABLE;
+
+        CREATE OR REPLACE FUNCTION public.update_updated_at_column()
+        RETURNS TRIGGER AS $$
+        BEGIN
+          NEW.updated_at = now();
+          RETURN NEW;
+        END;
+        $$ LANGUAGE plpgsql;
+
+        DO $$ BEGIN
+          IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_user') THEN
+            CREATE ROLE app_user NOLOGIN;
+          END IF;
+        EXCEPTION WHEN OTHERS THEN NULL;
+        END $$;
+      `);
+
+      // 2. Base tables
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS public.tenants (
+          id text PRIMARY KEY,
+          name text NOT NULL,
+          slug text NOT NULL UNIQUE,
+          created_at timestamptz NOT NULL DEFAULT now(),
+          updated_at timestamptz NOT NULL DEFAULT now()
+        );
+
+        CREATE TABLE IF NOT EXISTS public.profiles (
+          id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+          tenant_id text REFERENCES public.tenants(id) ON DELETE CASCADE,
+          role text NOT NULL DEFAULT 'consultant',
+          full_name text NOT NULL,
+          email text NOT NULL,
+          created_at timestamptz NOT NULL DEFAULT now(),
+          updated_at timestamptz NOT NULL DEFAULT now()
+        );
+
+        CREATE TABLE IF NOT EXISTS public.traveler_profiles (
+          id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+          tenant_id text NOT NULL REFERENCES public.tenants(id) ON DELETE RESTRICT,
+          display_name text NOT NULL,
+          email text,
+          phone text,
+          created_at timestamptz NOT NULL DEFAULT now(),
+          updated_at timestamptz NOT NULL DEFAULT now(),
+          CONSTRAINT uq_traveler_profiles_composite UNIQUE (tenant_id, id)
+        );
+
+        CREATE TABLE IF NOT EXISTS public.inquiries (
+          id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+          tenant_id text NOT NULL REFERENCES public.tenants(id) ON DELETE RESTRICT,
+          traveler_id uuid NOT NULL,
+          destination text,
+          number_of_travelers int,
+          stage text NOT NULL DEFAULT 'new',
+          created_at timestamptz NOT NULL DEFAULT now(),
+          updated_at timestamptz NOT NULL DEFAULT now(),
+          CONSTRAINT uq_inquiries_composite UNIQUE (tenant_id, id),
+          CONSTRAINT fk_inquiries_traveler FOREIGN KEY (tenant_id, traveler_id)
+            REFERENCES public.traveler_profiles(tenant_id, id) ON DELETE RESTRICT
+        );
+
+        CREATE TABLE IF NOT EXISTS public.bookings (
+          id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+          tenant_id text NOT NULL REFERENCES public.tenants(id) ON DELETE RESTRICT,
+          traveler_id uuid NOT NULL,
+          inquiry_id uuid,
+          booking_reference text NOT NULL,
+          departure_date date,
+          return_date date,
+          passenger_count int,
+          total_amount numeric(12, 2),
+          paid_amount numeric(12, 2),
+          balance_due numeric(12, 2) GENERATED ALWAYS AS (
+            CASE 
+              WHEN total_amount IS NULL OR paid_amount IS NULL THEN NULL
+              ELSE total_amount - paid_amount
+            END
+          ) STORED,
+          currency text NOT NULL DEFAULT 'INR',
+          booking_status text NOT NULL DEFAULT 'confirmed',
+          payment_status text NOT NULL DEFAULT 'unknown',
+          fulfillment_status text NOT NULL DEFAULT 'unknown',
+          financial_data_complete boolean NOT NULL DEFAULT false,
+          created_at timestamptz NOT NULL DEFAULT now(),
+          updated_at timestamptz NOT NULL DEFAULT now(),
+          CONSTRAINT uq_tenant_inquiry_booking UNIQUE (tenant_id, inquiry_id)
+        );
+      `);
+
+      // 3. Apply migrations 016 and 017 idempotently
+      const check017 = await client.query(`
+        SELECT 1 FROM pg_proc WHERE proname = 'rpc_create_itinerary_family_and_version'
+      `);
+      if (check017.rows.length === 0) {
+        const m16 = fs.readFileSync(path.join(process.cwd(), 'supabase/migrations/016_itinerary_and_quote_domain_foundation.sql'), 'utf8');
+        await client.query(m16);
+        const m17 = fs.readFileSync(path.join(process.cwd(), 'supabase/migrations/017_itinerary_and_quote_lifecycle_and_immutability.sql'), 'utf8');
+        await client.query(m17);
+      }
+
+      // Clean up test records
+      await client.query(`
+        SET session_replication_role = 'replica';
 
         DELETE FROM public.quote_acceptances WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
         DELETE FROM public.quote_shares WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
@@ -210,11 +157,62 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Lossless Concurrency
         DELETE FROM public.profiles WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
         DELETE FROM public.tenants WHERE id IN ('${testTenantA}', '${testTenantB}');
 
-        DO $$ BEGIN
-          ALTER TABLE public.quote_versions ENABLE TRIGGER ALL;
-          ALTER TABLE public.itinerary_versions ENABLE TRIGGER ALL;
-        EXCEPTION WHEN OTHERS THEN NULL;
-        END $$;
+        SET session_replication_role = 'origin';
+      `);
+
+      // Seed test fixtures
+      await client.query(`
+        INSERT INTO public.tenants (id, name, slug) 
+        VALUES ('${testTenantA}', 'AI-5 Agency A', 'agency-m17-a'),
+               ('${testTenantB}', 'AI-5 Agency B', 'agency-m17-b'),
+               ('global', 'Platform Global', 'platform-global')
+        ON CONFLICT (id) DO NOTHING;
+
+        INSERT INTO public.profiles (id, tenant_id, role, full_name, email)
+        VALUES
+          ('${adminUserId}', '${testTenantA}', 'admin', 'Agency Admin', 'admin@agency-a.com'),
+          ('${consultantUserId}', '${testTenantA}', 'consultant', 'Agency Consultant', 'consultant@agency-a.com'),
+          ('${viewerUserId}', '${testTenantA}', 'viewer', 'Agency Viewer', 'viewer@agency-a.com'),
+          ('${superAdminUserId}', 'global', 'super_admin', 'Platform Super Admin', 'sa@platform.com'),
+          ('${tenantBUserId}', '${testTenantB}', 'admin', 'Agency B Admin', 'admin@agency-b.com')
+        ON CONFLICT (id) DO NOTHING;
+
+        INSERT INTO public.traveler_profiles (id, tenant_id, display_name, email)
+        VALUES 
+          ('17171717-0000-0000-0000-000000000001', '${testTenantA}', 'Traveler A1', 'a1@test.com'),
+          ('33333333-3333-3333-3333-333333333333', '${testTenantB}', 'Traveler B1', 'b1@test.com')
+        ON CONFLICT (id) DO NOTHING;
+
+        INSERT INTO public.inquiries (id, tenant_id, traveler_id, destination, number_of_travelers)
+        VALUES
+          ('17171717-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '${testTenantA}', '17171717-0000-0000-0000-000000000001', 'Dubai', 2),
+          ('cccccccc-cccc-cccc-cccc-cccccccccccc', '${testTenantB}', '33333333-3333-3333-3333-333333333333', 'Paris', 2)
+        ON CONFLICT (id) DO NOTHING;
+      `);
+    } finally {
+      await client.query('SELECT pg_advisory_unlock(5432000)');
+    }
+  });
+
+  afterAll(async () => {
+    try {
+      await client.query(`
+        SET session_replication_role = 'replica';
+
+        DELETE FROM public.quote_acceptances WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
+        DELETE FROM public.quote_shares WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
+        DELETE FROM public.itinerary_shares WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
+        DELETE FROM public.quote_versions WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
+        DELETE FROM public.quotes WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
+        DELETE FROM public.itinerary_versions WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
+        DELETE FROM public.itineraries WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
+        DELETE FROM public.tenant_quote_sequences WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
+        DELETE FROM public.inquiries WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
+        DELETE FROM public.traveler_profiles WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
+        DELETE FROM public.profiles WHERE tenant_id IN ('${testTenantA}', '${testTenantB}');
+        DELETE FROM public.tenants WHERE id IN ('${testTenantA}', '${testTenantB}');
+
+        SET session_replication_role = 'origin';
       `);
       await client.end();
     } catch {
@@ -244,7 +242,7 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Lossless Concurrency
 
     const res = await client.query(
       `SELECT public.rpc_create_itinerary_family_and_version($1, $2, $3, $4, $5) as result`,
-      [testTenantA, adminUserId, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Dubai 5-Day Luxury', JSON.stringify(payload)]
+      [testTenantA, adminUserId, '17171717-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Dubai 5-Day Luxury', JSON.stringify(payload)]
     );
 
     const result = res.rows[0].result;
@@ -432,7 +430,7 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Lossless Concurrency
 
     const res = await client.query(
       `SELECT public.rpc_create_quote_family_and_version($1, $2, $3, $4, $5) as result`,
-      [testTenantA, adminUserId, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', itinVerId, JSON.stringify(quotePayload)]
+      [testTenantA, adminUserId, '17171717-aaaa-aaaa-aaaa-aaaaaaaaaaaa', itinVerId, JSON.stringify(quotePayload)]
     );
 
     const result = res.rows[0].result;
@@ -498,7 +496,7 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Lossless Concurrency
     await expect(
       client.query(
         `SELECT public.rpc_create_quote_family_and_version($1, $2, $3, $4, $5) as result`,
-        [testTenantA, adminUserId, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', draftItinVerId, JSON.stringify(pricing)]
+        [testTenantA, adminUserId, '17171717-aaaa-aaaa-aaaa-aaaaaaaaaaaa', draftItinVerId, JSON.stringify(pricing)]
       )
     ).rejects.toThrow(/must be finalized before creating a quote/);
   });
@@ -614,8 +612,8 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Lossless Concurrency
         tenant_id, inquiry_id, quote_id, quote_version_id, itinerary_version_id, traveler_id,
         acceptance_type, accepted_grand_total, currency, customer_safe_snapshot, accepted_snapshot_hash
       ) VALUES (
-        '${testTenantA}', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '${quoteId}', '${v2Id}', '${itinVerId}',
-        '11111111-1111-1111-1111-111111111111', 'traveler_portal', 96000.00, 'INR',
+        '${testTenantA}', '17171717-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '${quoteId}', '${v2Id}', '${itinVerId}',
+        '17171717-0000-0000-0000-000000000001', 'traveler_portal', 96000.00, 'INR',
         '{"grandTotal":"96000.00"}'::jsonb, '1234567890123456789012345678901234567890123456789012345678901234'
       );
     `);
@@ -647,7 +645,7 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Lossless Concurrency
       await expect(
         client.query(
           `SELECT public.rpc_create_itinerary_family_and_version($1, $2, $3, $4, $5) as result`,
-          [testTenantA, tenantBUserId, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Cross-Tenant Hack', '{}']
+          [testTenantA, tenantBUserId, '17171717-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Cross-Tenant Hack', '{}']
         )
       ).rejects.toThrow(/CROSS_TENANT_VIOLATION/);
     });
@@ -656,7 +654,7 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Lossless Concurrency
       await expect(
         client.query(
           `SELECT public.rpc_create_itinerary_family_and_version($1, $2, $3, $4, $5) as result`,
-          [testTenantA, '00000000-0000-0000-0000-000000000000', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Fake User Hack', '{}']
+          [testTenantA, '00000000-0000-0000-0000-000000000000', '17171717-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Fake User Hack', '{}']
         )
       ).rejects.toThrow(/UNAUTHORIZED/);
     });
@@ -665,7 +663,7 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Lossless Concurrency
       await expect(
         client.query(
           `SELECT public.rpc_create_itinerary_family_and_version($1, $2, $3, $4, $5) as result`,
-          [testTenantA, superAdminUserId, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Super Admin Hack', '{}']
+          [testTenantA, superAdminUserId, '17171717-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Super Admin Hack', '{}']
         )
       ).rejects.toThrow(/FORBIDDEN/);
     });
@@ -674,7 +672,7 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Lossless Concurrency
       await expect(
         client.query(
           `SELECT public.rpc_create_itinerary_family_and_version($1, $2, $3, $4, $5) as result`,
-          [testTenantA, viewerUserId, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Viewer Mutation Hack', '{}']
+          [testTenantA, viewerUserId, '17171717-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Viewer Mutation Hack', '{}']
         )
       ).rejects.toThrow(/FORBIDDEN/);
     });
@@ -686,7 +684,7 @@ describe('Migration 017 Local PostgreSQL Domain Lifecycle & Lossless Concurrency
       await expect(
         client.query(
           `SELECT public.rpc_create_itinerary_family_and_version($1, $2, $3, $4, $5) as result`,
-          [testTenantA, consultantUserId, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Direct Client Call', '{}']
+          [testTenantA, consultantUserId, '17171717-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Direct Client Call', '{}']
         )
       ).rejects.toThrow(/permission denied/);
 

@@ -198,13 +198,64 @@ export function shapeCustomerQuoteDTO(data: {
 }
 
 // ============================================================================
-// 3. SHARE ISSUANCE & REVOCATION (SERVICE LAYER)
+// 3. SHARE EXPIRY & CANONICAL URL HELPERS
+// ============================================================================
+
+export const DEFAULT_SHARE_EXPIRY_DAYS = 30;
+
+/**
+ * Returns the default deterministic expiration date: current time + 30 days.
+ */
+export function getDefaultShareExpiry(): Date {
+  return new Date(Date.now() + DEFAULT_SHARE_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
+}
+
+/**
+ * Validates that a custom expiry timestamp is strictly in the future.
+ */
+export function validateShareExpiry(expiresAt: Date): Date {
+  if (!(expiresAt instanceof Date) || isNaN(expiresAt.getTime())) {
+    throw new Error('VALIDATION_ERROR: expiresAt must be a valid Date object');
+  }
+  if (expiresAt.getTime() <= Date.now()) {
+    throw new Error('VALIDATION_ERROR: expiresAt must be in the future');
+  }
+  return expiresAt;
+}
+
+/**
+ * Resolves the canonical server-configured application origin.
+ * Prevents Host header poisoning and arbitrary phishing URL generation.
+ */
+export function getCanonicalAppUrl(): string {
+  const envUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL;
+  if (envUrl && envUrl.trim() !== '') {
+    return envUrl.trim().replace(/\/+$/, '');
+  }
+  // Safe local development fallback
+  return 'http://localhost:3000';
+}
+
+/**
+ * Constructs the canonical public portal capability URL for a share token.
+ */
+export function buildShareUrl(
+  resourceType: 'itinerary' | 'quote',
+  rawToken: string
+): string {
+  const base = getCanonicalAppUrl();
+  return `${base}/p/${resourceType}/${rawToken}`;
+}
+
+// ============================================================================
+// 4. SHARE ISSUANCE & REVOCATION (SERVICE LAYER)
 // ============================================================================
 
 export interface ShareIssuanceResult {
   shareId: string;
   rawToken: string; // One-time: caller must deliver this, NOT re-fetchable
   tokenHash: string;
+  shareUrl: string; // Canonical public access URL
   expiresAt: string;
 }
 
@@ -216,21 +267,25 @@ export interface ShareServiceDeps {
 /**
  * Issues a share for a finalized ItineraryVersion.
  * Generates the token client-side, hashes it, and passes hash to the DB RPC.
- * Returns the raw token for one-time delivery.
+ * Returns the raw token and canonical share URL for one-time delivery.
  */
 export async function issueItineraryShare(
   deps: ShareServiceDeps,
   tenantId: string,
   actorUserId: string,
   itineraryVersionId: string,
-  expiresAt: Date
+  customExpiresAt?: Date | null
 ): Promise<ShareIssuanceResult> {
+  const effectiveExpiresAt = customExpiresAt
+    ? validateShareExpiry(customExpiresAt)
+    : getDefaultShareExpiry();
+
   const rawToken = generateShareToken();
   const tokenHash = hashShareToken(rawToken);
 
   const result = await deps.query(
     `SELECT public.rpc_create_itinerary_share($1, $2, $3, $4, $5) as result`,
-    [tenantId, actorUserId, itineraryVersionId, tokenHash, expiresAt.toISOString()]
+    [tenantId, actorUserId, itineraryVersionId, tokenHash, effectiveExpiresAt.toISOString()]
   );
 
   const row = result.rows[0]?.result as Record<string, unknown>;
@@ -239,7 +294,8 @@ export async function issueItineraryShare(
     shareId: String(row.share_id),
     rawToken,
     tokenHash,
-    expiresAt: expiresAt.toISOString(),
+    shareUrl: buildShareUrl('itinerary', rawToken),
+    expiresAt: effectiveExpiresAt.toISOString(),
   };
 }
 
@@ -251,14 +307,18 @@ export async function issueQuoteShare(
   tenantId: string,
   actorUserId: string,
   quoteVersionId: string,
-  expiresAt: Date
+  customExpiresAt?: Date | null
 ): Promise<ShareIssuanceResult> {
+  const effectiveExpiresAt = customExpiresAt
+    ? validateShareExpiry(customExpiresAt)
+    : getDefaultShareExpiry();
+
   const rawToken = generateShareToken();
   const tokenHash = hashShareToken(rawToken);
 
   const result = await deps.query(
     `SELECT public.rpc_create_quote_share($1, $2, $3, $4, $5) as result`,
-    [tenantId, actorUserId, quoteVersionId, tokenHash, expiresAt.toISOString()]
+    [tenantId, actorUserId, quoteVersionId, tokenHash, effectiveExpiresAt.toISOString()]
   );
 
   const row = result.rows[0]?.result as Record<string, unknown>;
@@ -267,7 +327,8 @@ export async function issueQuoteShare(
     shareId: String(row.share_id),
     rawToken,
     tokenHash,
-    expiresAt: expiresAt.toISOString(),
+    shareUrl: buildShareUrl('quote', rawToken),
+    expiresAt: effectiveExpiresAt.toISOString(),
   };
 }
 

@@ -499,19 +499,24 @@ END;
 $$;
 
 -- ============================================================================
--- 5. EXECUTE PRIVILEGES
+-- 5. STRICT EXECUTE PRIVILEGES
 -- ============================================================================
--- Share issuance/revocation: service_role only (called via server-side service layer)
-REVOKE ALL ON FUNCTION public.rpc_create_itinerary_share(text, uuid, uuid, text, timestamptz) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.rpc_create_quote_share(text, uuid, uuid, text, timestamptz) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.rpc_revoke_itinerary_share(text, uuid, uuid) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.rpc_revoke_quote_share(text, uuid, uuid) FROM PUBLIC;
+-- ALL B3 functions are server-mediated ONLY.
+-- REVOKED from PUBLIC, anon, authenticated.
+-- GRANTED only to service_role, postgres.
+REVOKE ALL ON FUNCTION public.rpc_create_itinerary_share(text, uuid, uuid, text, timestamptz) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.rpc_create_quote_share(text, uuid, uuid, text, timestamptz) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.rpc_revoke_itinerary_share(text, uuid, uuid) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.rpc_revoke_quote_share(text, uuid, uuid) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.resolve_itinerary_share_token(text) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.resolve_quote_share_token(text) FROM PUBLIC, anon, authenticated;
 
--- Public token resolution: callable by anon/authenticated for portal rendering
-REVOKE ALL ON FUNCTION public.resolve_itinerary_share_token(text) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.resolve_quote_share_token(text) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.resolve_itinerary_share_token(text) TO anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.resolve_quote_share_token(text) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.rpc_create_itinerary_share(text, uuid, uuid, text, timestamptz) TO service_role, postgres;
+GRANT EXECUTE ON FUNCTION public.rpc_create_quote_share(text, uuid, uuid, text, timestamptz) TO service_role, postgres;
+GRANT EXECUTE ON FUNCTION public.rpc_revoke_itinerary_share(text, uuid, uuid) TO service_role, postgres;
+GRANT EXECUTE ON FUNCTION public.rpc_revoke_quote_share(text, uuid, uuid) TO service_role, postgres;
+GRANT EXECUTE ON FUNCTION public.resolve_itinerary_share_token(text) TO service_role, postgres;
+GRANT EXECUTE ON FUNCTION public.resolve_quote_share_token(text) TO service_role, postgres;
 
 -- ============================================================================
 -- END MIGRATION 018

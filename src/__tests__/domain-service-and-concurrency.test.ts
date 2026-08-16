@@ -174,11 +174,7 @@ describe('AI-5B.2 Real Local PostgreSQL Concurrency & Allocator Proofs', () => {
 
     // Clean up test records
     await clientA.query(`
-      DO $$ BEGIN
-        ALTER TABLE public.quote_versions DISABLE TRIGGER ALL;
-        ALTER TABLE public.itinerary_versions DISABLE TRIGGER ALL;
-      EXCEPTION WHEN OTHERS THEN NULL;
-      END $$;
+      SET session_replication_role = 'replica';
 
       DELETE FROM public.quote_versions WHERE tenant_id = '${testTenant}';
       DELETE FROM public.quotes WHERE tenant_id = '${testTenant}';
@@ -190,11 +186,7 @@ describe('AI-5B.2 Real Local PostgreSQL Concurrency & Allocator Proofs', () => {
       DELETE FROM public.profiles WHERE tenant_id = '${testTenant}';
       DELETE FROM public.tenants WHERE id = '${testTenant}';
 
-      DO $$ BEGIN
-        ALTER TABLE public.quote_versions ENABLE TRIGGER ALL;
-        ALTER TABLE public.itinerary_versions ENABLE TRIGGER ALL;
-      EXCEPTION WHEN OTHERS THEN NULL;
-      END $$;
+      SET session_replication_role = 'origin';
     `);
 
     // Setup tenant fixtures
@@ -209,11 +201,7 @@ describe('AI-5B.2 Real Local PostgreSQL Concurrency & Allocator Proofs', () => {
   afterAll(async () => {
     try {
       await clientA.query(`
-        DO $$ BEGIN
-          ALTER TABLE public.quote_versions DISABLE TRIGGER ALL;
-          ALTER TABLE public.itinerary_versions DISABLE TRIGGER ALL;
-        EXCEPTION WHEN OTHERS THEN NULL;
-        END $$;
+        SET session_replication_role = 'replica';
 
         DELETE FROM public.quote_versions WHERE tenant_id = '${testTenant}';
         DELETE FROM public.quotes WHERE tenant_id = '${testTenant}';
@@ -225,11 +213,7 @@ describe('AI-5B.2 Real Local PostgreSQL Concurrency & Allocator Proofs', () => {
         DELETE FROM public.profiles WHERE tenant_id = '${testTenant}';
         DELETE FROM public.tenants WHERE id = '${testTenant}';
 
-        DO $$ BEGIN
-          ALTER TABLE public.quote_versions ENABLE TRIGGER ALL;
-          ALTER TABLE public.itinerary_versions ENABLE TRIGGER ALL;
-        EXCEPTION WHEN OTHERS THEN NULL;
-        END $$;
+        SET session_replication_role = 'origin';
       `);
       await clientA.end();
       await clientB.end();

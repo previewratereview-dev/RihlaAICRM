@@ -4,6 +4,13 @@ import {
   hashShareToken,
   shapeCustomerItineraryDTO,
   shapeCustomerQuoteDTO,
+  DEFAULT_SHARE_EXPIRY_DAYS,
+  getDefaultShareExpiry,
+  validateShareExpiry,
+  getCanonicalAppUrl,
+  buildShareUrl,
+  issueItineraryShare,
+  issueQuoteShare,
 } from '../lib/quotes-itineraries/sharing';
 import type { CustomerItineraryDTO, CustomerQuoteDTO } from '../lib/quotes-itineraries/types';
 
@@ -414,6 +421,107 @@ describe('Phase AI-5B.3: Sharing Service & Customer DTO Leakage Protection', () 
       expect(json).not.toContain('NESTED_LEAKED_NOTE');
       expect(json).not.toContain('supplierName');
       expect(json).not.toContain('internalNotes');
+    });
+  });
+
+  // ==========================================================================
+  // EXPIRY & CANONICAL URL BUILDER TESTS
+  // ==========================================================================
+  describe('Share Expiry & Canonical URL Helpers', () => {
+    it('DEFAULT_SHARE_EXPIRY_DAYS is 30 days', () => {
+      expect(DEFAULT_SHARE_EXPIRY_DAYS).toBe(30);
+    });
+
+    it('getDefaultShareExpiry produces a date ~30 days in future', () => {
+      const now = Date.now();
+      const expiry = getDefaultShareExpiry();
+      const diffDays = (expiry.getTime() - now) / (1000 * 60 * 60 * 24);
+      expect(diffDays).toBeGreaterThan(29.9);
+      expect(diffDays).toBeLessThanOrEqual(30.1);
+    });
+
+    it('validateShareExpiry accepts valid future Date', () => {
+      const future = new Date(Date.now() + 86400_000);
+      expect(validateShareExpiry(future)).toBe(future);
+    });
+
+    it('validateShareExpiry rejects past Date', () => {
+      const past = new Date(Date.now() - 86400_000);
+      expect(() => validateShareExpiry(past)).toThrow(/VALIDATION_ERROR.*future/);
+    });
+
+    it('validateShareExpiry rejects invalid Date', () => {
+      expect(() => validateShareExpiry(new Date('invalid-date'))).toThrow(/VALIDATION_ERROR.*valid Date/);
+    });
+
+    it('getCanonicalAppUrl returns non-empty origin without trailing slash', () => {
+      const url = getCanonicalAppUrl();
+      expect(url).toBeDefined();
+      expect(url).toMatch(/^https?:\/\//);
+      expect(url.endsWith('/')).toBe(false);
+    });
+
+    it('buildShareUrl generates canonical capability URL', () => {
+      const token = '1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef';
+      const itinUrl = buildShareUrl('itinerary', token);
+      expect(itinUrl).toContain(`/p/itinerary/${token}`);
+
+      const quoteUrl = buildShareUrl('quote', token);
+      expect(quoteUrl).toContain(`/p/quote/${token}`);
+    });
+  });
+
+  // ==========================================================================
+  // SERVICE LAYER ISSUANCE & MULTIPLE SHARE SEMANTICS
+  // ==========================================================================
+  describe('Service Layer Issuance & Multi-Share Semantics', () => {
+    it('issueItineraryShare defaults to 30-day expiry when custom expiry omitted', async () => {
+      const mockQuery = async (_sql: string, params: unknown[]) => {
+        const expiresAtParam = params[4] as string;
+        const diffDays = (new Date(expiresAtParam).getTime() - Date.now()) / (1000 * 60 * 60 * 24);
+        expect(diffDays).toBeGreaterThan(29.9);
+        return { rows: [{ result: { share_id: 'mock-share-1' } }] };
+      };
+
+      const res = await issueItineraryShare(
+        { query: mockQuery },
+        'tenant-1',
+        'user-1',
+        'ver-1'
+      );
+
+      expect(res.shareId).toBe('mock-share-1');
+      expect(res.rawToken).toMatch(/^[a-f0-9]{64}$/);
+      expect(res.tokenHash).toMatch(/^[a-f0-9]{64}$/);
+      expect(res.shareUrl).toContain(`/p/itinerary/${res.rawToken}`);
+    });
+
+    it('multiple share issuance produces distinct capabilities with independent tokens', async () => {
+      let callCount = 0;
+      const mockQuery = async () => {
+        callCount++;
+        return { rows: [{ result: { share_id: `mock-share-${callCount}` } }] };
+      };
+
+      const share1 = await issueQuoteShare(
+        { query: mockQuery },
+        'tenant-1',
+        'user-1',
+        'quote-ver-1'
+      );
+
+      const share2 = await issueQuoteShare(
+        { query: mockQuery },
+        'tenant-1',
+        'user-1',
+        'quote-ver-1'
+      );
+
+      expect(share1.shareId).toBe('mock-share-1');
+      expect(share2.shareId).toBe('mock-share-2');
+      expect(share1.rawToken).not.toBe(share2.rawToken);
+      expect(share1.tokenHash).not.toBe(share2.tokenHash);
+      expect(share1.shareUrl).not.toBe(share2.shareUrl);
     });
   });
 });
