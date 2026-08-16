@@ -60,18 +60,92 @@ function cleanJsonString(raw: string): string {
 }
 
 /**
- * Bounds customer explanation to strictly deterministic numbers and facts.
- * If model invents unsupported numbers or percentages, it falls back to factual bounded copy.
+ * Unsupported causal patterns that must never be presented to customers as authoritative facts
+ * when no deterministic commercial source establishes causality.
  */
-function sanitizeCustomerExplanation(
+const UNSUPPORTED_CAUSAL_PATTERNS = [
+  /\bbecause\b/i,
+  /\bdue to\b/i,
+  /\bcaused by\b/i,
+  /\bas a result of\b/i,
+  /\bowing to\b/i,
+  /\bon account of\b/i,
+  /\breflects?\s+(?:supplier|peak|seasonal|market|demand|higher|rate|cost|airline|hotel|policy)/i,
+  /\bseasonal\s+rates?\b/i,
+  /\bpeak[- ]season\b/i,
+  /\bavailability\b/i,
+  /\b(?:market|high|surging|increased)?\s*demand\b/i,
+  /\bmarket\s+conditions\b/i,
+  /\bsupplier\s+(?:increase|rates?|raise|raised|price|fee|policy|charges?)\b/i,
+  /\b(?:government|legal|aviation|official)\s*(?:regulations?|updates?|rules?|laws?|changes?)\b/i,
+  /\bfuel\s+surcharges?\b/i,
+  /\boccupancy\s+rates?\b/i,
+  /\bexchange\s+rates?\b/i,
+  /\binflation\b/i,
+];
+
+/**
+ * Generates pure, deterministic, non-causal customer-facing explanation.
+ */
+export function generateDeterministicCustomerExplanation(
+  diff: DeterministicQuoteDiff
+): string {
+  const parts: string[] = [];
+
+  parts.push(
+    `Quote ${diff.quoteNumber} has been updated from ${diff.currency} ${diff.v1GrandTotal} to ${diff.currency} ${diff.v2GrandTotal} (difference of ${diff.currency} ${diff.grandTotalDifference}).`
+  );
+
+  const itemParts: string[] = [];
+  for (const item of diff.itemDiffs) {
+    if (item.changeType === 'added') {
+      itemParts.push(`Added ${item.title} (${diff.currency} ${item.v2TotalPrice || '0.00'})`);
+    } else if (item.changeType === 'removed') {
+      itemParts.push(`Removed ${item.title} (-${diff.currency} ${item.v1TotalPrice || '0.00'})`);
+    } else if (item.changeType === 'modified') {
+      if (item.v1Quantity !== item.v2Quantity) {
+        itemParts.push(
+          `Updated ${item.title} quantity from ${item.v1Quantity} to ${item.v2Quantity} (${diff.currency} ${item.v1TotalPrice} → ${diff.currency} ${item.v2TotalPrice})`
+        );
+      } else if (item.priceDifference && Number(item.priceDifference) !== 0) {
+        itemParts.push(
+          `Updated ${item.title} price (${diff.currency} ${item.v1TotalPrice} → ${diff.currency} ${item.v2TotalPrice})`
+        );
+      }
+    }
+  }
+
+  if (itemParts.length > 0) {
+    parts.push(`Line item adjustments: ${itemParts.join('; ')}.`);
+  }
+
+  if (diff.hasValidityChange && diff.v2ValidUntil) {
+    parts.push(`Validity adjusted to ${diff.v2ValidUntil}.`);
+  }
+
+  if (diff.hasTermsChange) {
+    parts.push('Payment terms and conditions updated.');
+  }
+
+  return parts.join(' ');
+}
+
+/**
+ * Bounds customer explanation to strictly deterministic numbers and facts.
+ * Post-generation trust boundary:
+ * 1. Rejects and bounds any model-invented numbers or percentages.
+ * 2. Strips or rejects any unsupported causal claims (e.g. supplier seasonal rates, availability, demand, regulations).
+ * 3. Falls back to pure deterministic customer copy if text is unsafe.
+ */
+export function sanitizeCustomerExplanation(
   explanationText: string,
   deterministicDiff: DeterministicQuoteDiff
 ): string {
-  if (!explanationText || typeof explanationText !== 'string') {
-    return `Quote ${deterministicDiff.quoteNumber} has been revised from ${deterministicDiff.currency} ${deterministicDiff.v1GrandTotal} to ${deterministicDiff.currency} ${deterministicDiff.v2GrandTotal}.`;
+  if (!explanationText || typeof explanationText !== 'string' || explanationText.trim() === '') {
+    return generateDeterministicCustomerExplanation(deterministicDiff);
   }
 
-  // Collect all known valid numeric strings from the deterministic diff
+  // 1. Collect all valid numbers and date components from the deterministic diff
   const validNumbers = new Set<string>();
   const addVal = (val: string | number | null | undefined) => {
     if (val != null) {
@@ -114,31 +188,58 @@ function sanitizeCustomerExplanation(
     addVal(item.priceDifference);
   }
 
-  // Match all numbers and percentages
-  const foundNumbers = explanationText.match(/\b\d+(?:\.\d+)?%?\b/g) || [];
-  let hasUnsupportedNumber = false;
+  if (deterministicDiff.v1ValidUntil) {
+    for (const d of deterministicDiff.v1ValidUntil.split(/[-/]/)) addVal(d);
+  }
+  if (deterministicDiff.v2ValidUntil) {
+    for (const d of deterministicDiff.v2ValidUntil.split(/[-/]/)) addVal(d);
+  }
 
+  // 2. Validate all numbers in explanationText
+  const foundNumbers = explanationText.match(/\b\d+(?:\.\d+)?%?\b/g) || [];
   for (const found of foundNumbers) {
     const rawNum = found.replace('%', '');
     const n = parseFloat(rawNum);
     if (found.includes('%') || found.includes('.') || (n > 5 && !validNumbers.has(rawNum) && !validNumbers.has(n.toFixed(2)))) {
       if (!validNumbers.has(rawNum) && !validNumbers.has(n.toFixed(2))) {
-        hasUnsupportedNumber = true;
-        break;
+        // Unsupported numeric claim or hallucinated percentage -> fallback to deterministic
+        return generateDeterministicCustomerExplanation(deterministicDiff);
       }
     }
   }
 
-  if (hasUnsupportedNumber) {
-    const modifiedItems = deterministicDiff.itemDiffs
-      .filter((i) => i.changeType !== 'unchanged')
-      .map((i) => `${i.changeType} ${i.title}`)
-      .join(', ');
+  // 3. Check for and sanitize unsupported causal claims
+  let cleanedText = explanationText.trim();
 
-    return `Quote ${deterministicDiff.quoteNumber} has been updated from ${deterministicDiff.currency} ${deterministicDiff.v1GrandTotal} to ${deterministicDiff.currency} ${deterministicDiff.v2GrandTotal} (difference of ${deterministicDiff.currency} ${deterministicDiff.grandTotalDifference}).${modifiedItems ? ` Summary of adjustments: ${modifiedItems}.` : ''}`;
+  // If text contains causal splitters, try to trim the causal suffix
+  for (const causalSplitter of [
+    /\s+because\s+.*$/i,
+    /\s+due to\s+.*$/i,
+    /\s+as a result of\s+.*$/i,
+    /\s+owing to\s+.*$/i,
+    /\s+on account of\s+.*$/i,
+  ]) {
+    if (causalSplitter.test(cleanedText)) {
+      cleanedText = cleanedText.replace(causalSplitter, '').trim();
+      if (cleanedText && !cleanedText.endsWith('.')) {
+        cleanedText += '.';
+      }
+    }
   }
 
-  return explanationText;
+  // Check if any unsupported causal pattern still exists
+  for (const pattern of UNSUPPORTED_CAUSAL_PATTERNS) {
+    if (pattern.test(cleanedText)) {
+      // Unsupported causal concept detected -> fallback to deterministic
+      return generateDeterministicCustomerExplanation(deterministicDiff);
+    }
+  }
+
+  if (cleanedText.length < 15) {
+    return generateDeterministicCustomerExplanation(deterministicDiff);
+  }
+
+  return cleanedText;
 }
 
 // ============================================================================

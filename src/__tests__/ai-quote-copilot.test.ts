@@ -450,49 +450,52 @@ describe('Phase AI-5C.3: Grounded Quote Copilot & Deterministic Commercial Expla
   });
 
   // ==========================================================================
-  // 4. FACTUAL & NUMERIC CLAIM BOUNDING
+  // 4. FACTUAL, NUMERIC & CAUSAL CLAIM BOUNDING
   // ==========================================================================
-  describe('4. Factual & Numeric Claim Protection', () => {
-    it('bounds and sanitizes customer explanation if model invents unsupported numbers (e.g., +9000 or 90%)', async () => {
+  describe('4. Factual, Numeric & Causal Claim Protection', () => {
+    const v1Row = {
+      id: 'qv-1',
+      quote_id: 'q-1',
+      quote_number: 'QT-100',
+      version_number: 1,
+      currency: 'USD',
+      itinerary_version_id: 'itin-v1',
+      valid_until: '2026-11-01',
+      subtotal: '10000.00',
+      discount_amount: '0.00',
+      tax_amount: '0.00',
+      grand_total: '10000.00',
+      line_items: [{ id: 'i-1', title: 'Grand Hotel', category: 'accommodation', quantity: 1, unitPrice: '10000.00', totalPrice: '10000.00' }],
+    };
+
+    const v2Row = {
+      id: 'qv-2',
+      quote_id: 'q-1',
+      quote_number: 'QT-100',
+      version_number: 2,
+      currency: 'USD',
+      itinerary_version_id: 'itin-v1',
+      valid_until: '2026-11-15',
+      subtotal: '12000.00',
+      discount_amount: '0.00',
+      tax_amount: '0.00',
+      grand_total: '12000.00',
+      line_items: [{ id: 'i-1', title: 'Grand Hotel', category: 'accommodation', quantity: 1, unitPrice: '12000.00', totalPrice: '12000.00' }],
+    };
+
+    it('unsupported supplier-reason test: rejects causal claims claiming the supplier raised seasonal rates', async () => {
       mockStaffContext = { userId: 'user-consultant-1', tenantId: 'tenant-agency-a', role: 'consultant' };
-
-      const v1Row = {
-        id: 'qv-1',
-        quote_id: 'q-1',
-        quote_number: 'QT-100',
-        version_number: 1,
-        currency: 'USD',
-        subtotal: '10000.00',
-        discount_amount: '0.00',
-        tax_amount: '0.00',
-        grand_total: '10000.00',
-        line_items: [{ id: 'i-1', title: 'Hotel', category: 'accommodation', quantity: 1, unitPrice: '10000.00', totalPrice: '10000.00' }],
-      };
-
-      const v2Row = {
-        id: 'qv-2',
-        quote_id: 'q-1',
-        quote_number: 'QT-100',
-        version_number: 2,
-        currency: 'USD',
-        subtotal: '12000.00',
-        discount_amount: '0.00',
-        tax_amount: '0.00',
-        grand_total: '12000.00',
-        line_items: [{ id: 'i-1', title: 'Hotel', category: 'accommodation', quantity: 1, unitPrice: '12000.00', totalPrice: '12000.00' }],
-      };
 
       mockPgQuery.mockImplementation(async (sql: string) => {
         if (sql.includes('FROM public.quote_versions')) return { rows: [v1Row, v2Row] };
         return { rows: [] };
       });
 
-      // Adversarial model returns hallucinatory numbers (+9000 instead of 2000, and 90% increase)
       mockAIResponseText = JSON.stringify({
-        executiveSummary: 'Prices increased by 9000',
-        keyPriceDrivers: ['Rates went up 90%'],
+        executiveSummary: 'Hotel rate increased',
+        keyPriceDrivers: ['Seasonal rates'],
         scopeChanges: [],
-        clientFacingExplanation: 'Your quote total increased by 9000 (a 90% increase) due to rate changes.',
+        clientFacingExplanation: 'The hotel price increased because the supplier raised seasonal rates.',
       });
 
       const res = await generateQuoteDiffExplanationAction({
@@ -502,10 +505,175 @@ describe('Phase AI-5C.3: Grounded Quote Copilot & Deterministic Commercial Expla
       });
 
       expect(res.success).toBe(true);
-      // Unsupported numbers 9000 and 90% MUST NOT be present in final clientFacingExplanation
+      expect(res.explanation!.clientFacingExplanation).not.toContain('because the supplier raised seasonal rates');
+      expect(res.explanation!.clientFacingExplanation).not.toContain('seasonal rates');
+      expect(res.explanation!.clientFacingExplanation).not.toContain('supplier raised');
+    });
+
+    it('unsupported availability-reason test: rejects causal claims regarding reduced availability', async () => {
+      mockStaffContext = { userId: 'user-consultant-1', tenantId: 'tenant-agency-a', role: 'consultant' };
+
+      mockPgQuery.mockImplementation(async (sql: string) => {
+        if (sql.includes('FROM public.quote_versions')) return { rows: [v1Row, v2Row] };
+        return { rows: [] };
+      });
+
+      mockAIResponseText = JSON.stringify({
+        executiveSummary: 'Pricing adjusted',
+        keyPriceDrivers: ['Availability change'],
+        scopeChanges: [],
+        clientFacingExplanation: 'Flight pricing changed due to reduced availability.',
+      });
+
+      const res = await generateQuoteDiffExplanationAction({
+        quoteId: 'q-1',
+        v1VersionId: 'qv-1',
+        v2VersionId: 'qv-2',
+      });
+
+      expect(res.success).toBe(true);
+      expect(res.explanation!.clientFacingExplanation).not.toContain('due to reduced availability');
+      expect(res.explanation!.clientFacingExplanation).not.toContain('availability');
+    });
+
+    it('unsupported demand-reason test: rejects causal claims claiming additional cost reflects peak-season demand', async () => {
+      mockStaffContext = { userId: 'user-consultant-1', tenantId: 'tenant-agency-a', role: 'consultant' };
+
+      mockPgQuery.mockImplementation(async (sql: string) => {
+        if (sql.includes('FROM public.quote_versions')) return { rows: [v1Row, v2Row] };
+        return { rows: [] };
+      });
+
+      mockAIResponseText = JSON.stringify({
+        executiveSummary: 'High season rate',
+        keyPriceDrivers: ['Demand'],
+        scopeChanges: [],
+        clientFacingExplanation: 'The additional cost reflects peak-season demand.',
+      });
+
+      const res = await generateQuoteDiffExplanationAction({
+        quoteId: 'q-1',
+        v1VersionId: 'qv-1',
+        v2VersionId: 'qv-2',
+      });
+
+      expect(res.success).toBe(true);
+      expect(res.explanation!.clientFacingExplanation).not.toContain('peak-season demand');
+      expect(res.explanation!.clientFacingExplanation).not.toContain('demand');
+    });
+
+    it('unsupported legal/tax-reason test: rejects causal claims regarding updated government regulations', async () => {
+      mockStaffContext = { userId: 'user-consultant-1', tenantId: 'tenant-agency-a', role: 'consultant' };
+
+      mockPgQuery.mockImplementation(async (sql: string) => {
+        if (sql.includes('FROM public.quote_versions')) return { rows: [v1Row, v2Row] };
+        return { rows: [] };
+      });
+
+      mockAIResponseText = JSON.stringify({
+        executiveSummary: 'Tax update',
+        keyPriceDrivers: ['Regulations'],
+        scopeChanges: [],
+        clientFacingExplanation: 'Taxes increased because of updated government regulations.',
+      });
+
+      const res = await generateQuoteDiffExplanationAction({
+        quoteId: 'q-1',
+        v1VersionId: 'qv-1',
+        v2VersionId: 'qv-2',
+      });
+
+      expect(res.success).toBe(true);
+      expect(res.explanation!.clientFacingExplanation).not.toContain('government regulations');
+      expect(res.explanation!.clientFacingExplanation).not.toContain('regulations');
+    });
+
+    it('mixed safe + unsafe output test: retains deterministic fact (+2000.00) and strips unsupported causal reason', async () => {
+      mockStaffContext = { userId: 'user-consultant-1', tenantId: 'tenant-agency-a', role: 'consultant' };
+
+      mockPgQuery.mockImplementation(async (sql: string) => {
+        if (sql.includes('FROM public.quote_versions')) return { rows: [v1Row, v2Row] };
+        return { rows: [] };
+      });
+
+      // Model returns valid deterministic price delta (+2000.00) combined with unsupported causal reason
+      mockAIResponseText = JSON.stringify({
+        executiveSummary: 'Hotel increase',
+        keyPriceDrivers: ['Rate'],
+        scopeChanges: [],
+        clientFacingExplanation: 'The Grand Hotel price increased by 2000.00 because seasonal supplier rates rose.',
+      });
+
+      const res = await generateQuoteDiffExplanationAction({
+        quoteId: 'q-1',
+        v1VersionId: 'qv-1',
+        v2VersionId: 'qv-2',
+      });
+
+      expect(res.success).toBe(true);
+      // Retains the factual part ("The Grand Hotel price increased by 2000.00.")
+      expect(res.explanation!.clientFacingExplanation).toContain('2000.00');
+      // Strips the causal clause completely
+      expect(res.explanation!.clientFacingExplanation).not.toContain('because seasonal supplier rates rose');
+      expect(res.explanation!.clientFacingExplanation).not.toContain('seasonal supplier rates');
+    });
+
+    it('supported non-causal explanation test: allows factual non-causal descriptions matching deterministic diff', async () => {
+      mockStaffContext = { userId: 'user-consultant-1', tenantId: 'tenant-agency-a', role: 'consultant' };
+
+      mockPgQuery.mockImplementation(async (sql: string) => {
+        if (sql.includes('FROM public.quote_versions')) return { rows: [v1Row, v2Row] };
+        return { rows: [] };
+      });
+
+      // Model returns valid factual non-causal description
+      const factualExplanation = 'The Grand Hotel line item increased from 10000.00 to 12000.00, and validity was extended to 2026-11-15.';
+      mockAIResponseText = JSON.stringify({
+        executiveSummary: 'Price and validity revision',
+        keyPriceDrivers: ['Hotel rate', 'Validity extension'],
+        scopeChanges: [],
+        clientFacingExplanation: factualExplanation,
+      });
+
+      const res = await generateQuoteDiffExplanationAction({
+        quoteId: 'q-1',
+        v1VersionId: 'qv-1',
+        v2VersionId: 'qv-2',
+      });
+
+      expect(res.success).toBe(true);
+      // Valid non-causal explanation matching deterministic diff facts is preserved
+      expect(res.explanation!.clientFacingExplanation).toBe(factualExplanation);
+    });
+
+    it('unsupported numeric + causal combined test: safely falls back to deterministic copy when both are present', async () => {
+      mockStaffContext = { userId: 'user-consultant-1', tenantId: 'tenant-agency-a', role: 'consultant' };
+
+      mockPgQuery.mockImplementation(async (sql: string) => {
+        if (sql.includes('FROM public.quote_versions')) return { rows: [v1Row, v2Row] };
+        return { rows: [] };
+      });
+
+      // Adversarial model returns BOTH unsupported number (+9000 instead of 2000) AND unsupported causal claim
+      mockAIResponseText = JSON.stringify({
+        executiveSummary: 'Prices increased by 9000',
+        keyPriceDrivers: ['Rates went up 90%'],
+        scopeChanges: [],
+        clientFacingExplanation: 'Your quote total increased by 9000 (a 90% increase) because seasonal rates rose.',
+      });
+
+      const res = await generateQuoteDiffExplanationAction({
+        quoteId: 'q-1',
+        v1VersionId: 'qv-1',
+        v2VersionId: 'qv-2',
+      });
+
+      expect(res.success).toBe(true);
+      // Unsupported numbers and causal reasons are completely sanitized
       expect(res.explanation!.clientFacingExplanation).not.toContain('9000');
       expect(res.explanation!.clientFacingExplanation).not.toContain('90%');
-      // Must contain deterministic truth: 10000, 12000, 2000
+      expect(res.explanation!.clientFacingExplanation).not.toContain('because seasonal rates rose');
+      // Must contain deterministic truth
       expect(res.explanation!.clientFacingExplanation).toContain('10000.00');
       expect(res.explanation!.clientFacingExplanation).toContain('12000.00');
       expect(res.explanation!.clientFacingExplanation).toContain('2000.00');
