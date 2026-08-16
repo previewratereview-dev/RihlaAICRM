@@ -33,6 +33,7 @@ import {
   type AIQuoteDifferenceExplanation,
   type AIProposalResult,
   type AIProposalMetadata,
+  type DeterministicQuoteDiff,
 } from './contracts';
 import { callAIWithFallback } from '@/lib/ai/ai-client';
 import { type TenantSettings } from '@/lib/tenant/config';
@@ -56,6 +57,88 @@ function cleanJsonString(raw: string): string {
     cleaned = cleaned.slice(0, -3);
   }
   return cleaned.trim();
+}
+
+/**
+ * Bounds customer explanation to strictly deterministic numbers and facts.
+ * If model invents unsupported numbers or percentages, it falls back to factual bounded copy.
+ */
+function sanitizeCustomerExplanation(
+  explanationText: string,
+  deterministicDiff: DeterministicQuoteDiff
+): string {
+  if (!explanationText || typeof explanationText !== 'string') {
+    return `Quote ${deterministicDiff.quoteNumber} has been revised from ${deterministicDiff.currency} ${deterministicDiff.v1GrandTotal} to ${deterministicDiff.currency} ${deterministicDiff.v2GrandTotal}.`;
+  }
+
+  // Collect all known valid numeric strings from the deterministic diff
+  const validNumbers = new Set<string>();
+  const addVal = (val: string | number | null | undefined) => {
+    if (val != null) {
+      const s = String(val).trim();
+      if (s) {
+        validNumbers.add(s);
+        const num = parseFloat(s);
+        if (!isNaN(num)) {
+          validNumbers.add(String(num));
+          validNumbers.add(num.toFixed(2));
+          validNumbers.add(Math.abs(num).toFixed(2));
+          validNumbers.add(String(Math.abs(num)));
+        }
+      }
+    }
+  };
+
+  addVal(deterministicDiff.v1GrandTotal);
+  addVal(deterministicDiff.v2GrandTotal);
+  addVal(deterministicDiff.grandTotalDifference);
+  addVal(deterministicDiff.v1Subtotal);
+  addVal(deterministicDiff.v2Subtotal);
+  addVal(deterministicDiff.subtotalDifference);
+  addVal(deterministicDiff.v1Discount);
+  addVal(deterministicDiff.v2Discount);
+  addVal(deterministicDiff.discountDifference);
+  addVal(deterministicDiff.v1Tax);
+  addVal(deterministicDiff.v2Tax);
+  addVal(deterministicDiff.taxDifference);
+  addVal(deterministicDiff.v1VersionNumber);
+  addVal(deterministicDiff.v2VersionNumber);
+
+  for (const item of deterministicDiff.itemDiffs) {
+    addVal(item.v1Quantity);
+    addVal(item.v2Quantity);
+    addVal(item.v1UnitPrice);
+    addVal(item.v2UnitPrice);
+    addVal(item.v1TotalPrice);
+    addVal(item.v2TotalPrice);
+    addVal(item.priceDifference);
+  }
+
+  // Match all numbers and percentages
+  const foundNumbers = explanationText.match(/\b\d+(?:\.\d+)?%?\b/g) || [];
+  let hasUnsupportedNumber = false;
+
+  for (const found of foundNumbers) {
+    const rawNum = found.replace('%', '');
+    const n = parseFloat(rawNum);
+    if (found.includes('%') || found.includes('.') || (n > 5 && !validNumbers.has(rawNum) && !validNumbers.has(n.toFixed(2)))) {
+      if (!validNumbers.has(rawNum) && !validNumbers.has(n.toFixed(2))) {
+        hasUnsupportedNumber = true;
+        break;
+      }
+    }
+  }
+
+  if (hasUnsupportedNumber) {
+    const modifiedItems = deterministicDiff.itemDiffs
+      .filter((i) => i.changeType !== 'unchanged')
+      .map((i) => `${i.changeType} ${i.title}`)
+      .join(', ');
+
+    return `Quote ${deterministicDiff.quoteNumber} has been updated from ${deterministicDiff.currency} ${deterministicDiff.v1GrandTotal} to ${deterministicDiff.currency} ${deterministicDiff.v2GrandTotal} (difference of ${deterministicDiff.currency} ${deterministicDiff.grandTotalDifference}).${modifiedItems ? ` Summary of adjustments: ${modifiedItems}.` : ''}`;
+  }
+
+  return explanationText;
 }
 
 // ============================================================================
@@ -621,6 +704,7 @@ REQUIRED JSON STRUCTURE:
     };
 
     try {
+      // Pass 1: Customer-safe model call (0 internal pricing info in prompt)
       const aiRes = await callAIWithFallback({
         model: options?.model || 'gpt-4o-mini',
         prompt: customerPrompt,
@@ -632,12 +716,46 @@ REQUIRED JSON STRUCTURE:
 
       const parsedCustomer = JSON.parse(cleanJsonString(aiRes.text));
 
+      // Factual & Numeric Bounding: Protect customer explanation from model hallucinated arithmetic or percentages
+      const boundedClientExplanation = sanitizeCustomerExplanation(
+        String(parsedCustomer.clientFacingExplanation || ''),
+        deterministicDiff
+      );
+
       // Pass 2: Internal Staff Notes (ONLY if caller is authorized for internal pricing)
+      // For Consultant, Specialist, Viewer: internal provider call count is STRICTLY ZERO.
       let internalStaffNotes: string | null = null;
       if (can(ctx.role, 'quotes:internal_pricing:read')) {
-        const costDelta = deterministicDiff.internalCostDifference ?? '0.00';
-        const marginDelta = deterministicDiff.grossMarginDifference ?? '0.00';
-        internalStaffNotes = `Internal Commercial Summary: Supplier cost delta is ${costDelta} ${deterministicDiff.currency}. Gross margin delta is ${marginDelta} ${deterministicDiff.currency}. Subtotal change: ${deterministicDiff.subtotalDifference} ${deterministicDiff.currency}.`;
+        const internalPrompt = `You are an internal commercial travel analyst.
+Analyze the following internal financial changes between Quote ${v1.quoteNumber} v${v1.versionNumber} and v${v2.versionNumber}.
+
+INTERNAL FINANCIAL DIFF:
+Currency: ${deterministicDiff.currency}
+Subtotal Delta: ${deterministicDiff.subtotalDifference}
+Supplier Cost Delta: ${deterministicDiff.internalCostDifference ?? '0.00'}
+Gross Margin Delta: ${deterministicDiff.grossMarginDifference ?? '0.00'}
+V1 Total Cost: ${deterministicDiff.v1InternalCostTotal ?? '0.00'} | V2 Total Cost: ${deterministicDiff.v2InternalCostTotal ?? '0.00'}
+V1 Gross Margin: ${deterministicDiff.v1GrossMarginAmount ?? '0.00'} | V2 Gross Margin: ${deterministicDiff.v2GrossMarginAmount ?? '0.00'}
+
+CRITICAL RULES:
+1. Provide concise, strategic internal staff notes explaining margin and cost variances for agency management.
+2. Clearly distinguish between volume changes, supplier cost adjustments, and margin changes.`;
+
+        try {
+          const internalAiRes = await callAIWithFallback({
+            model: options?.model || 'gpt-4o-mini',
+            prompt: internalPrompt,
+            feature: 'quote_internal_explanation',
+            tenantAISettings: aiSettings,
+            currentSpend: { daily: 0, monthly: 0 },
+            maxTokens: 1000,
+          });
+          internalStaffNotes = internalAiRes.text.trim();
+        } catch {
+          const costDelta = deterministicDiff.internalCostDifference ?? '0.00';
+          const marginDelta = deterministicDiff.grossMarginDifference ?? '0.00';
+          internalStaffNotes = `Internal Commercial Summary: Supplier cost delta is ${costDelta} ${deterministicDiff.currency}. Gross margin delta is ${marginDelta} ${deterministicDiff.currency}. Subtotal change: ${deterministicDiff.subtotalDifference} ${deterministicDiff.currency}.`;
+        }
       }
 
       const explanationPayload: AIQuoteDifferenceExplanation = {
@@ -648,7 +766,7 @@ REQUIRED JSON STRUCTURE:
         keyPriceDrivers: Array.isArray(parsedCustomer.keyPriceDrivers) ? parsedCustomer.keyPriceDrivers : ['Updated line items'],
         scopeChanges: Array.isArray(parsedCustomer.scopeChanges) ? parsedCustomer.scopeChanges : [],
         itineraryAlignmentNotes: parsedCustomer.itineraryAlignmentNotes ? String(parsedCustomer.itineraryAlignmentNotes) : null,
-        clientFacingExplanation: String(parsedCustomer.clientFacingExplanation || ''),
+        clientFacingExplanation: boundedClientExplanation,
         internalStaffNotes,
         deterministicDiff,
         grounding: {

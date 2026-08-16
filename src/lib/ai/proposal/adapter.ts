@@ -98,29 +98,26 @@ export interface AIQuoteStagedLineItem extends PricingLineItemInput {
  * Adapts AIQuoteLineItemSuggestion[] into canonical PricingLineItemInput[].
  * 
  * Strict Pricing Authority Rule:
- * - Only server-verified 'authoritative_catalog' prices with an explicit
- *   authoritativeUnitPrice populate the draft unitPrice directly.
- * - 'estimate', 'historical', or 'missing' items are populated with '0.00'
- *   in the draft, requiring explicit human staff confirmation/promotion.
+ * - Current Rihla CRM has no structured pricing catalog database (knowledge_documents
+ *   is unstructured RAG text, not an authoritative price source).
+ * - Therefore, State A (authoritative_catalog) is strictly UNAVAILABLE in current product.
+ * - ALL AI suggestions must populate the draft with unitPrice='0.00', requiring explicit
+ *   human staff entry or confirmation.
+ * - Direct caller/model claims of authoritative_catalog or authoritativeUnitPrice are
+ *   strictly ignored by this adapter.
  */
 export function adaptAIQuoteSuggestionsToPricingInput(
   suggestions: AIQuoteLineItemSuggestion[],
   isAuthorizedForInternalCost: boolean = false
 ): PricingLineItemInput[] {
   return suggestions.map((item, idx) => {
-    // Only authoritative catalog prices populate unitPrice directly
-    const unitPrice =
-      item.pricingSource === 'authoritative_catalog' && item.authoritativeUnitPrice
-        ? item.authoritativeUnitPrice
-        : '0.00';
-
     return {
       id: item.id || `quote-item-${idx + 1}`,
       title: item.title,
       description: item.description || undefined,
       category: item.category,
       quantity: item.quantity,
-      unitPrice,
+      unitPrice: '0.00', // AI suggestions NEVER establish draft price authority in current product
       // Supplier cost is never populated from AI unless explicitly authorized
       supplierCost: isAuthorizedForInternalCost ? null : undefined,
       supplierName: isAuthorizedForInternalCost && item.supplierName ? item.supplierName : undefined,
@@ -136,10 +133,11 @@ export function adaptAIQuoteSuggestionsToStagedInputs(
   isAuthorizedForInternalCost: boolean = false
 ): AIQuoteStagedLineItem[] {
   return suggestions.map((item, idx) => {
-    const unitPrice =
-      item.pricingSource === 'authoritative_catalog' && item.authoritativeUnitPrice
-        ? item.authoritativeUnitPrice
-        : '0.00';
+    // Current product has no structured catalog; sanitize any caller-forged catalog states
+    const pricingSource =
+      item.pricingSource === 'authoritative_catalog'
+        ? 'estimate'
+        : item.pricingSource || 'estimate';
 
     return {
       id: item.id || `quote-item-${idx + 1}`,
@@ -147,9 +145,9 @@ export function adaptAIQuoteSuggestionsToStagedInputs(
       description: item.description || undefined,
       category: item.category,
       quantity: item.quantity,
-      unitPrice,
+      unitPrice: '0.00', // Draft unitPrice is always '0.00' upon initial staging
       suggestedUnitPrice: item.suggestedUnitPrice || null,
-      pricingSource: item.pricingSource,
+      pricingSource,
       catalogReferenceId: item.catalogReferenceId || null,
       supplierCost: isAuthorizedForInternalCost ? null : undefined,
       supplierName: isAuthorizedForInternalCost && item.supplierName ? item.supplierName : undefined,

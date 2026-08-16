@@ -352,12 +352,20 @@ export function QuoteExplanationDrawer({
             {activeTab === 'internal' && hasInternalPricing && (
               <div className="space-y-4">
                 <div className="p-3 bg-amber-50/50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 rounded-lg space-y-2">
-                  <div className="flex items-center gap-2 text-xs font-semibold text-amber-900 dark:text-amber-300">
-                    <Lock className="h-4 w-4" />
-                    <span>Internal Financial Strategy & Margin Analysis</span>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-xs font-semibold text-amber-900 dark:text-amber-300">
+                      <Lock className="h-4 w-4" />
+                      <span>Internal Financial Strategy & Margin Analysis</span>
+                    </div>
+                    <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-amber-200/60 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200 font-semibold">
+                      AI Analysis (Non-Authoritative)
+                    </span>
                   </div>
                   <p className="text-xs text-amber-800 dark:text-amber-300/80 leading-relaxed">
                     {explanation.internalStaffNotes || 'No internal notes available.'}
+                  </p>
+                  <p className="text-[10px] text-amber-700/80 dark:text-amber-400/80 italic pt-1 border-t border-amber-200/50">
+                    Deterministic cost & margin deltas below remain the commercial source of truth.
                   </p>
                 </div>
 

@@ -672,8 +672,8 @@ describe('Phase AI-5C.1: Grounded AI Proposal Engine Foundation', () => {
 
       const pricingInputs = adaptAIQuoteSuggestionsToPricingInput(verifiedSuggestions, false);
 
-      // Verified item receives authoritative price
-      expect(pricingInputs[0].unitPrice).toBe('6000.00');
+      // In current product, State A is unreachable (no structured catalog exists) -> all suggestions populate 0.00
+      expect(pricingInputs[0].unitPrice).toBe('0.00');
 
       // Unverified item defaults to 0.00
       expect(pricingInputs[1].unitPrice).toBe('0.00');
@@ -797,7 +797,7 @@ describe('Phase AI-5C.1: Grounded AI Proposal Engine Foundation', () => {
       const unauthInput = adaptAIQuoteSuggestionsToPricingInput(suggestions, false);
       expect(unauthInput[0].supplierCost).toBeUndefined();
       expect(unauthInput[0].supplierName).toBeUndefined();
-      expect(unauthInput[0].unitPrice).toBe('150.00');
+      expect(unauthInput[0].unitPrice).toBe('0.00');
 
       // Authorized caller (admin/manager)
       const authInput = adaptAIQuoteSuggestionsToPricingInput(suggestions, true);

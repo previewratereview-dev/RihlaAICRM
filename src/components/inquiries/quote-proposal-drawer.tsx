@@ -75,7 +75,6 @@ export function QuoteProposalDrawer({
   const selectedItems = items.filter((_, idx) => !deselectedIndices.has(idx));
   const missingCount = items.filter((i) => i.pricingSource === 'missing' || !i.suggestedUnitPrice).length;
   const estimateCount = items.filter((i) => i.pricingSource === 'estimate' || i.pricingSource === 'historical').length;
-  const catalogCount = items.filter((i) => i.pricingSource === 'authoritative_catalog' && i.authoritativeUnitPrice).length;
 
   const toggleItemSelection = (idx: number) => {
     const next = new Set(deselectedIndices);
@@ -233,7 +232,6 @@ export function QuoteProposalDrawer({
                   {items.map((item, idx) => {
                     const isSelected = !deselectedIndices.has(idx);
                     const isMissing = item.pricingSource === 'missing' || !item.suggestedUnitPrice;
-                    const isCatalog = item.pricingSource === 'authoritative_catalog' && item.authoritativeUnitPrice;
 
                     return (
                       <div
@@ -275,12 +273,7 @@ export function QuoteProposalDrawer({
                               </span>
 
                               {/* Price Authority Badge */}
-                              {isCatalog ? (
-                                <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
-                                  <ShieldCheck className="h-3 w-3" />
-                                  <span>{currency} {item.authoritativeUnitPrice} (Verified Catalog)</span>
-                                </span>
-                              ) : isMissing ? (
+                              {isMissing ? (
                                 <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-red-50 text-red-700 dark:bg-red-950/50 dark:text-red-300 border border-red-200 dark:border-red-800">
                                   <AlertCircle className="h-3 w-3" />
                                   <span>Price required (No rate found)</span>
@@ -442,16 +435,16 @@ export function QuoteProposalDrawer({
 
                 <div className="grid grid-cols-3 gap-2">
                   <div className="p-3 bg-card border rounded-lg text-center">
-                    <div className="text-lg font-bold text-emerald-600 dark:text-emerald-400">{catalogCount}</div>
-                    <div className="text-[11px] text-muted-foreground">Verified Catalog</div>
-                  </div>
-                  <div className="p-3 bg-card border rounded-lg text-center">
                     <div className="text-lg font-bold text-amber-600 dark:text-amber-400">{estimateCount}</div>
                     <div className="text-[11px] text-muted-foreground">Estimates</div>
                   </div>
                   <div className="p-3 bg-card border rounded-lg text-center">
                     <div className="text-lg font-bold text-red-600 dark:text-red-400">{missingCount}</div>
                     <div className="text-[11px] text-muted-foreground">Price Required</div>
+                  </div>
+                  <div className="p-3 bg-card border rounded-lg text-center">
+                    <div className="text-sm font-semibold text-muted-foreground mt-1">Unavailable</div>
+                    <div className="text-[10px] text-muted-foreground">Structured Catalog (N/A)</div>
                   </div>
                 </div>
               </div>
