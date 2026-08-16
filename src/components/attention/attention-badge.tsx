@@ -62,25 +62,32 @@ export function AttentionBadge({ signals }: AttentionBadgeProps) {
 
   const config = getSignalConfig(primarySignal);
   const Icon = config.icon;
-  const tooltipText = signals.map((s) => `${s.title}: ${s.reasons.join(', ')}`).join(' | ');
+  const detailedSummary = signals
+    .map((s, idx) => `${idx + 1}. ${s.title}${s.reasons.length ? ` (${s.reasons.join('; ')})` : ''}`)
+    .join(' | ');
+
+  const accessibleLabel = `Attention required: ${signals.length} item${signals.length > 1 ? 's' : ''}. Primary: ${primarySignal.title}. All: ${detailedSummary}`;
 
   return (
     <div
-      className="inline-flex items-center gap-1 max-w-full"
-      title={tooltipText}
-      aria-label={`Attention indicators: ${tooltipText}`}
+      tabIndex={0}
+      role="status"
+      className="inline-flex items-center gap-1 max-w-full flex-wrap cursor-help focus:outline-none focus:ring-2 focus:ring-primary/40 focus:ring-offset-1 rounded-full"
+      title={detailedSummary}
+      aria-label={accessibleLabel}
     >
       <span
         className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors ${config.className}`}
       >
         <Icon className="h-3 w-3 shrink-0" aria-hidden="true" />
-        <span className="truncate">{config.label}</span>
+        <span className="truncate max-w-[130px] sm:max-w-none">{config.label}</span>
       </span>
 
       {additionalCount > 0 && (
         <span
-          className="inline-flex items-center rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground border border-border/60"
+          className="inline-flex items-center rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground border border-border/60 shrink-0"
           title={`${additionalCount} more attention item${additionalCount > 1 ? 's' : ''}`}
+          aria-hidden="true"
         >
           +{additionalCount}
         </span>

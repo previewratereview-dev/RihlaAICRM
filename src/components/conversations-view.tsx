@@ -303,10 +303,10 @@ export function ConversationsView() {
                         <span
                           className="inline-flex items-center gap-1 rounded-full bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800/50 px-1.5 py-0.5 text-[10px] font-medium shrink-0"
                           title="Customer message awaiting agent reply"
-                          aria-label="Awaiting reply"
+                          aria-label="Customer message awaiting agent reply"
                         >
-                          <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
-                          Awaiting reply
+                          <span className="h-1.5 w-1.5 rounded-full bg-amber-500 shrink-0" aria-hidden="true" />
+                          <span>Awaiting reply</span>
                         </span>
                       )}
                     </div>

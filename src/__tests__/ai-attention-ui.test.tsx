@@ -5,6 +5,7 @@
  * Classification: UI / COMPONENT TEST
  * Verifies Dashboard Needs Attention card, Inquiry Table AttentionBadge,
  * Inquiry Drawer AttentionDrawerSection, and Conversations View indicators.
+ * Includes accessibility (keyboard/focus/ARIA) and responsive wrapping tests.
  */
 
 import React from 'react';
@@ -136,7 +137,7 @@ describe('AI-4C Dashboard: Needs Attention Section', () => {
     expect(screen.getByText('No Follow-up Set')).toBeDefined();
   });
 
-  it('renders a quiet positive zero-state when totalSignals is 0', () => {
+  it('renders a truthful, compact zero-state without overstating global health', () => {
     const emptySummary: TenantAttentionSummary = {
       tenantId: 'agency-alpha',
       signalsCount: 0,
@@ -164,7 +165,10 @@ describe('AI-4C Dashboard: Needs Attention Section', () => {
       />
     );
 
+    // Truthful compact statement
     expect(screen.getByText('Nothing requires immediate attention.')).toBeDefined();
+    // Overstating claims must NOT be present
+    expect(screen.queryByText(/All active inquiries and customer messages are on schedule/i)).toBeNull();
     expect(screen.queryByText(/AI found no problems/i)).toBeNull();
   });
 
@@ -184,12 +188,12 @@ describe('AI-4C Dashboard: Needs Attention Section', () => {
     expect(screen.getByText('Network connection timeout')).toBeDefined();
     expect(screen.queryByText('Nothing requires immediate attention.')).toBeNull();
 
-    const retryBtn = screen.getByRole('button', { name: /retry/i });
+    const retryBtn = screen.getByRole('button', { name: /retry loading attention items/i });
     fireEvent.click(retryBtn);
     expect(mockRefresh).toHaveBeenCalledTimes(1);
   });
 
-  it('renders bounded preview list with working navigation callbacks', () => {
+  it('renders bounded preview list with accessible, working navigation callbacks', () => {
     const navigateInquiry = vi.fn();
     const navigateConversation = vi.fn();
 
@@ -208,11 +212,11 @@ describe('AI-4C Dashboard: Needs Attention Section', () => {
     expect(screen.getByText('Follow-up overdue for Kashmir Holiday')).toBeDefined();
     expect(screen.getByText('Unanswered customer message')).toBeDefined();
 
-    const viewInquiryBtns = screen.getAllByRole('button', { name: /view inquiry/i });
+    const viewInquiryBtns = screen.getAllByRole('button', { name: /view inquiry for/i });
     fireEvent.click(viewInquiryBtns[0]);
     expect(navigateInquiry).toHaveBeenCalledWith('inq-101');
 
-    const openConvBtn = screen.getByRole('button', { name: /open conversation/i });
+    const openConvBtn = screen.getByRole('button', { name: /open conversation for/i });
     fireEvent.click(openConvBtn);
     expect(navigateConversation).toHaveBeenCalledWith('conv-202');
   });
@@ -227,6 +231,18 @@ describe('AI-4C Inquiry Table: AttentionBadge', () => {
 
     expect(screen.getByText('Follow-up overdue')).toBeDefined();
     expect(screen.getByText('+1')).toBeDefined();
+  });
+
+  it('provides keyboard focusability and accessible label containing all +N item details', () => {
+    const signals = [MOCK_SIGNALS[0], MOCK_SIGNALS[3]];
+
+    render(<AttentionBadge signals={signals} />);
+
+    const badge = screen.getByRole('status');
+    expect(badge.getAttribute('tabindex')).toBe('0');
+    expect(badge.getAttribute('aria-label')).toContain('Attention required: 2 items');
+    expect(badge.getAttribute('aria-label')).toContain('Follow-up overdue for Kashmir Holiday');
+    expect(badge.getAttribute('aria-label')).toContain('Missing qualification fields');
   });
 
   it('renders missing details count accurately', () => {
@@ -244,9 +260,15 @@ describe('AI-4C Inquiry Table: AttentionBadge', () => {
 });
 
 describe('AI-4C Inquiry Drawer: AttentionDrawerSection', () => {
-  it('renders multiple signals truthfully with missing qualification fields', () => {
+  it('renders multiple signals truthfully with all missing qualification fields', () => {
     const actionClick = vi.fn();
-    const signals = [MOCK_SIGNALS[0], MOCK_SIGNALS[3]];
+    const signals = [
+      MOCK_SIGNALS[0],
+      {
+        ...MOCK_SIGNALS[3],
+        missingFields: ['destination', 'departure_date', 'number_of_travelers', 'budget'] as import('@/lib/attention/types').QualificationFieldKey[],
+      },
+    ];
 
     render(
       <AttentionDrawerSection
@@ -259,9 +281,9 @@ describe('AI-4C Inquiry Drawer: AttentionDrawerSection', () => {
     expect(screen.getByText('2 items')).toBeDefined();
     expect(screen.getByText('Follow-up overdue for Kashmir Holiday')).toBeDefined();
     expect(screen.getByText('Missing qualification fields')).toBeDefined();
-    expect(screen.getByText('Destination, Traveler count')).toBeDefined();
+    expect(screen.getByText('Destination, Departure date, Traveler count, Budget')).toBeDefined();
 
-    const scheduleBtn = screen.getByRole('button', { name: /schedule follow-up/i });
+    const scheduleBtn = screen.getByRole('button', { name: /schedule follow-up for follow-up overdue/i });
     fireEvent.click(scheduleBtn);
     expect(actionClick).toHaveBeenCalled();
   });
