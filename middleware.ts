@@ -42,6 +42,7 @@ const PUBLIC_PAGE_PREFIXES = [
   '/about',
   '/privacy',
   '/terms',
+  '/p',       // Public share portal (AI-5B.3)
 ];
 
 /**
@@ -55,6 +56,7 @@ const PUBLIC_API_PREFIXES = [
   '/api/auth',
   '/api/inngest',
   '/api/health',
+  '/api/p',       // Public share portal API (AI-5B.3)
 ];
 
 function matchesPrefix(pathname: string, prefixes: string[]): boolean {
