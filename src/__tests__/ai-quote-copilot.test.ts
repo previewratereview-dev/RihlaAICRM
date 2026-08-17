@@ -505,12 +505,33 @@ describe('Phase AI-5C.3: Grounded Quote Copilot & Deterministic Commercial Expla
       const stagedInputs = adaptAIQuoteSuggestionsToStagedInputs(suggestions, false);
       expect(stagedInputs[0].unitPrice).toBe('0.00');
       expect(stagedInputs[0].suggestedUnitPrice).toBe('12500.00');
+    });
 
-      // 2. Human explicitly confirms suggested price by clicking 'Use suggested price'
-      // This is an explicit human action that populates the standard editable draft input
+    it('explicit human Use action copies suggested price to editable unitPrice without setting authoritative_catalog or mutating database', async () => {
+      const suggestions: AIQuoteLineItemSuggestion[] = [
+        {
+          title: 'Boutique Resort Stay',
+          category: 'accommodation',
+          quantity: 1,
+          suggestedUnitPrice: '12500.00',
+          pricingSource: 'estimate',
+        },
+      ];
+
+      // 1. Initial Apply stages suggestion into draft with unitPrice='0.00'
+      const stagedInputs = adaptAIQuoteSuggestionsToStagedInputs(suggestions, false);
+      expect(stagedInputs[0].unitPrice).toBe('0.00');
+      expect(stagedInputs[0].suggestedUnitPrice).toBe('12500.00');
+      expect(stagedInputs[0].pricingSource).toBe('estimate');
+
+      // 2. Staff explicitly clicks "Use suggested price" (simulated UI action)
       stagedInputs[0].unitPrice = stagedInputs[0].suggestedUnitPrice!;
 
-      // 3. Normal save uses standard B2 pricing engine and RPC
+      // Verify that 'Use' does NOT upgrade to authoritative_catalog
+      expect(stagedInputs[0].pricingSource).toBe('estimate');
+      expect(stagedInputs[0].unitPrice).toBe('12500.00');
+
+      // 3. Normal Save uses standard B2 pricing engine
       const calculated = calculateQuotePricing({
         lineItems: stagedInputs,
         discountAmount: '0.00',
@@ -605,6 +626,25 @@ describe('Phase AI-5C.3: Grounded Quote Copilot & Deterministic Commercial Expla
   // 6. CROSS-TENANT ISOLATION MATRIX & FAILURE DEGRADATION
   // ==========================================================================
   describe('6. Cross-Tenant Isolation & Failure Resilience', () => {
+    it('fails closed when attempting to attach quote suggestion to cross-tenant inquiry', async () => {
+      mockStaffContext = { userId: 'user-consultant-1', tenantId: 'tenant-agency-a', role: 'consultant' };
+
+      mockPgQuery.mockImplementation(async (sql: string) => {
+        if (sql.includes('FROM public.inquiries WHERE id = $1 AND tenant_id = $2')) {
+          return { rows: [] }; // Cross-tenant inquiry not found
+        }
+        return { rows: [] };
+      });
+
+      const res = await generateQuoteProposalAction({
+        inquiryId: 'inq-tenant-b-123',
+        itineraryVersionId: 'itin-ver-1',
+      });
+
+      expect(res.success).toBe(false);
+      expect(res.error?.code).toBe('NOT_FOUND');
+    });
+
     it('fails closed when attempting to attach quote suggestion to cross-tenant itinerary', async () => {
       mockStaffContext = { userId: 'user-consultant-1', tenantId: 'tenant-agency-a', role: 'consultant' };
 
@@ -649,6 +689,60 @@ describe('Phase AI-5C.3: Grounded Quote Copilot & Deterministic Commercial Expla
       expect(res.error?.code).toBe('NOT_FOUND');
     });
 
+    it('rejects cross-tenant knowledge document from being accepted as trusted grounding provenance in Tenant A proposal', async () => {
+      mockStaffContext = { userId: 'user-consultant-1', tenantId: 'tenant-agency-a', role: 'consultant' };
+
+      // Adversarial model attempts to reference Tenant B's knowledge document
+      mockAIResponseText = JSON.stringify({
+        inquiryId: 'inq-123',
+        itineraryVersionId: 'itin-ver-1',
+        currency: 'USD',
+        suggestedItems: [
+          {
+            title: 'Exotic Safari Tour',
+            category: 'activity',
+            quantity: 1,
+            suggestedUnitPrice: '5000.00',
+            pricingSource: 'estimate',
+            catalogReferenceId: 'kdoc-tenant-b',
+          },
+        ],
+        missingPriceItems: [],
+        grounding: {
+          sources: [{ type: 'knowledge_document', id: 'kdoc-tenant-b', title: 'Secret Doc', snippet: 'Cross-tenant text' }],
+          assumptions: [],
+          missingInformation: [],
+        },
+        warnings: [],
+      });
+
+      mockPgQuery.mockImplementation(async (sql: string) => {
+        if (sql.includes('FROM public.itinerary_versions')) {
+          return { rows: [{ id: 'itin-ver-1', tenant_id: 'tenant-agency-a', status: 'finalized', version_number: 1, lock_version: 0 }] };
+        }
+        if (sql.includes('FROM public.inquiries')) {
+          return { rows: [{ id: 'inq-123', tenant_id: 'tenant-agency-a', currency: 'USD' }] };
+        }
+        if (sql.includes('FROM public.knowledge_documents WHERE id = $1 AND tenant_id = $2')) {
+          // Document belongs to Tenant B, so scoped tenant query returns 0 rows
+          return { rows: [] };
+        }
+        return { rows: [] };
+      });
+
+      const res = await generateQuoteProposalAction({
+        inquiryId: 'inq-123',
+        itineraryVersionId: 'itin-ver-1',
+      });
+
+      expect(res.success).toBe(true);
+      const item = res.proposal!.suggestedItems[0];
+      // Cross-tenant document was rejected -> catalogReferenceId null, pricingSource estimate
+      expect(item.catalogReferenceId).toBeNull();
+      expect(item.pricingSource).toBe('estimate');
+      expect(item.authoritativeUnitPrice).toBeNull();
+    });
+
     it('returns structured error when AI provider fails without breaking workspace', async () => {
       mockStaffContext = { userId: 'user-consultant-1', tenantId: 'tenant-agency-a', role: 'consultant' };
 
@@ -670,6 +764,80 @@ describe('Phase AI-5C.3: Grounded Quote Copilot & Deterministic Commercial Expla
 
       expect(res.success).toBe(false);
       expect(res.error?.message).toContain('Rate limit exceeded');
+    });
+
+    it('returns structured safe error and leaves existing draft unchanged when model returns malformed or schema-invalid JSON', async () => {
+      mockStaffContext = { userId: 'user-consultant-1', tenantId: 'tenant-agency-a', role: 'consultant' };
+
+      mockPgQuery.mockImplementation(async (sql: string) => {
+        if (sql.includes('FROM public.itinerary_versions')) return { rows: [{ status: 'finalized' }] };
+        if (sql.includes('FROM public.inquiries')) return { rows: [{ id: 'inq-123', tenant_id: 'tenant-agency-a', currency: 'USD' }] };
+        return { rows: [] };
+      });
+
+      const { callAIWithFallback } = await import('@/lib/ai/ai-client');
+      // Model returns malformed, unparseable response
+      (callAIWithFallback as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        text: '<<<MALFORMED_GIBBERISH_NOT_JSON>>>',
+        model: 'gpt-4o-mini',
+        provider: 'openai',
+      });
+
+      const res = await generateQuoteProposalAction({
+        inquiryId: 'inq-123',
+        itineraryVersionId: 'itin-ver-1',
+      });
+
+      expect(res.success).toBe(false);
+      expect(res.error?.code).toBe('PROPOSAL_GENERATION_FAILED');
+    });
+
+    it('failed AI proposal generation leaves manual Quote editor and B2 save path 100% operational', async () => {
+      // 1. AI fails
+      const { callAIWithFallback } = await import('@/lib/ai/ai-client');
+      (callAIWithFallback as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new Error('PROVIDER_OUTAGE')
+      );
+
+      const aiRes = await generateQuoteProposalAction({
+        inquiryId: 'inq-123',
+        itineraryVersionId: 'itin-ver-1',
+      });
+      expect(aiRes.success).toBe(false);
+
+      // 2. Staff proceeds manually with deterministic pricing engine
+      const manualLineItems = [
+        {
+          id: 'manual-item-1',
+          title: 'Manual Custom Safari',
+          category: 'activity' as const,
+          quantity: 2,
+          unitPrice: '1500.00',
+          totalPrice: '3000.00',
+        },
+      ];
+
+      const calculated = calculateQuotePricing({
+        lineItems: manualLineItems,
+        discountAmount: '100.00',
+        taxAmount: '290.00',
+      });
+
+      expect(calculated.subtotal).toBe('3000.00');
+      expect(calculated.discountAmount).toBe('100.00');
+      expect(calculated.taxAmount).toBe('290.00');
+      expect(calculated.grandTotal).toBe('3190.00');
+
+      // 3. Staff saves draft via normal server action
+      const { updateQuoteDraftAction } = await import('@/app/actions/inquiry-lifecycle');
+      const saveRes = await updateQuoteDraftAction({
+        versionId: 'qv-draft-1',
+        expectedLockVersion: 1,
+        lineItems: manualLineItems,
+      });
+
+      expect(saveRes.versionId).toBe('qv-draft-1');
+      expect(saveRes.newLockVersion).toBe(2);
     });
   });
 
